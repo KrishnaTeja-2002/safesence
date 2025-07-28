@@ -12,6 +12,19 @@ export default function Team() {
     { name: 'Dianne Russell', role: 'Full access' },
   ]);
 
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('Access');
+
+  const handleSendInvite = () => {
+    if (inviteEmail) {
+      console.log(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
+      alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
+      setInviteEmail(''); // Clear the input after sending
+    } else {
+      alert('Please enter an email address.');
+    }
+  };
+
   return (
     <div className="flex min-h-screen bg-gray-100 text-gray-800">
       {/* Sidebar */}
@@ -43,32 +56,46 @@ export default function Team() {
         {/* Team Section */}
         <div className="bg-white rounded-lg shadow p-6">
           <div className="mb-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col space-y-4">
               <span className="text-sm text-gray-500">Invite by email</span>
-              <div>
-                <input
-                  type="email"
-                  placeholder="Email"
-                  className="border rounded px-2 py-1 mr-2"
-                />
-                <select className="border rounded px-2 py-1">
-                  <option>Access</option>
-                  <option>Full access</option>
-                  <option>Owner</option>
-                </select>
-                <button className="bg-orange-500 text-white px-4 py-1 rounded ml-2">Send Invite</button>
+              <div className="flex items-center space-x-4">
+                <div className="relative">
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="border border-gray-300 rounded-l px-4 py-2 w-[700px]" // Even bigger email box with left rounding
+                  />
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value)}
+                    className="absolute right-0 top-0 h-full border border-gray-300 rounded-r px-2 py-1 w-32"
+                    style={{ marginLeft: '-1px' }} // Adjust to align with input border
+                  >
+                    <option>Access</option>
+                    <option>Full access</option>
+                    <option>Owner</option>
+                  </select>
+                </div>
+                <button
+                  onClick={handleSendInvite}
+                  className="bg-orange-500 text-white px-4 py-1 rounded hover:bg-orange-600"
+                >
+                  Send Invite
+                </button>
               </div>
             </div>
           </div>
           <div>
             <p className="text-sm text-gray-500 mb-4">Members List:</p>
             {members.map((member, idx) => (
-              <div key={idx} className="flex justify-between items-center py-2 border-b">
+              <div key={idx} className="flex justify-between items-center py-2 border-b border-gray-200">
                 <div className="flex items-center">
                   <div className="w-10 h-10 rounded-full bg-gray-300 mr-3"></div>
                   <span>{member.name}</span>
                 </div>
-                <button className="bg-gray-200 text-gray-700 px-3 py-1 rounded">
+                <button className="bg-orange-500 text-white px-3 py-1 rounded">
                   {member.role}
                 </button>
               </div>

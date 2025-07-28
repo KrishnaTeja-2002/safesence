@@ -1,132 +1,56 @@
-// import Image from "next/image";
+"use client";
 
-// export default function Home() {
-//   return (
-//     <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-//       <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-//         <Image
-//           className="dark:invert"
-//           src="/next.svg"
-//           alt="Next.js logo"
-//           width={180}
-//           height={38}
-//           priority
-//         />
-//         <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-//           <li className="mb-2 tracking-[-.01em]">
-//             Get started by editing{" "}
-//             <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-//               src/app/page.js
-//             </code>
-//             .
-//           </li>
-//           <li className="tracking-[-.01em]">
-//             Save and see your changes instantly.
-//           </li>
-//         </ol>
-
-//         <div className="flex gap-4 items-center flex-col sm:flex-row">
-//           <a
-//             className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-//             href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//             target="_blank"
-//             rel="noopener noreferrer"
-//           >
-//             <Image
-//               className="dark:invert"
-//               src="/vercel.svg"
-//               alt="Vercel logomark"
-//               width={20}
-//               height={20}
-//             />
-//             Deploy now
-//           </a>
-//           <a
-//             className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-//             href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//             target="_blank"
-//             rel="noopener noreferrer"
-//           >
-//             Read our docs
-//           </a>
-//         </div>
-//       </main>
-//       <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-//         <a
-//           className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-//           href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//           target="_blank"
-//           rel="noopener noreferrer"
-//         >
-//           <Image
-//             aria-hidden
-//             src="/file.svg"
-//             alt="File icon"
-//             width={16}
-//             height={16}
-//           />
-//           Learn
-//         </a>
-//         <a
-//           className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-//           href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//           target="_blank"
-//           rel="noopener noreferrer"
-//         >
-//           <Image
-//             aria-hidden
-//             src="/window.svg"
-//             alt="Window icon"
-//             width={16}
-//             height={16}
-//           />
-//           Examples
-//         </a>
-//         <a
-//           className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-//           href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-//           target="_blank"
-//           rel="noopener noreferrer"
-//         >
-//           <Image
-//             aria-hidden
-//             src="/globe.svg"
-//             alt="Globe icon"
-//             width={16}
-//             height={16}
-//           />
-//           Go to nextjs.org →
-//         </a>
-//       </footer>
-//     </div>
-//   );
-// }
+import React, { useState } from 'react';
 
 export default function Home() {
+  const [isSignup, setIsSignup] = useState(false);
+
   return (
     <main style={styles.main}>
-      <div style={styles.card}>
-        <h2 style={styles.title}>Login to Safe Sense</h2>
+      {!isSignup ? (
+        <div style={styles.card}>
+          <div style={styles.logo}>🛜 <span style={styles.logoText}>Safe Sense</span></div>
+          <p style={styles.subtitle}>Welcome back to Safe Sense</p>
+          <p style={styles.subtitle}>Stay connected. Stay protected.</p>
 
-        <input type="email" placeholder="Email" style={styles.input} />
-        <input type="password" placeholder="Password" style={styles.input} />
+          <input type="email" placeholder="Email" style={styles.input} />
+          <input type="password" placeholder="Password" style={styles.input} />
 
-        <button style={styles.loginBtn}>Login</button>
+          <button style={styles.loginBtn}>Log in</button>
+          <div style={styles.or}>or</div>
+          <button style={styles.googleBtn}>Sign-in with Google</button>
 
-        <button style={styles.googleBtn}>Continue with Google</button>
-
-        <div style={styles.links}>
-          <span>
-            Don’t have an account?{" "}
-            <a href="#" style={styles.link}>
-              Sign Up
+          <div style={styles.links}>
+            <a href="#signup" onClick={() => setIsSignup(true)} style={styles.link}>
+              Not a Member? Sign-up
             </a>
-          </span>
-          <a href="#" style={{ ...styles.link, float: "right" }}>
-            Forgot Password?
-          </a>
+            <a href="#" style={styles.link}>
+              Forgot Password?
+            </a>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div style={styles.card}>
+          <div style={styles.logo}>🛜 <span style={styles.logoText}>Safe Sense</span></div>
+          <p style={styles.subtitle}>Create An Account to Start your Journey</p>
+          <p style={styles.subtitle}>with Safe Sense</p>
+
+          <input type="text" placeholder="First Name" style={styles.input} />
+          <input type="text" placeholder="Last Name" style={styles.input} />
+          <input type="email" placeholder="Email" style={styles.input} />
+          <input type="password" placeholder="Password" style={styles.input} />
+
+          <button style={styles.loginBtn}>Create Account</button>
+          <div style={styles.or}>or</div>
+          <button style={styles.googleBtn}>Sign-in with Google</button>
+
+          <div style={styles.links}>
+            <a href="#login" onClick={() => setIsSignup(false)} style={styles.link}>
+              Already a member? Sign-in
+            </a>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -136,64 +60,101 @@ const styles = {
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
-    height: "80vh",
-    backgroundColor: "#f9f9f9",
+    height: "100vh",
+    backgroundColor: "#ffffff",
+    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320'%3E%3Cpath fill='%23e0e7ff' fill-opacity='0.5' d='M0,64L48,80C96,96,192,128,288,128C384,128,480,96,576,85.3C672,75,768,85,864,106.7C960,128,1056,160,1152,170.7C1248,181,1344,171,1392,165.3L1440,160V320H0Z'/%3E%3C/svg%3E")`,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
   },
   card: {
     width: "100%",
-    maxWidth: "500px",
-    padding: "2rem",
-    backgroundColor: "#ffffff",
+    maxWidth: "380px",
+    padding: "1.5rem",
+    backgroundColor: "#d1d5db",
     borderRadius: "12px",
-    boxShadow: "0 0 15px rgba(0, 0, 0, 0.1)",
-  },
-  title: {
+    boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
     textAlign: "center",
-    marginBottom: "1.5rem",
-    color: "#1e3a8a",
+    position: "relative",
+    background: "linear-gradient(135deg, #d1d5db 0%, #e5e7eb 100%)",
+    overflow: "hidden",
+  },
+  logo: {
+    fontSize: "1.4rem",
+    color: "#f97316",
+    marginBottom: "0.75rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoText: {
+    marginLeft: "0.4rem",
+    color: "#f97316",
+    fontWeight: "500",
+  },
+  subtitle: {
+    textAlign: "center",
+    marginBottom: "1rem",
+    color: "#1f2937",
+    fontSize: "0.85rem",
+    lineHeight: "1.2",
   },
   input: {
     width: "100%",
-    padding: "0.8rem",
-    marginBottom: "1rem",
-    borderRadius: "8px",
-    border: "1px solid #d1d5db",
-    fontSize: "1rem",
+    padding: "0.7rem",
+    marginBottom: "0.7rem",
+    borderRadius: "6px",
+    border: "1px solid #9ca3af",
+    fontSize: "0.95rem",
+    backgroundColor: "#ffffff",
+    boxSizing: "border-box",
+    textAlign: "left",
+    color: "#4b5563",
   },
   loginBtn: {
     width: "100%",
-    padding: "0.8rem",
-    backgroundColor: "#1e3a8a",
-    color: "#fff",
-    fontWeight: "bold",
+    padding: "0.7rem",
+    backgroundColor: "#f97316",
+    color: "#ffffff",
+    fontWeight: "600",
     border: "none",
-    borderRadius: "8px",
-    marginBottom: "1rem",
+    borderRadius: "9999px",
+    marginBottom: "0.5rem",
     cursor: "pointer",
+    fontSize: "0.95rem",
+    textTransform: "none",
+  },
+  or: {
+    textAlign: "center",
+    margin: "0.5rem 0",
+    color: "#4b5563",
+    fontSize: "0.75rem",
+    textTransform: "lowercase",
+    opacity: "0.8",
   },
   googleBtn: {
     width: "100%",
-    padding: "0.8rem",
-    backgroundColor: "#10b981",
-    color: "#fff",
-    fontWeight: "bold",
-    border: "none",
-    borderRadius: "8px",
-    marginBottom: "1.5rem",
+    padding: "0.7rem",
+    backgroundColor: "#ffffff",
+    color: "#10b981",
+    fontWeight: "600",
+    border: "1px solid #10b981",
+    borderRadius: "9999px",
+    marginBottom: "1rem",
     cursor: "pointer",
+    fontSize: "0.95rem",
+    textTransform: "none",
   },
   links: {
     display: "flex",
-    justifyContent: "space-between",
-    fontSize: "0.9rem",
-    color: "#374151",
+    flexDirection: "column",
+    gap: "0.5rem",
+    fontSize: "0.75rem",
+    color: "#4b5563",
   },
   link: {
-    color: "#1e3a8a",
+    color: "#1e40af",
     textDecoration: "none",
-    fontWeight: "bold",
-    marginLeft: "0.2rem",
+    fontWeight: "500",
   },
 };
-
-
