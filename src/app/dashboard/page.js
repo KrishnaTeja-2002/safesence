@@ -17,35 +17,7 @@ export default function Dashboard() {
       { name: 'Fry\nProduct', value: -16, displayValue: '-16°F', height: 53, color: '#86efac', type: 'freezer' },
       { name: 'Freezer 2', value: -20, displayValue: '-20°F', height: 67, color: '#86efac', type: 'freezer' },
     ],
-    notificationsList: [
-      {
-        id: 1,
-        title: "Needs attention (Freezer 1)",
-        date: "07/16/2025",
-        type: "warning"
-      },
-      {
-        id: 2,
-        title: "Needs attention (Drive Thru Fridge)",
-        date: "07/16/2025", 
-        type: "warning"
-      },
-      {
-        id: 3,
-        title: "Sensor Battery Low (Fry Product)",
-        date: "07/16/2025",
-        type: "battery"
-      }
-    ]
   });
-
-  const closeNotification = (id) => {
-    console.log('Closing notification:', id);
-  };
-
-  const clearAllNotifications = () => {
-    console.log('Clearing all notifications');
-  };
 
   return (
     <div className="flex min-h-screen bg-white">
@@ -59,7 +31,7 @@ export default function Dashboard() {
             <h1 className="text-lg font-semibold text-orange-500">Safe Sense</h1>
           </div>
           
-          <nav className="space-y-1 mb-8">
+          <nav className="space-y-1">
             <div className="flex items-center px-4 py-3 bg-gray-700 rounded text-white">
               <span className="mr-3 text-sm">🏠</span>
               <span className="text-sm font-medium">Dashboard</span>
@@ -85,35 +57,6 @@ export default function Dashboard() {
               <span className="text-sm">Account</span>
             </div>
           </nav>
-
-          {/* Notification Blocks in Sidebar */}
-          <div className="space-y-3">
-            {data.notificationsList.map((notification) => (
-              <div key={notification.id} className="bg-gray-100 rounded-lg p-3 flex justify-between items-start">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-800 leading-tight">
-                    {notification.title}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">{notification.date}</p>
-                </div>
-                <button 
-                  onClick={() => closeNotification(notification.id)}
-                  className="text-gray-500 hover:text-gray-700 p-1 flex-shrink-0 ml-2"
-                >
-                  <span className="text-lg leading-none">×</span>
-                </button>
-              </div>
-            ))}
-            
-            <div className="mt-4">
-              <button 
-                onClick={clearAllNotifications}
-                className="text-orange-500 text-sm font-medium hover:text-orange-600"
-              >
-                Clear all
-              </button>
-            </div>
-          </div>
         </div>
       </aside>
 
