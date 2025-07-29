@@ -1,19 +1,25 @@
-'use client';
-import { useState } from 'react';
-import {
-  Bluetooth,
-  Home,
-  AlertTriangle,
-  Radio,
-  Clock,
-  Users,
-  Settings,
-  ChevronDown,
-  Edit,
-  Trash,
-} from 'lucide-react';
 
-export default function Page() {
+'use client';
+
+import { useState, Component } from 'react';
+import { useRouter } from 'next/navigation';
+import { Bluetooth, ChevronDown, Edit, Trash, AlertTriangle } from 'lucide-react';
+import Sidebar from '../components/Sidebar';
+
+class ErrorBoundary extends Component {
+  state = { hasError: false, error: null };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return <div>Error: {this.state.error?.message || 'Something went wrong'}</div>;
+    }
+    return this.props.children;
+  }
+}
+
+export default function Sensors() {
   const [sensors, setSensors] = useState([
     { id: 1, name: 'Walk-In Fridge', function: 'Air Temp', alert: 'On', date: 'June 28 2025', status: 'Active' },
     { id: 2, name: 'Freezer 1', function: 'Air Temp', alert: 'On', date: 'May 25 2025', status: 'Inactive' },
@@ -33,14 +39,7 @@ export default function Page() {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState('Newest');
 
-  const menuItems = [
-    { icon: Home, label: 'Dashboard', active: false },
-    { icon: AlertTriangle, label: 'Alerts', active: false },
-    { icon: Radio, label: 'Sensors', active: true },
-    { icon: Clock, label: 'History', active: false },
-    { icon: Users, label: 'Team', active: false },
-    { icon: Settings, label: 'Account', active: false },
-  ];
+  const router = useRouter();
 
   const handleAddSensor = () => {
     setCurrentView('connect');
@@ -99,7 +98,7 @@ export default function Page() {
         </div>
         <button
           onClick={handleAddSensor}
-          className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600"
+          className="px-8 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500"
         >
           Add Sensor
         </button>
@@ -118,7 +117,7 @@ export default function Page() {
             </div>
             <div className="flex items-center space-x-4">
               <div className="relative">
-                <select className="border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white min-w-24 appearance-none pr-8">
+                <select className="border rounded-lg px-4 py-2 text-sm bg-white border-gray-300 min-w-24 appearance-none pr-8">
                   <option>Sensors</option>
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -129,7 +128,7 @@ export default function Page() {
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white appearance-none pr-8"
+                    className="border rounded-lg px-4 py-2 text-sm bg-white border-gray-300 appearance-none pr-8"
                   >
                     <option>Newest</option>
                     <option>Oldest</option>
@@ -180,9 +179,7 @@ export default function Page() {
                   <td className="py-4">
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        sensor.status === 'Active'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
+                        sensor.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                       }`}
                     >
                       {sensor.status}
@@ -198,7 +195,7 @@ export default function Page() {
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                className="px-3 py-1 border rounded border-gray-300 hover:bg-gray-50"
                 disabled={currentPage === 1}
               >
                 &lt;
@@ -206,7 +203,7 @@ export default function Page() {
               <button
                 onClick={() => setCurrentPage(1)}
                 className={`px-3 py-1 border rounded ${
-                  currentPage === 1 ? 'bg-orange-500 text-white' : 'border-gray-300 hover:bg-gray-50'
+                  currentPage === 1 ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 hover:bg-gray-50'
                 }`}
               >
                 1
@@ -214,14 +211,14 @@ export default function Page() {
               <button
                 onClick={() => setCurrentPage(2)}
                 className={`px-3 py-1 border rounded ${
-                  currentPage === 2 ? 'bg-orange-500 text-white' : 'border-gray-300 hover:bg-gray-50'
+                  currentPage === 2 ? 'bg-orange-500 text-white border-orange-500' : 'border-gray-300 hover:bg-gray-50'
                 }`}
               >
                 2
               </button>
               <button
                 onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50"
+                className="px-3 py-1 border rounded border-gray-300 hover:bg-gray-50"
                 disabled={currentPage === totalPages}
               >
                 &gt;
@@ -234,7 +231,7 @@ export default function Page() {
       <div className="flex justify-end">
         <button
           onClick={handleAddSensor}
-          className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600"
+          className="px-8 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500"
         >
           Add Sensor
         </button>
@@ -274,19 +271,19 @@ export default function Page() {
           </div>
           <h3 className="text-xl font-semibold mb-4">Automatic Device Detection</h3>
           <p className="mb-4 text-gray-600">Place the sensor close to the computer for optimal pairing</p>
-          <p className="text-gray-500">Device: <span className="text-gray-400">Safe_Sense R2343561</span></p>
+          <p className="text-sm text-gray-500">Device: <span className="text-gray-400">Safe_Sense R2343561</span></p>
         </div>
 
         <div className="flex space-x-4">
           <button
-            onClick={() => setCurrentView('empty')}
+            onClick={() => setCurrentView('list')}
             className="flex-1 px-6 py-3 rounded-lg font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
           >
             Cancel
           </button>
           <button
             onClick={() => setCurrentView('settings')}
-            className="flex-1 px-6 py-3 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600"
+            className="flex-1 px-6 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500"
           >
             Next
           </button>
@@ -331,7 +328,7 @@ export default function Page() {
                 type="text"
                 value={sensorName}
                 onChange={(e) => setSensorName(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none bg-white text-gray-900"
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none bg-white text-gray-900 border-gray-300"
                 placeholder="Enter sensor name"
               />
             </div>
@@ -340,21 +337,18 @@ export default function Page() {
           <div>
             <h3 className="text-lg font-semibold mb-2">Function</h3>
             <p className="mb-6 text-gray-600">What is this sensor monitoring?</p>
-            <div>
-              <label className="block text-sm font-medium mb-2">Functionalities</label>
-              <div className="relative">
-                <select
-                  value={sensorFunction}
-                  onChange={(e) => setSensorFunction(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none appearance-none bg-white text-gray-900"
-                >
-                  <option value="">Select function</option>
-                  <option value="Air Temp">Air Temp</option>
-                  <option value="Surface Temp">Surface Temp</option>
-                  <option value="Air and Surface Temp">Air and Surface Temp</option>
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-              </div>
+            <div className="relative">
+              <select
+                value={sensorFunction}
+                onChange={(e) => setSensorFunction(e.target.value)}
+                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none appearance-none bg-white text-gray-900 border-gray-300"
+              >
+                <option value="">Select function</option>
+                <option value="Air Temp">Air Temp</option>
+                <option value="Surface Temp">Surface Temp</option>
+                <option value="Air and Surface Temp">Air and Surface Temp</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
             </div>
           </div>
 
@@ -368,7 +362,9 @@ export default function Page() {
             <button
               onClick={handleFinishAddSensor}
               disabled={!sensorName || !sensorFunction}
-              className="flex-1 px-6 py-3 rounded-lg font-medium bg-orange-500 text-white hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              className={`flex-1 px-6 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500 ${
+                !sensorName || !sensorFunction ? 'bg-gray-300 cursor-not-allowed' : ''
+              }`}
             >
               Finish
             </button>
@@ -418,13 +414,13 @@ export default function Page() {
           <div className="space-y-3">
             <button
               onClick={handleDone}
-              className="w-48 px-4 py-3 rounded-lg font-medium mx-auto block bg-orange-500 text-white hover:bg-orange-600"
+              className="w-48 px-4 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500 mx-auto block"
             >
               Apply Alert
             </button>
             <button
               onClick={handleDone}
-              className="w-48 px-4 py-3 rounded-lg font-medium mx-auto block bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
+              className="w-48 px-4 py-3 rounded-lg font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 mx-auto block"
             >
               Later
             </button>
@@ -435,7 +431,7 @@ export default function Page() {
       <div className="absolute bottom-8 right-8">
         <button
           onClick={handleDone}
-          className="bg-orange-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-orange-600"
+          className="px-8 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500"
         >
           Done
         </button>
@@ -538,37 +534,22 @@ export default function Page() {
   };
 
   return (
-    <div className="flex min-h-screen bg-gray-100 text-gray-800">
-      <aside className="w-60 bg-gray-700 text-white py-6 px-4">
-        <div className="mb-10 text-center">
-          <Radio className="w-6 h-6 text-orange-500 mx-auto mb-2" />
-          <h1 className="text-2xl font-bold text-orange-500">Safe Sense</h1>
-        </div>
-        <nav className="space-y-4">
-          {menuItems.map((item, index) => (
-            <button
-              key={index}
-              className={`w-full text-left px-4 py-2 rounded hover:bg-gray-600 ${
-                item.active ? 'bg-gray-600 font-semibold' : ''
-              }`}
-            >
-              <div className="flex items-center space-x-3">
-                <item.icon className="w-5 h-5" />
-                <span className="text-sm font-medium">{item.label}</span>
-              </div>
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      <main className="flex-1 p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Sensors</h1>
-          <button className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Log out</button>
-        </div>
-
-        <div>{renderContent()}</div>
-      </main>
-    </div>
+    <ErrorBoundary>
+      <div className="flex min-h-screen bg-gray-100 text-gray-800">
+        <Sidebar activeKey="sensors" />
+        <main className="flex-1 p-6">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-3xl font-bold">Sensors</h2>
+            <div className="flex items-center space-x-4">
+              <button className="px-4 py-2 rounded bg-red-500 text-white hover:bg-red-600">
+                Log out
+              </button>
+              <div className="w-10 h-10 bg-yellow-600 rounded-full"></div>
+            </div>
+          </div>
+          <div>{renderContent()}</div>
+        </main>
+      </div>
+    </ErrorBoundary>
   );
 }
