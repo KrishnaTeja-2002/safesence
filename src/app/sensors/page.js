@@ -14,7 +14,7 @@ export default function SafeSenseApp() {
     { id: 8, name: 'Beverage Fridge', function: 'Air Temp', alert: 'Off', date: 'Sep 18 2024', status: 'Inactive' },
   ]);
   
-  const [currentView, setCurrentView] = useState('list'); // 'empty', 'list', 'connect', 'settings', 'success', 'details'
+  const [currentView, setCurrentView] = useState('empty'); // 'empty', 'list', 'connect', 'settings', 'success', 'details'
   const [selectedSensor, setSelectedSensor] = useState(null);
   const [hoveredSensor, setHoveredSensor] = useState(null);
   const [step, setStep] = useState(1);
@@ -72,16 +72,24 @@ export default function SafeSenseApp() {
     setCurrentView('details');
   };
 
+  const sensorsPerPage = 8;
+  const totalPages = Math.ceil(sensors.length / sensorsPerPage);
+  const startIndex = (currentPage - 1) * sensorsPerPage;
+  const endIndex = startIndex + sensorsPerPage;
+  const currentSensors = sensors.slice(startIndex, endIndex);
+
   const renderEmptyState = () => (
     <div className="flex-1 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow-lg p-12 text-center max-w-md">
-        <div className="mb-6">
-          <AlertTriangle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-500 text-lg">No Sensor connected with this Server.</p>
+      <div className="bg-white rounded-lg shadow-lg p-16 text-center max-w-lg">
+        <div className="mb-8">
+          <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertTriangle className="w-10 h-10 text-gray-400" />
+          </div>
+          <p className="text-gray-500 text-lg mb-8">No Sensor connected with this<br />Server.</p>
         </div>
         <button
           onClick={handleAddSensor}
-          className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors"
+          className="bg-orange-500 text-white px-8 py-3 rounded-lg hover:bg-orange-600 transition-colors font-medium"
         >
           Add Sensor
         </button>
@@ -92,60 +100,66 @@ export default function SafeSenseApp() {
   const renderSensorsList = () => (
     <div className="space-y-6">
       {/* Sensors Table */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">
             <div>
-              <h3 className="text-xl font-semibold">Sensors</h3>
-              <p className="text-blue-500 cursor-pointer">Paired Sensors</p>
+              <h3 className="text-xl font-semibold text-gray-900">Sensors</h3>
+              <p className="text-blue-500 cursor-pointer text-sm font-medium">Paired Sensors</p>
             </div>
             <div className="flex items-center space-x-4">
-              <select className="border rounded-lg px-3 py-2 text-sm">
-                <option>Sensors</option>
-              </select>
+              <div className="relative">
+                <select className="border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white min-w-24 appearance-none pr-8">
+                  <option>Sensors</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-500">Sort by:</span>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="border rounded-lg px-3 py-2 text-sm"
-                >
-                  <option>Newest</option>
-                  <option>Oldest</option>
-                  <option>Name</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white appearance-none pr-8"
+                  >
+                    <option>Newest</option>
+                    <option>Oldest</option>
+                    <option>Name</option>
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
               </div>
             </div>
           </div>
 
           <table className="w-full">
             <thead>
-              <tr className="border-b text-left text-gray-600">
-                <th className="pb-3 font-medium">Sensor Name</th>
-                <th className="pb-3 font-medium">Function</th>
-                <th className="pb-3 font-medium">Tools</th>
-                <th className="pb-3 font-medium">Date</th>
-                <th className="pb-3 font-medium">Status</th>
+              <tr className="border-b border-gray-200 text-left text-gray-600">
+                <th className="pb-3 font-medium text-sm">Sensor Name</th>
+                <th className="pb-3 font-medium text-sm">Function</th>
+                <th className="pb-3 font-medium text-sm">Tools</th>
+                <th className="pb-3 font-medium text-sm">Date</th>
+                <th className="pb-3 font-medium text-sm">Status</th>
               </tr>
             </thead>
             <tbody>
-              {sensors.map((sensor, index) => (
-                <tr key={sensor.id} className="border-b hover:bg-gray-50">
+              {currentSensors.map((sensor, index) => (
+                <tr key={sensor.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-4">
                     <button
-                      className="text-blue-500 hover:text-blue-700 font-medium"
+                      className="text-blue-500 hover:text-blue-700 font-medium text-sm"
                       onClick={() => handleSensorClick(sensor)}
                     >
                       {sensor.name}
                     </button>
                   </td>
-                  <td className="py-4 text-gray-700">{sensor.function}</td>
+                  <td className="py-4 text-gray-700 text-sm">{sensor.function}</td>
                   <td className="py-4">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-3">
                       <button className="text-blue-500 hover:text-blue-700">
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button className="text-red-500 hover:text-red-700">
+                      <button className="text-orange-500 hover:text-orange-700">
                         <AlertTriangle className="w-4 h-4" />
                       </button>
                       <button className="text-red-500 hover:text-red-700">
@@ -153,10 +167,10 @@ export default function SafeSenseApp() {
                       </button>
                     </div>
                   </td>
-                  <td className="py-4 text-gray-700">{sensor.date}</td>
+                  <td className="py-4 text-gray-700 text-sm">{sensor.date}</td>
                   <td className="py-4">
                     <span
-                      className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      className={`px-3 py-1 rounded-full text-xs font-medium ${
                         sensor.status === 'Active'
                           ? 'bg-green-100 text-green-800'
                           : 'bg-red-100 text-red-800'
@@ -171,7 +185,7 @@ export default function SafeSenseApp() {
           </table>
 
           <div className="flex justify-between items-center mt-6 text-sm text-gray-500">
-            <span>Showing Sensors 1 to 8 of 10</span>
+            <span>Showing Sensors 1 to {Math.min(endIndex, sensors.length)} of {sensors.length}</span>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
@@ -181,6 +195,7 @@ export default function SafeSenseApp() {
                 &lt;
               </button>
               <button
+                onClick={() => setCurrentPage(1)}
                 className={`px-3 py-1 border rounded ${
                   currentPage === 1 ? 'bg-orange-500 text-white' : 'hover:bg-gray-50'
                 }`}
@@ -188,6 +203,7 @@ export default function SafeSenseApp() {
                 1
               </button>
               <button
+                onClick={() => setCurrentPage(2)}
                 className={`px-3 py-1 border rounded ${
                   currentPage === 2 ? 'bg-orange-500 text-white' : 'hover:bg-gray-50'
                 }`}
@@ -195,9 +211,9 @@ export default function SafeSenseApp() {
                 2
               </button>
               <button
-                onClick={() => setCurrentPage(currentPage + 1)}
+                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                 className="px-3 py-1 border rounded hover:bg-gray-50"
-                disabled={currentPage === 2}
+                disabled={currentPage === totalPages}
               >
                 &gt;
               </button>
@@ -210,7 +226,7 @@ export default function SafeSenseApp() {
       <div className="flex justify-end">
         <button
           onClick={handleAddSensor}
-          className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors"
+          className="bg-orange-500 text-white px-8 py-3 rounded-lg hover:bg-orange-600 transition-colors font-medium"
         >
           Add Sensor
         </button>
@@ -227,43 +243,43 @@ export default function SafeSenseApp() {
             <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
               1
             </div>
-            <span className="text-sm text-orange-500">Connect</span>
+            <span className="text-sm text-orange-500 font-medium">Connect</span>
           </div>
-          <div className="w-8 h-px bg-gray-300"></div>
+          <div className="w-12 h-px bg-orange-500"></div>
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center text-sm">
+            <div className="w-8 h-8 bg-gray-200 text-gray-500 rounded-full flex items-center justify-center text-sm font-medium">
               2
             </div>
-            <span className="text-sm text-gray-500">Settings</span>
+            <span className="text-sm text-gray-500 font-medium">Settings</span>
           </div>
-          <div className="w-8 h-px bg-gray-300"></div>
+          <div className="w-12 h-px bg-gray-300"></div>
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center text-sm">
+            <div className="w-8 h-8 bg-gray-200 text-gray-500 rounded-full flex items-center justify-center text-sm font-medium">
               3
             </div>
-            <span className="text-sm text-gray-500">Finish</span>
+            <span className="text-sm text-gray-500 font-medium">Finish</span>
           </div>
         </div>
 
-        <div className="mb-6">
-          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div className="mb-8">
+          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
             <Bluetooth className="w-10 h-10 text-blue-500" />
           </div>
-          <h3 className="text-xl font-semibold mb-2">Automatic Device Detection</h3>
-          <p className="text-gray-600 mb-2">Place the sensor close to the computer for optimal pairing</p>
+          <h3 className="text-xl font-semibold mb-4">Automatic Device Detection</h3>
+          <p className="text-gray-600 mb-4">Place the sensor close to the computer for optimal pairing</p>
           <p className="text-gray-500">Device: <span className="text-gray-400">Safe_Sense R2343561</span></p>
         </div>
 
-        <div className="flex space-x-3">
+        <div className="flex space-x-4">
           <button
-            onClick={() => setCurrentView('list')}
-            className="flex-1 bg-white text-gray-700 px-6 py-3 rounded-lg border hover:bg-gray-50 transition-colors"
+            onClick={() => setCurrentView('empty')}
+            className="flex-1 bg-white text-gray-700 px-6 py-3 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors font-medium"
           >
             Cancel
           </button>
           <button
             onClick={() => setCurrentView('settings')}
-            className="flex-1 bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors"
+            className="flex-1 bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors font-medium"
           >
             Next
           </button>
@@ -281,69 +297,72 @@ export default function SafeSenseApp() {
             <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm">
               ✓
             </div>
-            <span className="text-sm text-orange-500">Connect</span>
+            <span className="text-sm text-orange-500 font-medium">Connect</span>
           </div>
-          <div className="w-8 h-px bg-orange-500"></div>
+          <div className="w-12 h-px bg-orange-500"></div>
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm">
+            <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
               2
             </div>
-            <span className="text-sm text-orange-500">Settings</span>
+            <span className="text-sm text-orange-500 font-medium">Settings</span>
           </div>
-          <div className="w-8 h-px bg-gray-300"></div>
+          <div className="w-12 h-px bg-gray-300"></div>
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center text-sm">
+            <div className="w-8 h-8 bg-gray-200 text-gray-500 rounded-full flex items-center justify-center text-sm font-medium">
               3
             </div>
-            <span className="text-sm text-gray-500">Finish</span>
+            <span className="text-sm text-gray-500 font-medium">Finish</span>
           </div>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-8">
           <div>
-            <h3 className="text-xl font-semibold mb-2">Sensor Name</h3>
-            <p className="text-gray-600 mb-4">Give this Sensor a name</p>
+            <h3 className="text-xl font-semibold mb-2 text-gray-900">Sensor Name</h3>
+            <p className="text-gray-600 mb-6">Give this Sensor a name</p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+              <label className="block text-sm font-medium text-gray-900 mb-2">Name</label>
               <input
                 type="text"
                 value={sensorName}
                 onChange={(e) => setSensorName(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none placeholder-gray-900"
                 placeholder="Enter sensor name"
               />
             </div>
           </div>
 
           <div>
-            <h3 className="text-lg font-semibold mb-2">Function</h3>
-            <p className="text-gray-600 mb-4">What is this sensor monitoring?</p>
+            <h3 className="text-lg font-semibold mb-2 text-gray-900">Function</h3>
+            <p className="text-gray-600 mb-6">What is this sensor monitoring?</p>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Functionalities</label>
-              <select
-                value={sensorFunction}
-                onChange={(e) => setSensorFunction(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-              >
-                <option value="">Select function</option>
-                <option value="Air Temp">Air Temp</option>
-                <option value="Surface Temp">Surface Temp</option>
-                <option value="Air and Surface Temp">Air and Surface Temp</option>
-              </select>
+              <label className="block text-sm font-medium text-gray-900 mb-2">Functionalities</label>
+              <div className="relative">
+                <select
+                  value={sensorFunction}
+                  onChange={(e) => setSensorFunction(e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none appearance-none text-gray-900"
+                >
+                  <option value="" className="text-gray-900">Select function</option>
+                  <option value="Air Temp">Air Temp</option>
+                  <option value="Surface Temp">Surface Temp</option>
+                  <option value="Air and Surface Temp">Air and Surface Temp</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+              </div>
             </div>
           </div>
 
-          <div className="flex space-x-3 pt-4">
+          <div className="flex space-x-4 pt-4">
             <button
               onClick={() => setCurrentView('connect')}
-              className="flex-1 bg-white text-gray-700 px-6 py-3 rounded-lg border hover:bg-gray-50 transition-colors"
+              className="flex-1 bg-white text-gray-700 px-6 py-3 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors font-medium"
             >
               Back
             </button>
             <button
               onClick={handleFinishAddSensor}
               disabled={!sensorName || !sensorFunction}
-              className="flex-1 bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              className="flex-1 bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
             >
               Finish
             </button>
@@ -363,44 +382,44 @@ export default function SafeSenseApp() {
               <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm">
                 ✓
               </div>
-              <span className="text-sm text-orange-500">Address proof</span>
+              <span className="text-sm text-orange-500 font-medium">Address proof</span>
             </div>
-            <div className="w-8 h-px bg-orange-500"></div>
+            <div className="w-12 h-px bg-orange-500"></div>
             <div className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm">
                 ✓
               </div>
-              <span className="text-sm text-orange-500">Bank account</span>
+              <span className="text-sm text-orange-500 font-medium">Bank account</span>
             </div>
-            <div className="w-8 h-px bg-orange-500"></div>
+            <div className="w-12 h-px bg-orange-500"></div>
             <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm">
+              <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-medium">
                 3
               </div>
-              <span className="text-sm text-orange-500">Finish</span>
+              <span className="text-sm text-orange-500 font-medium">Finish</span>
             </div>
           </div>
 
           <div className="mb-8">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
               <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
                 <span className="text-white text-sm">✓</span>
               </div>
             </div>
-            <p className="text-gray-600 mb-2">This sensor is added</p>
+            <p className="text-gray-600 mb-1">This sensor is added</p>
             <p className="text-gray-600">successfully to your Dashboard</p>
           </div>
 
           <div className="space-y-3">
             <button
               onClick={handleDone}
-              className="w-48 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors mx-auto block"
+              className="w-48 bg-orange-500 text-white px-4 py-3 rounded-lg hover:bg-orange-600 transition-colors mx-auto block font-medium"
             >
               Apply Alert
             </button>
             <button
               onClick={handleDone}
-              className="w-48 bg-white text-gray-700 px-4 py-2 rounded-lg border hover:bg-gray-50 transition-colors mx-auto block"
+              className="w-48 bg-white text-gray-700 px-4 py-3 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors mx-auto block font-medium"
             >
               Later
             </button>
@@ -409,10 +428,10 @@ export default function SafeSenseApp() {
       </div>
 
       {/* Done button positioned at bottom right */}
-      <div className="absolute bottom-6 right-6">
+      <div className="absolute bottom-8 right-8">
         <button
           onClick={handleDone}
-          className="bg-orange-500 text-white px-8 py-3 rounded-lg hover:bg-orange-600 transition-colors"
+          className="bg-orange-500 text-white px-8 py-3 rounded-lg hover:bg-orange-600 transition-colors font-medium"
         >
           Done
         </button>
@@ -426,43 +445,43 @@ export default function SafeSenseApp() {
         <h2 className="text-2xl font-bold">{selectedSensor?.name}</h2>
         <button
           onClick={() => setCurrentView('list')}
-          className="bg-white text-gray-700 px-4 py-2 rounded-lg border hover:bg-gray-50 transition-colors"
+          className="bg-white text-gray-700 px-6 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors font-medium"
         >
           Back
         </button>
       </div>
 
       <div className="grid grid-cols-1 gap-6">
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Sensor Details</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between">
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h3 className="text-lg font-semibold mb-6">Sensor Details</h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">ID</span>
-              <span className="font-mono">2323e0000000e</span>
+              <span className="font-mono text-sm">2323e0000000e</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Broadcast Method</span>
               <span>LoRa</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Frequency</span>
               <span>US915</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Model</span>
               <span>SSN 006</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Firmware</span>
               <span>2.3.0</span>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Sensor Alerts</h3>
-          <div className="space-y-2">
-            <div className="flex justify-between">
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h3 className="text-lg font-semibold mb-6">Sensor Alerts</h3>
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Alert Added</span>
               <span>July 20, 2025</span>
             </div>
@@ -470,18 +489,18 @@ export default function SafeSenseApp() {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Sensor History</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between">
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h3 className="text-lg font-semibold mb-6">Sensor History</h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Sensor Added</span>
               <span>July 20, 2025</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Sensor Paused</span>
               <span>Dec 18, 2023</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-600">Sensor Added</span>
               <span>May 10, 2023</span>
             </div>
@@ -510,45 +529,45 @@ export default function SafeSenseApp() {
       case 'details':
         return renderSensorDetails();
       default:
-        return renderSensorsList();
+        return renderEmptyState();
     }
   };
 
   return (
     <div className="flex min-h-screen bg-gray-100">
-      {/* Sidebar */}
-      <aside className="w-60 bg-gray-700 text-white py-6 px-4 fixed h-full">
-        <div className="flex items-center mb-10">
-          <Radio className="w-6 h-6 text-orange-500 mr-2" />
-          <h1 className="text-xl font-bold text-orange-500">Safe Sense</h1>
+      {/* Fixed Sidebar */}
+      <aside className="w-64 bg-gray-700 text-white py-6 px-4 fixed h-full flex flex-col">
+        <div className="mb-10 text-center">
+          <Radio className="w-6 h-6 text-orange-500 mx-auto mb-2" />
+          <h1 className="text-lg font-bold text-orange-500">Safe Sense</h1>
         </div>
         
-        <nav className="space-y-2">
+        <nav className="flex-1 space-y-2">
           {menuItems.map((item, index) => (
             <button
               key={index}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-left transition-colors ${
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors text-left ${
                 item.active
-                  ? 'bg-gray-600 text-white font-medium'
+                  ? 'bg-white text-gray-800'
                   : 'text-gray-300 hover:bg-gray-600 hover:text-white'
               }`}
             >
-              <item.icon className="w-5 h-5 mr-3" />
-              {item.label}
+              <item.icon className="w-5 h-5" />
+              <span className="text-sm font-medium">{item.label}</span>
             </button>
           ))}
         </nav>
       </aside>
 
       {/* Main Content */}
-      <main className="ml-60 flex-1 p-6 relative">
+      <main className="ml-64 flex-1 p-6 relative">
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800">
             {currentView === 'details' ? 'Alerts' : 'Sensors'}
           </h1>
           <div className="flex items-center space-x-4">
-            <span className="text-gray-600">Log out</span>
+            <span className="text-gray-600 text-sm">Log out</span>
             <div className="w-8 h-8 bg-orange-500 rounded-full"></div>
           </div>
         </div>
