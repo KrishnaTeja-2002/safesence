@@ -260,12 +260,12 @@ export default function Dashboard() {
               <div className="flex flex-col w-12 ml-6">
                 <div className="text-sm font-medium text-blue-600 mb-6 text-right">Freezer</div>
                 <div className="flex flex-col-reverse h-80 text-xs text-gray-500 justify-between items-start pl-2">
-                  <span className="leading-none">-30</span>
-                  <span className="leading-none">-25</span>
-                  <span className="leading-none">-20</span>
-                  <span className="leading-none">-15</span>
-                  <span className="leading-none">-10</span>
                   <span className="leading-none">-5</span>
+                  <span className="leading-none">-10</span>
+                  <span className="leading-none">-15</span>
+                  <span className="leading-none">-20</span>
+                  <span className="leading-none">-25</span>
+                  <span className="leading-none">-30</span>
                 </div>
               </div>
             </div>
