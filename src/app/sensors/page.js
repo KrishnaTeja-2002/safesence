@@ -21,7 +21,11 @@ export default function Sensors() {
       <aside className="w-60 bg-gray-700 text-white py-6 px-4 fixed h-full">
         <h1 className="text-2xl font-bold mb-10 text-orange-500">Safe Sense</h1>
         <ul className="space-y-4">
+<<<<<<< HEAD
           {['Dashboard', 'Alerts', 'Sensors', 'History', 'Team', 'Account'].map((item, idx) => (
+=======
+          {[':house: Dashboard', ':warning: Alerts', ':satellite_antenna: Sensors', ':clock4: History', ':silhouettes: Team', ':cog: Account'].map((item, idx) => (
+>>>>>>> 1cdd23e703c31decb515a995ca8784130f8b4062
             <li key={idx}>
               <button
                 className={`w-full text-left px-4 py-2 rounded hover:bg-gray-600 ${idx === 2 ? 'bg-gray-600 font-semibold' : ''}`}
@@ -227,3 +231,5 @@ export default function Sensors() {
     </div>
   );
 }
+
+
