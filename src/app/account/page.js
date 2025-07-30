@@ -63,8 +63,10 @@ export default function Account() {
       <main className="flex-1 p-6">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-3xl font-bold">Account Settings</h2>
-       <button className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Log out</button>
-          <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">FA</div>
+          <div className="flex items-center gap-4">
+            <button className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Log out</button>
+            <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">FA</div>
+          </div>
         </div>
         <div
           className={`rounded-lg shadow p-6 ${preferences.darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}
