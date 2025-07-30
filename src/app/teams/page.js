@@ -85,7 +85,7 @@ export default function Team() {
               >
                 Log out
               </button>
-              <div className="w-10 h-10 bg-yellow-600 rounded-full"></div>
+              <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">FA</div>
             </div>
           </div>
 

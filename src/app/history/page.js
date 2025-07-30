@@ -63,8 +63,8 @@ export default function Account() {
             <h2 className="text-3xl font-bold">Account Settings</h2>
             <div className="flex items-center space-x-4">
               <button className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Log out</button>
-              <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-semibold text-sm">FA</span>
+              <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                FA
               </div>
             </div>
           </div>

@@ -70,6 +70,7 @@ export default function Account() {
           >
             Log out
           </button>
+          <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">FA</div>
         </div>
         <div
           className={`rounded-lg shadow p-6 ${preferences.darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}

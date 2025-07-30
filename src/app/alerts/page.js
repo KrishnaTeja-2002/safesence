@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useRef, Component } from 'react';
@@ -99,7 +98,9 @@ export default function Alerts() {
           >
             Log out
           </button>
-          <div className="w-10 h-10 bg-yellow-600 rounded-full"></div>
+          <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+            FA
+          </div>
         </div>
       </div>
 
@@ -253,7 +254,9 @@ export default function Alerts() {
           >
             Log out
           </button>
-          <div className="w-10 h-10 bg-yellow-600 rounded-full"></div>
+          <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+            FA
+          </div>
         </div>
       </div>
 
@@ -458,7 +461,9 @@ export default function Alerts() {
           >
             Log out
           </button>
-          <div className="w-10 h-10 bg-yellow-600 rounded-full"></div>
+          <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+            FA
+          </div>
         </div>
       </div>
 
@@ -576,7 +581,7 @@ export default function Alerts() {
         <div className={`rounded-lg shadow p-6 ${preferences.darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
           <h4 className="text-lg font-semibold mb-2">Alert Settings</h4>
           <p className={`text-sm ${preferences.darkMode ? 'text-gray-400' : 'text-gray-500'} mb-4`}>
-            Which sensor should this alert be assigned to?
+            Configure your alert notifications and messages.
           </p>
 
           <div className="mb-6">
@@ -660,6 +665,7 @@ export default function Alerts() {
             Create Alert
           </button>
         </div>
+
         <div className="mt-6">
           <label className="block text-sm font-medium mb-2">Mode</label>
           <label style={sliderStyle} className="relative inline-block cursor-pointer">

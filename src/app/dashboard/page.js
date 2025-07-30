@@ -211,15 +211,11 @@ export default function Dashboard() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-lg font-semibold text-gray-900">Temperature Monitoring System</h3>
-            <div className="flex space-x-4">
-              <span className="text-green-600 font-medium">Fridge</span>
-              <span className="text-blue-600 font-medium">Freezer</span>
-            </div>
           </div>
           <div className="relative">
             <div className="flex">
               <div className="flex flex-col w-12 mr-4">
-                <div className="flex flex-col-reverse h-64 text-xs text-gray-500 justify-between items-end pr-2">
+                <div className="flex flex-col-reverse h-64 text-xs text-gray-500 justify-between items-end pr-2 mt-6">
                   <span>0°F</span>
                   <span>10°F</span>
                   <span>20°F</span>
@@ -230,11 +226,23 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="flex-1 relative">
+                {/* Fridge and Freezer labels at top */}
+                <div className="absolute -top-6 left-0 right-0 flex justify-between z-10">
+                  <span className="text-green-600 font-medium text-sm">Fridge</span>
+                  <span className="text-blue-600 font-medium text-sm">Freezer</span>
+                </div>
                 <div className="absolute inset-0 h-64">
                   <div className="h-full flex flex-col justify-between">
                     {[...Array(7)].map((_, i) => (
                       <div key={i} className="border-t border-gray-200 w-full"></div>
                     ))}
+                  </div>
+                  {/* Vertical lines at edges */}
+                  <div className="absolute inset-0">
+                    {/* Left edge vertical line */}
+                    <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-gray-200"></div>
+                    {/* Right edge vertical line */}
+                    <div className="absolute right-0 top-0 bottom-0 w-0.5 bg-gray-200"></div>
                   </div>
                 </div>
                 <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-100 border-2 border-green-300 rounded-lg px-3 py-2 z-10">
@@ -292,7 +300,7 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="flex flex-col w-12 ml-4">
-                <div className="flex flex-col-reverse h-64 text-xs text-gray-500 justify-between items-start pl-2">
+                <div className="flex flex-col-reverse h-64 text-xs text-gray-500 justify-between items-start pl-2 mt-6">
                   <span>-30°F</span>
                   <span>-20°F</span>
                   <span>-10°F</span>

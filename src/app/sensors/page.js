@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, Component } from 'react';
@@ -544,7 +543,9 @@ export default function Sensors() {
               <button className="px-4 py-2 rounded bg-red-500 text-white hover:bg-red-600">
                 Log out
               </button>
-              <div className="w-10 h-10 bg-yellow-600 rounded-full"></div>
+              <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                FA
+              </div>
             </div>
           </div>
           <div>{renderContent()}</div>
