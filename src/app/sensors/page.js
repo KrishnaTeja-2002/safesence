@@ -2,7 +2,7 @@
 
 import { useState, Component } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bluetooth, ChevronDown, Edit, Trash, AlertTriangle } from 'lucide-react';
+import { Bluetooth, ChevronDown, Edit, Trash, AlertTriangle, X } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 
 class ErrorBoundary extends Component {
@@ -37,12 +37,16 @@ export default function Sensors() {
   const [sensorFunction, setSensorFunction] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState('Newest');
+  const [connectedDevice, setConnectedDevice] = useState(null); // Track connected device
+  const [deviceId, setDeviceId] = useState(null); // Track device ID for reconnection
 
   const router = useRouter();
 
   const handleAddSensor = () => {
     setCurrentView('connect');
     setStep(1);
+    setConnectedDevice(null);
+    setDeviceId(null);
   };
 
   const handleNextStep = () => {
@@ -66,6 +70,8 @@ export default function Sensors() {
       setSensors([...sensors, newSensor]);
       setSensorName('');
       setSensorFunction('');
+      setConnectedDevice(null);
+      setDeviceId(null);
       setCurrentView('success');
     }
   };
@@ -104,6 +110,39 @@ export default function Sensors() {
       </div>
     </div>
   );
+
+  const connectToBluetoothDevice = async () => {
+    try {
+      if (connectedDevice && deviceId) {
+        // Skip prompt if already connected to the same device
+        console.log('Already connected to:', connectedDevice);
+        return;
+      }
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ['battery_service'],
+      });
+      console.log('Connected to device:', device.name);
+      setConnectedDevice(device.name);
+      setDeviceId(device.id); // Store device ID to track
+      setCurrentView('settings');
+    } catch (error) {
+      console.error('Bluetooth connection failed:', error);
+      if (error.message.includes('User cancelled')) {
+        setConnectedDevice(null); // Reset on cancellation
+        setDeviceId(null);
+        alert('Connection cancelled. Please try again or select a device.');
+      } else {
+        alert(`Bluetooth connection failed: ${error.message}. Ensure your phone is discoverable. For iPhone, use the Bluefy app.`);
+      }
+    }
+  };
+
+  const disconnectDevice = () => {
+    setConnectedDevice(null);
+    setDeviceId(null);
+    console.log('Disconnected from device');
+  };
 
   const renderSensorsList = () => (
     <div className="space-y-6">
@@ -147,6 +186,7 @@ export default function Sensors() {
                 <th className="pb-3 font-medium text-sm text-left">Tools</th>
                 <th className="pb-3 font-medium text-sm text-left">Date</th>
                 <th className="pb-3 font-medium text-sm text-left">Status</th>
+                <th className="pb-3 font-medium text-sm text-left">Alert</th>
               </tr>
             </thead>
             <tbody>
@@ -184,6 +224,7 @@ export default function Sensors() {
                       {sensor.status}
                     </span>
                   </td>
+                  <td className="py-4 text-sm text-gray-700">{sensor.alert}</td>
                 </tr>
               ))}
             </tbody>
@@ -265,15 +306,26 @@ export default function Sensors() {
         </div>
 
         <div className="mb-8">
-          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <div
+            className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6 cursor-pointer"
+            onClick={connectToBluetoothDevice}
+          >
             <Bluetooth className="w-10 h-10 text-blue-500" />
           </div>
           <h3 className="text-xl font-semibold mb-4">Automatic Device Detection</h3>
-          <p className="mb-4 text-gray-600">Place the sensor close to the computer for optimal pairing</p>
-          <p className="text-sm text-gray-500">Device: <span className="text-gray-400">Safe_Sense R2343561</span></p>
+          <p className="mb-4 text-gray-600">Pair with your phone (e.g., Android or Bluefy on iPhone)</p>
+          <p className="text-sm text-gray-500">Device: <span className="text-gray-400">{connectedDevice || 'Not connected'}</span></p>
         </div>
 
         <div className="flex space-x-4">
+          {connectedDevice && (
+            <button
+              onClick={disconnectDevice}
+              className="px-4 py-2 rounded-lg font-medium text-white bg-red-500 hover:bg-red-600"
+            >
+              <X className="w-4 h-4 inline mr-1" /> Disconnect
+            </button>
+          )}
           <button
             onClick={() => setCurrentView('list')}
             className="flex-1 px-6 py-3 rounded-lg font-medium bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
@@ -281,8 +333,9 @@ export default function Sensors() {
             Cancel
           </button>
           <button
-            onClick={() => setCurrentView('settings')}
+            onClick={handleNextStep}
             className="flex-1 px-6 py-3 rounded-lg font-medium text-white border bg-orange-500 hover:bg-orange-600 border-orange-500"
+            disabled={!connectedDevice}
           >
             Next
           </button>
@@ -482,9 +535,9 @@ export default function Sensors() {
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-600">Alert Added</span>
-              <span>July 20, 2025</span>
+              <span>{selectedSensor?.date || 'N/A'}</span>
             </div>
-            <div className="text-blue-500 text-sm">(Fridge Temperature)</div>
+            <div className="text-blue-500 text-sm">({selectedSensor?.function || 'N/A'})</div>
           </div>
         </div>
 
@@ -493,7 +546,7 @@ export default function Sensors() {
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-gray-600">Sensor Added</span>
-              <span>July 20, 2025</span>
+              <span>{selectedSensor?.date || 'N/A'}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-gray-600">Sensor Paired</span>
