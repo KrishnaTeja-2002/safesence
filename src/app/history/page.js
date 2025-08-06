@@ -1,9 +1,9 @@
-
 'use client';
 
 import { useState, useRef, useEffect, Component } from 'react';
 import { useRouter } from 'next/navigation';
-import Sidebar from '../components/Sidebar';
+import Sidebar from '../../components/Sidebar';
+import { useDarkMode } from '../DarkModeContext';
 
 class ErrorBoundary extends Component {
   state = { hasError: false, error: null };
@@ -12,7 +12,7 @@ class ErrorBoundary extends Component {
   }
   render() {
     if (this.state.hasError) {
-      return <div>Error: {this.state.error?.message || 'Something went wrong'}</div>;
+      return <div className={`p-4 ${useDarkMode ? 'text-red-400' : 'text-red-500'}`}>Error: {this.state.error?.message || 'Something went wrong'}</div>;
     }
     return this.props.children;
   }
@@ -24,8 +24,8 @@ export default function History() {
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const chartRef = useRef(null);
   const router = useRouter();
+  const { darkMode } = useDarkMode();
 
-  // Sample data for temperature history (could be fetched from an API or shared state)
   const temperatureData = [
     { x: 0, y: 35, time: 'Jul 28, 2025, 07:09 PM CDT' },
     { x: 1, y: 38, time: 'Jul 28, 2025, 08:09 PM CDT' },
@@ -35,7 +35,6 @@ export default function History() {
     { x: 5, y: 36, time: 'Jul 28, 2025, 12:09 AM CDT' },
   ];
 
-  // Sensor list consistent with alerts.jsx
   const sensors = [
     'Freezer 1',
     'Drive Thru Fridge',
@@ -76,7 +75,7 @@ export default function History() {
 
   const getPath = () => {
     const height = 256;
-    const scaleY = height / 60; // Scale to 60°F max
+    const scaleY = height / 60;
     return `
       M 0,${height - temperatureData[0].y * scaleY}
       ${temperatureData
@@ -88,29 +87,31 @@ export default function History() {
 
   return (
     <ErrorBoundary>
-      <div className="flex min-h-screen bg-gray-100 text-gray-800">
-        <Sidebar activeKey="history" />
+      <div className={`flex min-h-screen bg-${darkMode ? 'gray-800' : 'gray-100'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+        <Sidebar activeKey="history" darkMode={darkMode} />
         <main className="flex-1 p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-3xl font-bold">History</h2>
             <div className="flex items-center space-x-4">
-              <button className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Log out</button>
-              <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+              <button className={`px-4 py-2 rounded ${darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'}`}>
+                Log out
+              </button>
+              <div className={`w-10 h-10 ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} rounded-full flex items-center justify-center text-white text-sm font-bold`}>
                 FA
               </div>
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-6 border-2 border-blue-300">
+          <div className={`bg-${darkMode ? 'gray-800' : 'white'} rounded-lg shadow p-6 border-2 ${darkMode ? 'border-blue-700' : 'border-blue-300'}`}>
             <div className="mb-6">
               <h3 className="text-xl font-semibold">Temperature History</h3>
-              <p className="text-green-700 text-sm">{selectedSensor}</p>
+              <p className={`text-${darkMode ? 'green-400' : 'green-700'} text-sm`}>{selectedSensor}</p>
             </div>
             <div className="flex justify-end items-center space-x-2 mb-6">
               <select
                 value={selectedSensor}
                 onChange={(e) => setSelectedSensor(e.target.value)}
-                className="border rounded px-2 py-1 bg-white border-gray-300 text-gray-900"
+                className={`border rounded px-2 py-1 ${darkMode ? 'bg-gray-700 text-gray-300 border-gray-600' : 'bg-white text-gray-900 border-gray-300'}`}
               >
                 {sensors.map((sensor, idx) => (
                   <option key={idx} value={sensor}>{sensor}</option>
@@ -119,7 +120,7 @@ export default function History() {
               <select
                 value={selectedTimeRange}
                 onChange={(e) => setSelectedTimeRange(e.target.value)}
-                className="border rounded px-2 py-1 bg-white border-gray-300 text-gray-900"
+                className={`border rounded px-2 py-1 ${darkMode ? 'bg-gray-700 text-gray-300 border-gray-600' : 'bg-white text-gray-900 border-gray-300'}`}
               >
                 <option>Show: Temp</option>
                 <option>6H</option>
@@ -132,14 +133,14 @@ export default function History() {
             <div className="relative">
               <div className="flex justify-center">
                 <div className="flex flex-col items-end pr-4">
-                  <div className="text-sm text-gray-500 transform -rotate-90 origin-bottom-left absolute top-1/2 -translate-y-1/2 -left-2 w-64 text-center">
+                  <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} transform -rotate-90 origin-bottom-left absolute top-1/2 -translate-y-1/2 -left-2 w-64 text-center`}>
                     Temperature (Fahrenheit)
                   </div>
                   <div className="flex flex-col justify-between h-64 text-sm text-gray-400">
                     {[60, 50, 40, 30, 20, 10, 0].map((val) => (
                       <div key={val} className="flex items-center">
-                        <span className="leading-none mr-2">{val}</span>
-                        <div className="w-4 border-t border-gray-200"></div>
+                        <span className={`leading-none mr-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{val}</span>
+                        <div className={`w-4 border-t ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}></div>
                       </div>
                     ))}
                   </div>
@@ -147,7 +148,7 @@ export default function History() {
 
                 <div className="flex-1 relative mx-auto" ref={chartRef}>
                   <div className="h-64">
-                    <svg width="100%" height="256" className="border-b border-gray-200">
+                    <svg width="100%" height="256" className={`border-b ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}>
                       {[0, 10, 20, 30, 40, 50, 60].map((val) => (
                         <line
                           key={val}
@@ -155,14 +156,14 @@ export default function History() {
                           y1={256 - (val / 60) * 256}
                           x2="100%"
                           y2={256 - (val / 60) * 256}
-                          stroke="#e5e7eb"
+                          stroke={darkMode ? '#4b5563' : '#e5e7eb'}
                           strokeWidth="1"
                         />
                       ))}
                       <path
                         d={getPath()}
-                        fill="#d1fae5"
-                        stroke="green"
+                        fill={darkMode ? '#14532d' : '#d1fae5'}
+                        stroke={darkMode ? '#22c55e' : 'green'}
                         strokeWidth="3"
                       />
                       <g>
@@ -171,7 +172,7 @@ export default function History() {
                           y="100"
                           width="100"
                           height="30"
-                          fill="#d1fae5"
+                          fill={darkMode ? '#14532d' : '#d1fae5'}
                           rx="4"
                           style={{ pointerEvents: 'none' }}
                         />
@@ -179,7 +180,7 @@ export default function History() {
                           x="50%"
                           y="115"
                           textAnchor="middle"
-                          fill="#065f46"
+                          fill={darkMode ? '#22c55e' : '#065f46'}
                           fontSize="12"
                           style={{ pointerEvents: 'none' }}
                         >
@@ -189,7 +190,7 @@ export default function History() {
                           x="50%"
                           y="130"
                           textAnchor="middle"
-                          fill="#065f46"
+                          fill={darkMode ? '#22c55e' : '#065f46'}
                           fontSize="10"
                           style={{ pointerEvents: 'none' }}
                         >
@@ -203,14 +204,14 @@ export default function History() {
                             y={256 - (hoveredPoint.y / 60) * 256 - 40}
                             width="100"
                             height="30"
-                            fill="#d1fae5"
+                            fill={darkMode ? '#14532d' : '#d1fae5'}
                             rx="4"
                           />
                           <text
                             x={((hoveredPoint.x / (temperatureData.length - 1)) * 100) + '%'}
                             y={256 - (hoveredPoint.y / 60) * 256 - 25}
                             textAnchor="middle"
-                            fill="#065f46"
+                            fill={darkMode ? '#22c55e' : '#065f46'}
                             fontSize="12"
                           >
                             Temperature {hoveredPoint.y}°F
@@ -219,7 +220,7 @@ export default function History() {
                             x={((hoveredPoint.x / (temperatureData.length - 1)) * 100) + '%'}
                             y={256 - (hoveredPoint.y / 60) * 256 - 10}
                             textAnchor="middle"
-                            fill="#065f46"
+                            fill={darkMode ? '#22c55e' : '#065f46'}
                             fontSize="10"
                           >
                             {hoveredPoint.time}
@@ -230,7 +231,7 @@ export default function History() {
                   </div>
                   <div className="mt-4 flex justify-between w-full px-4">
                     {['6H', '12H', '1D', '1M', '3M'].map((label) => (
-                      <span key={label} className="text-xs text-gray-600">{label}</span>
+                      <span key={label} className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{label}</span>
                     ))}
                   </div>
                 </div>

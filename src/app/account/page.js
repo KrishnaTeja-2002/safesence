@@ -1,9 +1,11 @@
-'use client';
+"use client";
 
 import { useState } from 'react';
-import Sidebar from '../components/Sidebar';
+import Sidebar from '../../components/Sidebar';
+import { useDarkMode } from '../DarkModeContext';
 
 export default function Account() {
+  const { darkMode, toggleDarkMode } = useDarkMode();
   const [preferences, setPreferences] = useState({
     tempScale: 'Fahrenheit',
     dashboard: ['Temperature Monitoring System', 'Sensors', 'Users', 'Alerts', 'Notifications'],
@@ -30,10 +32,13 @@ export default function Account() {
 
   const handleSave = () => {
     setSavedPreferences({ ...preferences });
+    if (preferences.darkMode !== darkMode) {
+      toggleDarkMode();
+    }
   };
 
-  const toggleDarkMode = () => {
-    setPreferences((prev) => ({ ...prev, darkMode: !prev.darkMode }));
+  const handleCloseSaved = () => {
+    setSavedPreferences(null);
   };
 
   const sliderStyle = {
@@ -57,8 +62,20 @@ export default function Account() {
     borderRadius: '50%',
   };
 
+  const savedSliderBeforeStyle = {
+    position: 'absolute',
+    content: '""',
+    height: '26px',
+    width: '26px',
+    left: savedPreferences?.darkMode ? 'calc(100% - 30px)' : '4px',
+    bottom: '4px',
+    backgroundColor: '#fff',
+    transition: '0.4s',
+    borderRadius: '50%',
+  };
+
   return (
-    <div className={`flex min-h-screen ${preferences.darkMode ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-800'}`}>
+    <div className={`flex min-h-screen ${darkMode ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-800'}`}>
       <Sidebar />
       <main className="flex-1 p-6">
         <div className="flex justify-between items-center mb-6">
@@ -69,7 +86,7 @@ export default function Account() {
           </div>
         </div>
         <div
-          className={`rounded-lg shadow p-6 ${preferences.darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}
+          className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}
         >
           <h3 className="text-xl font-semibold mb-6">Preferences</h3>
           <div className="space-y-6">
@@ -80,7 +97,7 @@ export default function Account() {
                 value={preferences.tempScale}
                 onChange={handleChange}
                 className={`border rounded px-2 py-1 w-full ${
-                  preferences.darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white'
+                  darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white'
                 }`}
               >
                 <option>Fahrenheit</option>
@@ -90,7 +107,7 @@ export default function Account() {
             <div>
               <label className="block text-sm font-medium mb-2">Dashboard</label>
               <p
-                className={`text-sm mb-2 ${preferences.darkMode ? 'text-gray-400' : 'text-gray-500'}`}
+                className={`text-sm mb-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}
               >
                 Select which data points (if supported by your sensor) to show on the dashboard
               </p>
@@ -122,7 +139,7 @@ export default function Account() {
                 value={preferences.timeZone}
                 onChange={handleChange}
                 className={`border rounded px-2 py-1 w-full ${
-                  preferences.darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white'
+                  darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white'
                 }`}
               >
                 <option>AKDT</option>
@@ -136,7 +153,10 @@ export default function Account() {
                 <input
                   type="checkbox"
                   checked={preferences.darkMode}
-                  onChange={toggleDarkMode}
+                  onChange={() => {
+                    toggleDarkMode();
+                    setPreferences((prev) => ({ ...prev, darkMode: !prev.darkMode }));
+                  }}
                   className="absolute opacity-0 w-0 h-0"
                 />
                 <span style={sliderBeforeStyle} className="absolute cursor-pointer"></span>
@@ -145,7 +165,7 @@ export default function Account() {
           </div>
           <button
             className={`mt-6 px-4 py-2 rounded text-white border ${
-              preferences.darkMode
+              darkMode
                 ? 'bg-orange-700 hover:bg-orange-800 border-orange-700'
                 : 'bg-orange-500 hover:bg-orange-600 border-orange-500'
             }`}
@@ -156,9 +176,18 @@ export default function Account() {
         </div>
         {savedPreferences && (
           <div
-            className={`mt-6 rounded-lg shadow p-6 ${preferences.darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}
+            className={`mt-6 rounded-lg shadow p-6 ${savedPreferences.darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}
           >
-            <h3 className="text-xl font-semibold mb-6">Saved Preferences</h3>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold">Saved Preferences</h3>
+              <button
+                onClick={handleCloseSaved}
+                className="text-xl font-bold hover:text-red-500"
+                aria-label="Close saved preferences"
+              >
+                ×
+              </button>
+            </div>
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium mb-2">Temp Scale</label>
@@ -167,7 +196,7 @@ export default function Account() {
                   value={savedPreferences.tempScale}
                   disabled
                   className={`border rounded px-2 py-1 w-full ${
-                    preferences.darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-gray-100 text-gray-700'
+                    savedPreferences.darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-gray-100 text-gray-700'
                   }`}
                 >
                   <option>Fahrenheit</option>
@@ -177,7 +206,7 @@ export default function Account() {
               <div>
                 <label className="block text-sm font-medium mb-2">Dashboard</label>
                 <p
-                  className={`text-sm mb-2 ${preferences.darkMode ? 'text-gray-400' : 'text-gray-500'}`}
+                  className={`text-sm mb-2 ${savedPreferences.darkMode ? 'text-gray-400' : 'text-gray-500'}`}
                 >
                   Saved data points based on your selection
                 </p>
@@ -209,7 +238,7 @@ export default function Account() {
                   value={savedPreferences.timeZone}
                   disabled
                   className={`border rounded px-2 py-1 w-full ${
-                    preferences.darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-gray-100 text-gray-700'
+                    savedPreferences.darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-gray-100 text-gray-700'
                   }`}
                 >
                   <option>AKDT</option>
@@ -226,7 +255,7 @@ export default function Account() {
                     disabled
                     className="absolute opacity-0 w-0 h-0"
                   />
-                  <span style={sliderBeforeStyle} className="absolute cursor-pointer"></span>
+                  <span style={savedSliderBeforeStyle} className="absolute cursor-pointer"></span>
                 </label>
               </div>
             </div>
