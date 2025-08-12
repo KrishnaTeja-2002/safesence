@@ -12,7 +12,7 @@ class ErrorBoundary extends Component {
   }
   render() {
     if (this.state.hasError) {
-      return <div className={`p-4 ${useDarkMode ? 'text-red-400' : 'text-red-500'}`}>Error: {this.state.error?.message || 'Something went wrong'}</div>;
+      return <div className={`p-4 ${this.props.darkMode ? 'text-red-400' : 'text-red-500'}`}>Error: {this.state.error?.message || 'Something went wrong'}</div>;
     }
     return this.props.children;
   }
@@ -26,13 +26,20 @@ export default function History() {
   const router = useRouter();
   const { darkMode } = useDarkMode();
 
+  // Sample data for temperature history with more realistic curve
   const temperatureData = [
-    { x: 0, y: 35, time: 'Jul 28, 2025, 07:09 PM CDT' },
-    { x: 1, y: 38, time: 'Jul 28, 2025, 08:09 PM CDT' },
-    { x: 2, y: 42, time: 'Jul 28, 2025, 09:09 PM CDT' },
-    { x: 3, y: 40, time: 'Jul 28, 2025, 10:09 PM CDT' },
-    { x: 4, y: 38, time: 'Jul 28, 2025, 11:09 PM CDT' },
-    { x: 5, y: 36, time: 'Jul 28, 2025, 12:09 AM CDT' },
+    { x: 0, y: 32, time: 'July 3, 2025', timeDetail: '12:00 PM' },
+    { x: 1, y: 33, time: 'July 3, 2025', timeDetail: '1:00 PM' },
+    { x: 2, y: 35, time: 'July 3, 2025', timeDetail: '2:00 PM' },
+    { x: 3, y: 37, time: 'July 3, 2025', timeDetail: '3:00 PM' },
+    { x: 4, y: 36, time: 'July 3, 2025', timeDetail: '4:00 PM' },
+    { x: 5, y: 35, time: 'July 3, 2025', timeDetail: '4:53 PM' },
+    { x: 6, y: 34, time: 'July 3, 2025', timeDetail: '5:00 PM' },
+    { x: 7, y: 33, time: 'July 3, 2025', timeDetail: '6:00 PM' },
+    { x: 8, y: 31, time: 'July 3, 2025', timeDetail: '7:00 PM' },
+    { x: 9, y: 33, time: 'July 3, 2025', timeDetail: '8:00 PM' },
+    { x: 10, y: 35, time: 'July 3, 2025', timeDetail: '9:00 PM' },
+    { x: 11, y: 38, time: 'July 3, 2025', timeDetail: '10:00 PM' },
   ];
 
   const sensors = [
@@ -51,42 +58,73 @@ export default function History() {
       if (chartRef.current) {
         const rect = chartRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const dataPointIndex = Math.min(
-          Math.max(Math.floor((x / rect.width) * (temperatureData.length - 1)), 0),
-          temperatureData.length - 1
-        );
-        setHoveredPoint(temperatureData[dataPointIndex]);
+        const y = e.clientY - rect.top;
+        
+        // Check if mouse is near any data point
+        let closestPoint = null;
+        let minDistance = Infinity;
+        
+        temperatureData.forEach((point, i) => {
+          const pointX = (i / (temperatureData.length - 1)) * (rect.width - 40); // Account for padding
+          const pointY = 300 - ((point.y - 10) / 50) * 300; // Scale from 10-60°F range
+          const distance = Math.sqrt(Math.pow(x - pointX, 2) + Math.pow(y - pointY, 2));
+          
+          if (distance < 25 && distance < minDistance) { // Within 25px of the point
+            minDistance = distance;
+            closestPoint = { ...point, index: i };
+          }
+        });
+        
+        setHoveredPoint(closestPoint);
       }
     };
+
+    const handleMouseLeave = () => setHoveredPoint(null);
 
     const chartElement = chartRef.current;
     if (chartElement) {
       chartElement.addEventListener('mousemove', handleMouseMove);
-      chartElement.addEventListener('mouseleave', () => setHoveredPoint(null));
+      chartElement.addEventListener('mouseleave', handleMouseLeave);
     }
 
     return () => {
       if (chartElement) {
         chartElement.removeEventListener('mousemove', handleMouseMove);
-        chartElement.removeEventListener('mouseleave', () => setHoveredPoint(null));
+        chartElement.removeEventListener('mouseleave', handleMouseLeave);
       }
     };
   }, [temperatureData]);
 
-  const getPath = () => {
-    const height = 256;
-    const scaleY = height / 60;
-    return `
-      M 0,${height - temperatureData[0].y * scaleY}
-      ${temperatureData
-        .map((point, i) => `${(i / (temperatureData.length - 1)) * 100}%,${height - point.y * scaleY}`)
-        .join(' L ')}
-      L 100%,${height} L 0,${height} Z
-    `;
+  const getLinePath = () => {
+    const height = 300;
+    const width = 100;
+    const points = temperatureData.map((point, i) => {
+      const x = (i / (temperatureData.length - 1)) * width;
+      const y = height - ((point.y - 10) / 50) * height; // Scale from 10-60°F
+      return `${x},${y}`;
+    });
+    
+    return `M ${points.join(' L ')}`;
+  };
+
+  const getAreaPath = () => {
+    const height = 300;
+    const width = 100;
+    const points = temperatureData.map((point, i) => {
+      const x = (i / (temperatureData.length - 1)) * width;
+      const y = height - ((point.y - 10) / 50) * height;
+      return `${x},${y}`;
+    });
+    
+    // Start from bottom left, draw the line, then close to bottom right
+    const firstPoint = points[0].split(',');
+    const lastPoint = points[points.length - 1].split(',');
+    
+    return `M ${firstPoint[0]},${height} L ${points.join(' L ')} L ${lastPoint[0]},${height} Z`;
   };
 
   return (
-    <ErrorBoundary>
+    <ErrorBoundary darkMode={darkMode}>
       <div className={`flex min-h-screen bg-${darkMode ? 'gray-800' : 'gray-100'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
         <Sidebar activeKey="history" darkMode={darkMode} />
         <main className="flex-1 p-6">
@@ -130,109 +168,101 @@ export default function History() {
                 <option>3M</option>
               </select>
             </div>
+            
             <div className="relative">
-              <div className="flex justify-center">
-                <div className="flex flex-col items-end pr-4">
-                  <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} transform -rotate-90 origin-bottom-left absolute top-1/2 -translate-y-1/2 -left-2 w-64 text-center`}>
+              <div className="flex">
+                <div className="flex flex-col items-end pr-4 mr-4">
+                  <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} transform -rotate-90 origin-bottom-left absolute top-1/2 -translate-y-1/2 -left-8 w-64 text-center font-medium`}>
                     Temperature (Fahrenheit)
                   </div>
-                  <div className="flex flex-col justify-between h-64 text-sm text-gray-400">
-                    {[60, 50, 40, 30, 20, 10, 0].map((val) => (
+                  <div className="flex flex-col justify-between h-80 text-sm text-gray-500">
+                    {[60, 50, 40, 30, 20, 10].map((val) => (
                       <div key={val} className="flex items-center">
-                        <span className={`leading-none mr-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{val}</span>
-                        <div className={`w-4 border-t ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}></div>
+                        <span className={`leading-none mr-3 w-6 text-right ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{val}</span>
+                        <div className={`w-2 border-t ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}></div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex-1 relative mx-auto" ref={chartRef}>
-                  <div className="h-64">
-                    <svg width="100%" height="256" className={`border-b ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}>
-                      {[0, 10, 20, 30, 40, 50, 60].map((val) => (
+                <div className="flex-1 relative" ref={chartRef}>
+                  <div className="h-80 relative">
+                    <svg width="100%" height="300" viewBox="0 0 100 300" preserveAspectRatio="none" className={`border-b border-l ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                      {/* Horizontal grid lines */}
+                      {[10, 20, 30, 40, 50, 60].map((val) => (
                         <line
                           key={val}
                           x1="0"
-                          y1={256 - (val / 60) * 256}
-                          x2="100%"
-                          y2={256 - (val / 60) * 256}
+                          y1={300 - ((val - 10) / 50) * 300}
+                          x2="100"
+                          y2={300 - ((val - 10) / 50) * 300}
                           stroke={darkMode ? '#4b5563' : '#e5e7eb'}
-                          strokeWidth="1"
+                          strokeWidth="0.2"
+                          strokeDasharray="1,1"
+                          vectorEffect="non-scaling-stroke"
                         />
                       ))}
+                      
+                      {/* Area fill */}
                       <path
-                        d={getPath()}
-                        fill={darkMode ? '#14532d' : '#d1fae5'}
-                        stroke={darkMode ? '#22c55e' : 'green'}
-                        strokeWidth="3"
+                        d={getAreaPath()}
+                        fill={darkMode ? 'rgba(34, 197, 94, 0.3)' : 'rgba(34, 197, 94, 0.2)'}
+                        stroke="none"
                       />
-                      <g>
-                        <rect
-                          x="45%"
-                          y="100"
-                          width="100"
-                          height="30"
-                          fill={darkMode ? '#14532d' : '#d1fae5'}
-                          rx="4"
-                          style={{ pointerEvents: 'none' }}
+                      
+                      {/* Temperature line */}
+                      <path
+                        d={getLinePath()}
+                        fill="none"
+                        stroke="#22c55e"
+                        strokeWidth="1"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                      
+                      {/* Data points */}
+                      {temperatureData.map((point, i) => (
+                        <circle
+                          key={i}
+                          cx={(i / (temperatureData.length - 1)) * 100}
+                          cy={300 - ((point.y - 10) / 50) * 300}
+                          r="1.5"
+                          fill="#22c55e"
+                          stroke={darkMode ? '#374151' : 'white'}
+                          strokeWidth="0.5"
+                          vectorEffect="non-scaling-stroke"
+                          className="cursor-pointer hover:r-3 transition-all"
                         />
-                        <text
-                          x="50%"
-                          y="115"
-                          textAnchor="middle"
-                          fill={darkMode ? '#22c55e' : '#065f46'}
-                          fontSize="12"
-                          style={{ pointerEvents: 'none' }}
-                        >
-                          Temperature 35°F
-                        </text>
-                        <text
-                          x="50%"
-                          y="130"
-                          textAnchor="middle"
-                          fill={darkMode ? '#22c55e' : '#065f46'}
-                          fontSize="10"
-                          style={{ pointerEvents: 'none' }}
-                        >
-                          Jul 28, 2025, 07:09 PM CDT
-                        </text>
-                      </g>
-                      {hoveredPoint && (
-                        <g>
-                          <rect
-                            x={((hoveredPoint.x / (temperatureData.length - 1)) * 100 - 50) + '%'}
-                            y={256 - (hoveredPoint.y / 60) * 256 - 40}
-                            width="100"
-                            height="30"
-                            fill={darkMode ? '#14532d' : '#d1fae5'}
-                            rx="4"
-                          />
-                          <text
-                            x={((hoveredPoint.x / (temperatureData.length - 1)) * 100) + '%'}
-                            y={256 - (hoveredPoint.y / 60) * 256 - 25}
-                            textAnchor="middle"
-                            fill={darkMode ? '#22c55e' : '#065f46'}
-                            fontSize="12"
-                          >
-                            Temperature {hoveredPoint.y}°F
-                          </text>
-                          <text
-                            x={((hoveredPoint.x / (temperatureData.length - 1)) * 100) + '%'}
-                            y={256 - (hoveredPoint.y / 60) * 256 - 10}
-                            textAnchor="middle"
-                            fill={darkMode ? '#22c55e' : '#065f46'}
-                            fontSize="10"
-                          >
-                            {hoveredPoint.time}
-                          </text>
-                        </g>
-                      )}
+                      ))}
                     </svg>
-                  </div>
-                  <div className="mt-4 flex justify-between w-full px-4">
-                    {['6H', '12H', '1D', '1M', '3M'].map((label) => (
-                      <span key={label} className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{label}</span>
-                    ))}
+                    
+                    {/* Hover tooltip */}
+                    {hoveredPoint && (
+                      <div 
+                        className="absolute pointer-events-none z-10"
+                        style={{
+                          left: `${(hoveredPoint.index / (temperatureData.length - 1)) * 100}%`,
+                          top: `${300 - ((hoveredPoint.y - 10) / 50) * 300 - 90}px`,
+                          transform: 'translateX(-50%)'
+                        }}
+                      >
+                        <div className={`${darkMode ? 'bg-green-600' : 'bg-green-500'} text-white p-3 rounded-lg shadow-lg border-2 ${darkMode ? 'border-gray-600' : 'border-white'} text-center min-w-32`}>
+                          <div className="text-xs font-medium">Temperature</div>
+                          <div className="text-lg font-bold">{hoveredPoint.y}°F</div>
+                          <div className="text-xs">{hoveredPoint.time}</div>
+                          <div className="text-xs font-semibold">{hoveredPoint.timeDetail}</div>
+                        </div>
+                        <div className={`w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent ${darkMode ? 'border-t-green-600' : 'border-t-green-500'} mx-auto`}></div>
+                      </div>
+                    )}
+                    
+                    {/* X-axis labels */}
+                    <div className="absolute -bottom-6 left-0 right-0 flex justify-between px-2">
+                      {['6H', '12H', '1D', '1M', '3M'].map((label) => (
+                        <span key={label} className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'} font-medium`}>
+                          {label}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
