@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation'; // Import useRouter
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
 
@@ -37,9 +38,19 @@ export default function Dashboard() {
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState(data.notificationsList);
+  const [username, setUsername] = useState('');
   const popupRef = useRef(null);
   const notificationCardRef = useRef(null);
   const { darkMode } = useDarkMode();
+  const router = useRouter(); // Initialize router
+
+  // Fetch username from localStorage
+  useEffect(() => {
+    const user = localStorage.getItem('loggedInUser');
+    if (user) {
+      setUsername(user);
+    }
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -93,10 +104,16 @@ export default function Dashboard() {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-3xl font-bold">Dashboard</h2>
-            <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Hi Francis Anino</p>
+            <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+              Hi {username || 'Francis Anino'}
+            </p>
           </div>
           <div className="flex items-center space-x-3">
             <button
+              onClick={() => {
+                localStorage.removeItem('loggedInUser'); // Clear stored username
+                router.push('/login'); // Redirect to login page
+              }}
               className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${
                 darkMode ? 'bg-red-600 hover:bg-red-700' : ''
               }`}
@@ -108,7 +125,7 @@ export default function Dashboard() {
                 darkMode ? 'bg-amber-700' : ''
               }`}
             >
-              FA
+              {username ? username.slice(0, 2).toUpperCase() : 'FA'}
             </div>
           </div>
         </div>
@@ -132,15 +149,11 @@ export default function Dashboard() {
                 <span className="text-2xl">🔔</span>
               </div>
               <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Notifications</p>
-              <p
-                className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}
-              >
+              <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
                 {notifications.length}
               </p>
               <div className="flex items-center justify-center">
-                <div
-                  className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? 'bg-red-400' : ''}`}
-                ></div>
+                <div className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? 'bg-red-400' : ''}`}></div>
                 <span className={`text-red-500 text-sm ${darkMode ? 'text-red-400' : ''}`}>Unread</span>
               </div>
             </div>
@@ -152,9 +165,7 @@ export default function Dashboard() {
                 }`}
               >
                 <div className="p-4">
-                  <h4
-                    className={`font-semibold text-gray-800 mb-3 ${darkMode ? 'text-white' : ''}`}
-                  >
+                  <h4 className={`font-semibold text-gray-800 mb-3 ${darkMode ? 'text-white' : ''}`}>
                     Notifications
                   </h4>
                   {notifications.length > 0 ? (
@@ -166,14 +177,10 @@ export default function Dashboard() {
                         }`}
                       >
                         <div className="flex-1">
-                          <p
-                            className={`text-gray-700 text-sm font-medium ${darkMode ? 'text-white' : ''}`}
-                          >
+                          <p className={`text-gray-700 text-sm font-medium ${darkMode ? 'text-white' : ''}`}>
                             {notification.title}
                           </p>
-                          <p
-                            className={`text-gray-500 text-xs ${darkMode ? 'text-gray-300' : ''}`}
-                          >
+                          <p className={`text-gray-500 text-xs ${darkMode ? 'text-gray-300' : ''}`}>
                             {notification.date}
                           </p>
                         </div>
@@ -191,9 +198,7 @@ export default function Dashboard() {
                       </div>
                     ))
                   ) : (
-                    <p
-                      className={`text-gray-500 text-sm text-center ${darkMode ? 'text-gray-300' : ''}`}
-                    >
+                    <p className={`text-gray-500 text-sm text-center ${darkMode ? 'text-gray-300' : ''}`}>
                       No new notifications.
                     </p>
                   )}
@@ -214,11 +219,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-          <div
-            className={`rounded-lg p-6 shadow text-center ${
-              darkMode ? 'bg-gray-800 text-white' : 'bg-white'
-            }`}
-          >
+          <div className={`rounded-lg p-6 shadow text-center ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div
               className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
                 darkMode ? 'bg-green-900' : ''
@@ -226,14 +227,8 @@ export default function Dashboard() {
             >
               <span className="text-2xl">📶</span>
             </div>
-            <p
-              className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}
-            >
-              Sensors
-            </p>
-            <p
-              className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}
-            >
+            <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Sensors</p>
+            <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
               {data.sensors.total}
             </p>
             <div className="flex items-center justify-center space-x-3 text-sm">
@@ -243,53 +238,31 @@ export default function Dashboard() {
                     darkMode ? 'border-b-red-400' : ''
                   }`}
                 ></div>
-                <span
-                  className={`text-red-500 font-medium ${darkMode ? 'text-red-400' : ''}`}
-                >
+                <span className={`text-red-500 font-medium ${darkMode ? 'text-red-400' : ''}`}>
                   {data.sensors.error}
                 </span>
               </div>
               <div className="flex items-center">
-                <div
-                  className={`w-2 h-2 bg-yellow-500 rounded-full mr-1 ${
-                    darkMode ? 'bg-yellow-400' : ''
-                  }`}
-                ></div>
-                <span
-                  className={`text-yellow-500 font-medium ${darkMode ? 'text-yellow-400' : ''}`}
-                >
+                <div className={`w-2 h-2 bg-yellow-500 rounded-full mr-1 ${darkMode ? 'bg-yellow-400' : ''}`}></div>
+                <span className={`text-yellow-500 font-medium ${darkMode ? 'text-yellow-400' : ''}`}>
                   {data.sensors.warning}
                 </span>
               </div>
               <div className="flex items-center">
-                <div
-                  className={`w-2 h-2 bg-green-500 mr-1 ${darkMode ? 'bg-green-400' : ''}`}
-                ></div>
-                <span
-                  className={`text-green-500 font-medium ${darkMode ? 'text-green-400' : ''}`}
-                >
+                <div className={`w-2 h-2 bg-green-500 mr-1 ${darkMode ? 'bg-green-400' : ''}`}></div>
+                <span className={`text-green-500 font-medium ${darkMode ? 'text-green-400' : ''}`}>
                   {data.sensors.success}
                 </span>
               </div>
               <div className="flex items-center">
-                <span
-                  className={`mr-1 text-xs ${darkMode ? 'text-gray-300' : 'text-gray-500'}`}
-                >
-                  ✖
-                </span>
-                <span
-                  className={`text-gray-500 font-medium ${darkMode ? 'text-gray-300' : ''}`}
-                >
+                <span className={`mr-1 text-xs ${darkMode ? 'text-gray-300' : 'text-gray-500'}`}>✖</span>
+                <span className={`text-gray-500 font-medium ${darkMode ? 'text-gray-300' : ''}`}>
                   {data.sensors.disconnected}
                 </span>
               </div>
             </div>
           </div>
-          <div
-            className={`rounded-lg p-6 shadow text-center ${
-              darkMode ? 'bg-gray-800 text-white' : 'bg-white'
-            }`}
-          >
+          <div className={`rounded-lg p-6 shadow text-center ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div
               className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
                 darkMode ? 'bg-green-900' : ''
@@ -297,62 +270,36 @@ export default function Dashboard() {
             >
               <span className="text-2xl">👥</span>
             </div>
-            <p
-              className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}
-            >
-              Users
-            </p>
-            <p
-              className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}
-            >
+            <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Users</p>
+            <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
               {data.users}
             </p>
             <div className="flex justify-center -space-x-1">
               <div
-                className={`w-6 h-6 bg-orange-500 rounded-full border-2 border-white ${
-                  darkMode ? 'border-gray-700' : ''
-                }`}
+                className={`w-6 h-6 bg-orange-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
               ></div>
               <div
-                className={`w-6 h-6 bg-blue-500 rounded-full border-2 border-white ${
-                  darkMode ? 'border-gray-700' : ''
-                }`}
+                className={`w-6 h-6 bg-blue-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
               ></div>
               <div
-                className={`w-6 h-6 bg-green-500 rounded-full border-2 border-white ${
-                  darkMode ? 'border-gray-700' : ''
-                }`}
+                className={`w-6 h-6 bg-green-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
               ></div>
               <div
-                className={`w-6 h-6 bg-purple-500 rounded-full border-2 border-white ${
-                  darkMode ? 'border-gray-700' : ''
-                }`}
+                className={`w-6 h-6 bg-purple-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
               ></div>
               <div
-                className={`w-6 h-6 bg-pink-500 rounded-full border-2 border-white ${
-                  darkMode ? 'border-gray-700' : ''
-                }`}
+                className={`w-6 h-6 bg-pink-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
               ></div>
               <div
-                className={`w-6 h-6 bg-red-500 rounded-full border-2 border-white ${
-                  darkMode ? 'border-gray-700' : ''
-                }`}
+                className={`w-6 h-6 bg-red-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
               ></div>
             </div>
           </div>
         </div>
 
-        <div
-          className={`rounded-lg shadow p-6 ${
-            darkMode ? 'bg-gray-800 text-white' : 'bg-white'
-          }`}
-        >
+        <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
           <div className="flex justify-between items-center mb-6">
-            <h3
-              className={`text-lg font-semibold text-gray-900 ${
-                darkMode ? 'text-white' : ''
-              }`}
-            >
+            <h3 className={`text-lg font-semibold text-gray-900 ${darkMode ? 'text-white' : ''}`}>
               Temperature Monitoring System
             </h3>
           </div>
@@ -375,42 +322,23 @@ export default function Dashboard() {
               </div>
               <div className="flex-1 relative">
                 <div className="absolute -top-6 left-0 right-0 flex justify-between z-10">
-                  <span
-                    className={`text-green-600 font-medium text-sm ${
-                      darkMode ? 'text-green-400' : ''
-                    }`}
-                  >
+                  <span className={`text-green-600 font-medium text-sm ${darkMode ? 'text-green-400' : ''}`}>
                     Fridge
                   </span>
-                  <span
-                    className={`text-blue-600 font-medium text-sm ${
-                      darkMode ? 'text-blue-400' : ''
-                    }`}
-                  >
+                  <span className={`text-blue-600 font-medium text-sm ${darkMode ? 'text-blue-400' : ''}`}>
                     Freezer
                   </span>
                 </div>
                 <div className="absolute inset-0 h-64">
                   <div className="h-full flex flex-col justify-between">
                     {[...Array(7)].map((_, i) => (
-                      <div
-                        key={i}
-                        className={`border-t border-gray-200 w-full ${
-                          darkMode ? 'border-gray-700' : ''
-                        }`}
-                      ></div>
+                      <div key={i} className={`border-t border-gray-200 w-full ${darkMode ? 'border-gray-700' : ''}`}></div>
                     ))}
                   </div>
                   <div className="absolute inset-0">
+                    <div className={`absolute left-0 top-0 bottom-0 w-0.5 bg-gray-200 ${darkMode ? 'bg-gray-700' : ''}`}></div>
                     <div
-                      className={`absolute left-0 top-0 bottom-0 w-0.5 bg-gray-200 ${
-                        darkMode ? 'bg-gray-700' : ''
-                      }`}
-                    ></div>
-                    <div
-                      className={`absolute right-0 top-0 bottom-0 w-0.5 bg-gray-200 ${
-                        darkMode ? 'bg-gray-700' : ''
-                      }`}
+                      className={`absolute right-0 top-0 bottom-0 w-0.5 bg-gray-200 ${darkMode ? 'bg-gray-700' : ''}`}
                     ></div>
                   </div>
                 </div>
@@ -419,12 +347,8 @@ export default function Dashboard() {
                     darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''
                   }`}
                 >
-                  <div className="text-xs text-green-700 text-center font-medium">
-                    Temperature
-                  </div>
-                  <div className="text-sm font-bold text-green-700 text-center">
-                    41°F
-                  </div>
+                  <div className="text-xs text-green-700 text-center font-medium">Temperature</div>
+                  <div className="text-sm font-bold text-green-700 text-center">41°F</div>
                 </div>
                 <div className="relative h-64">
                   <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full">
@@ -458,10 +382,7 @@ export default function Dashboard() {
                             ></div>
                           )}
                           {temp.value === null && (
-                            <div
-                              className={`bg-gray-300 w-6`}
-                              style={{ height: '4px', position: 'absolute', bottom: 0 }}
-                            ></div>
+                            <div className={`bg-gray-300 w-6`} style={{ height: '4px', position: 'absolute', bottom: 0 }}></div>
                           )}
                         </div>
                       );
@@ -502,13 +423,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="text-center mt-4">
-              <span
-                className={`text-sm text-gray-600 font-medium ${
-                  darkMode ? 'text-gray-300' : ''
-                }`}
-              >
-                Sensors
-              </span>
+              <span className={`text-sm text-gray-600 font-medium ${darkMode ? 'text-gray-300' : ''}`}>Sensors</span>
             </div>
           </div>
         </div>
