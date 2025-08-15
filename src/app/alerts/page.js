@@ -1,12 +1,18 @@
-// app/alerts/alerts.js (or app/alerts/page.jsx)
 "use client";
 
-import React, { useState, useRef, Component } from "react";
+import React, { useState, useRef, useEffect, Component } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
 
-/* ------------------------ Error Boundary ------------------------ */
+/* ------------------------ Supabase client (JS) ------------------------ */
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase =
+  supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+
+/* ------------------------ Error Boundary (JS) ------------------------ */
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -30,10 +36,10 @@ class ErrorBoundary extends Component {
     return this.props.children;
   }
 }
+const DEFAULT_WARNING = { min: 20, max: 60 };
 
 /* ------------------------ Status → Styles ------------------------ */
 const getStatusStyles = (status, darkMode) => {
-  // Card border color & thermometer text color
   switch (status) {
     case "Needs Attention":
       return {
@@ -62,71 +68,337 @@ const getStatusStyles = (status, darkMode) => {
   }
 };
 
-export default function Alerts() {
-  const [currentView, setCurrentView] = useState("alerts");
-  const [selectedAlert, setSelectedAlert] = useState(null);
-  const [alertName, setAlertName] = useState("");
-  const [sensorName, setSensorName] = useState("8 Active Sensors");
-  const [alertMessage, setAlertMessage] = useState(
-    "Ex My (Sensor Name): Temperature above 50°F"
+/* ------------------------ Card fills ------------------------ */
+const CARD_STYLES = {
+  "Needs Attention": {
+    light: "bg-red-50 border-red-500 text-red-900",
+    dark: "bg-red-950/40 border-red-400 text-red-200",
+  },
+  Warning: {
+    light: "bg-yellow-50 border-yellow-400 text-yellow-900",
+    dark: "bg-yellow-950/40 border-yellow-300 text-yellow-200",
+  },
+  Good: {
+    light: "bg-green-50 border-green-500 text-green-900",
+    dark: "bg-green-950/40 border-green-400 text-green-200",
+  },
+};
+const cardClass = (status, darkMode) =>
+  (darkMode ? CARD_STYLES[status]?.dark : CARD_STYLES[status]?.light) ||
+  (darkMode ? "bg-gray-800 border-gray-500 text-white" : "bg-white border-gray-300 text-gray-800");
+
+/* ------------------------ Helpers ------------------------ */
+const WARNING_MARGIN = 5;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const computeStatus = (temp, { min, max }) => {
+  if (temp == null) return "Good";
+  if (temp < min || temp > max) return "Needs Attention";
+  if (temp <= min + WARNING_MARGIN || temp >= max - WARNING_MARGIN) return "Warning";
+  return "Good";
+};
+
+/* ------------------------ Threshold Chart (kept your UI) ------------------------ */
+function ThresholdChart({ data, min, max, darkMode, onChange }) {
+  const svgRef = useRef(null);
+  const [drag, setDrag] = useState(null); // "min" | "max" | null
+
+  const W = 720,
+    H = 380;
+  const padL = 60,
+    padR = 56,
+    padT = 18,
+    padB = 28;
+  const chartW = W - padL - padR,
+    chartH = H - padT - padB;
+
+  const yMin = -20,
+    yMax = 100;
+  const y = (t) =>
+    padT + chartH * (1 - (clamp(t, yMin, yMax) - yMin) / (yMax - yMin));
+  const x = (i) => padL + (chartW * i) / Math.max(1, data.length - 1);
+
+  const posToTemp = (clientY) => {
+    const rect = svgRef.current.getBoundingClientRect();
+    const yPix = clientY - rect.top;
+    const t = yMin + (1 - (yPix - padT) / chartH) * (yMax - yMin);
+    return clamp(Math.round(t), yMin, yMax);
+  };
+
+  const linePath = data.map((v, i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`).join(" ");
+
+  const strokeAxis = darkMode ? "#374151" : "#E5E7EB";
+  const tickText = darkMode ? "#D1D5DB" : "#6B7280";
+  const orange = "#F59E0B";
+  const red = "#EF4444";
+
+  const trackX = padL + chartW + 16;
+  const trackW = 12,
+    handleW = 18,
+    handleH = 22,
+    handleRX = 4;
+
+  const minWarnTop = Math.min(min + WARNING_MARGIN, max);
+  const maxWarnBot = Math.max(max - WARNING_MARGIN, min);
+
+  useEffect(() => {
+    if (!drag) return;
+    const move = (e) => {
+      const t = posToTemp(e.clientY);
+      if (drag === "max") onChange && onChange({ min, max: Math.max(min + 1, t) });
+      else onChange && onChange({ min: Math.min(max - 1, t), max });
+    };
+    const up = () => setDrag(null);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [drag, min, max, onChange]);
+
+  return (
+    <svg ref={svgRef} width={W} height={H} className="w-full max-w-4xl">
+      <rect x={padL} y={padT} width={chartW} height={chartH} fill="#FFFFFF" stroke={strokeAxis} />
+
+      {/* DANGER (RED) */}
+      <rect x={padL} y={padT} width={chartW} height={Math.max(0, y(max) - padT)} fill={red} opacity="0.22" />
+      <rect x={padL} y={y(min)} width={chartW} height={Math.max(0, padT + chartH - y(min))} fill={red} opacity="0.22" />
+
+      {/* WARNING (ORANGE) */}
+      <rect x={padL} y={y(max)} width={chartW} height={Math.max(0, y(maxWarnBot) - y(max))} fill={orange} opacity="0.28" />
+      <rect x={padL} y={y(minWarnTop)} width={chartW} height={Math.max(0, y(min) - y(minWarnTop))} fill={orange} opacity="0.28" />
+
+      {/* Lines */}
+      <line x1={padL} x2={padL + chartW} y1={y(max)} y2={y(max)} stroke={red} strokeWidth="3" strokeDasharray="8 6" />
+      <line x1={padL} x2={padL + chartW} y1={y(min)} y2={y(min)} stroke={red} strokeWidth="3" strokeDasharray="8 6" />
+
+      {/* Y ticks */}
+      {[-20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((t) => (
+        <g key={t}>
+          <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
+          <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
+            {t}
+          </text>
+        </g>
+      ))}
+
+      {/* Series */}
+      <path d={linePath} fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" />
+      {data.length > 0 && <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="5" fill="#10B981" />}
+
+      {/* Side bar & handles */}
+      <rect x={trackX} y={padT} width={trackW} height={chartH} fill="#E5E7EB" stroke="#D1D5DB" />
+      <g
+        transform={`translate(${trackX + trackW / 2}, ${y(max)})`}
+        style={{ cursor: "ns-resize" }}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          setDrag("max");
+        }}
+      >
+        <rect x={-handleW / 2} y={-handleH / 2} width={handleW} height={handleH} rx={handleRX} fill="#FFFFFF" stroke="#9CA3AF" />
+        <line x1={-5} x2={5} y1={-4} y2={-4} stroke="#9CA3AF" strokeWidth="2" />
+        <line x1={-5} x2={5} y1={0} y2={0} stroke="#9CA3AF" strokeWidth="2" />
+        <line x1={-5} x2={5} y1={4} y2={4} stroke="#9CA3AF" strokeWidth="2" />
+      </g>
+      <g
+        transform={`translate(${trackX + trackW / 2}, ${y(min)})`}
+        style={{ cursor: "ns-resize" }}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          setDrag("min");
+        }}
+      >
+        <rect x={-handleW / 2} y={-handleH / 2} width={handleW} height={handleH} rx={handleRX} fill="#FFFFFF" stroke="#9CA3AF" />
+        <line x1={-5} x2={5} y1={-4} y2={-4} stroke="#9CA3AF" strokeWidth="2" />
+        <line x1={-5} x2={5} y1={0} y2={0} stroke="#9CA3AF" strokeWidth="2" />
+        <line x1={-5} x2={5} y1={4} y2={4} stroke="#9CA3AF" strokeWidth="2" />
+      </g>
+    </svg>
   );
+}
+
+/* ===================================================================== */
+/* Everything below keeps your UI, but data comes from latest_by_sensor_metric. */
+
+export default function Alerts() {
+  const [currentView, setCurrentView] = useState("alerts"); // "alerts" | "alertDetail" | "addAlert"
+  const [selectedId, setSelectedId] = useState(null);       // key = `${source_id}::${metric}`
+  const [alertName, setAlertName] = useState("");
+  const [sensorName, setSensorName] = useState("Select a Sensor");
+  const [alertMessage, setAlertMessage] = useState("Ex My (Sensor Name): Temperature above 50°F");
   const [sendEmail, setSendEmail] = useState(false);
   const [sendSMS, setSendSMS] = useState(true);
-  const formRef = useRef(null);
   const router = useRouter();
   const { darkMode, toggleDarkMode } = useDarkMode();
 
-  /* ------------------------ Data ------------------------ */
-  const alerts = [
-    { name: "Freezer 1", status: "Needs Attention", temp: "50°F", lastReading: "1 month ago" },
-    { name: "Drive Thru Fridge", status: "Needs Attention", temp: "52°F", lastReading: "2 weeks ago" },
-    { name: "Beverage Fridge", status: "Needs Attention", temp: "56°F", lastReading: "5 weeks ago" },
+  // Streams built from the view (no hard-codes):
+  // [{ id, name, temp, status, lastReading, source_id, metric }]
+  const [streams, setStreams] = useState([]);
+  // thresholds per stream key; if not provided in sensors.metadata we compute around the current value
+  const [thresholds, setThresholds] = useState({});
+  // history per stream key for the detail chart
+  const [series, setSeries] = useState({});
+  const HISTORY_LEN = 120;
 
-    { name: "Walk-in Fridge", status: "Warning", temp: "45°F", lastReading: "Current Reading" },
+  const missingEnv = !supabase;
 
-    { name: "FC Fridge", status: "Good", temp: "32°F", lastReading: "Current Reading" },
-    { name: "Fry Products", status: "Good", temp: "-6°F", lastReading: "Current Reading" },
-    { name: "Freezer 2", status: "Good", temp: "-1°F", lastReading: "Current Reading" },
-    { name: "Meat Freezer", status: "Good", temp: "-3°F", lastReading: "Current Reading" },
-  ];
+  const makeKey = (r) => `${r.source_id}::${r.metric}`;
 
-  const systemAlerts = [
-    { name: "Meat Freezer", status: "Disconnected", lastReading: "2 hours ago" },
-    { name: "Fry Products", status: "Need battery replacement", lastReading: "5 hours ago" },
-  ];
+  /* ------------------------ Initial load ------------------------ */
+  useEffect(() => {
+    if (!supabase) return;
+
+    const load = async () => {
+      // 1) latest per sensor/metric
+      const { data: latestRows, error: lErr } = await supabase
+        .from("latest_by_sensor_metric")
+        .select("source_id, metric, value, ts")
+        .order("source_id", { ascending: true });
+      if (lErr) {
+        console.error("Load latest_by_sensor_metric error:", lErr);
+        return;
+      }
+
+      // 2) optional enrichment from sensors table (labels + metadata thresholds)
+      const { data: sensorRows } = await supabase
+        .from("sensors")
+        .select("sensor_id,label,metadata");
+
+      const labelMap = new Map();
+      (sensorRows || []).forEach((r) =>
+        labelMap.set(r.sensor_id, { label: r.label, meta: r.metadata || {} })
+      );
+
+      // 3) build UI list + thresholds (dynamic if not provided)
+      const nextThresholds = {};
+      const ui = (latestRows || []).map((r) => {
+        const key = makeKey(r);
+        const info = labelMap.get(r.source_id) || {};
+        const name = info?.label || r.source_id;
+        const meta = info?.meta || {};
+        const th =
+  meta.min != null && meta.max != null
+    ? { min: Number(meta.min), max: Number(meta.max) }
+    : DEFAULT_WARNING;
+
+        return {
+          id: key,
+          name,
+          temp: r.value,
+          status: computeStatus(r.value, th),
+          lastReading: r.ts ? new Date(r.ts).toLocaleString() : "No readings yet",
+          source_id: r.source_id,
+          metric: r.metric,
+        };
+      });
+
+      setThresholds(nextThresholds);
+      setStreams(ui);
+    };
+
+    load();
+  }, []);
+
+  /* ------------------------ Load history when opening detail ------------------------ */
+  useEffect(() => {
+    if (!supabase || !selectedId) return;
+    const sel = streams.find((s) => s.id === selectedId);
+    if (!sel) return;
+
+    const loadHistory = async () => {
+      const { data, error } = await supabase
+        .from("raw_readings")
+        .select("value, ts")
+        .eq("source_id", sel.source_id)
+        .eq("metric", sel.metric)
+        .order("ts", { ascending: true })
+        .limit(HISTORY_LEN);
+      if (error) {
+        console.error("Load history error:", error);
+        return;
+      }
+      setSeries((prev) => ({ ...prev, [selectedId]: (data || []).map((d) => d.value) }));
+    };
+
+    // only fetch if not already loaded
+    if (!series[selectedId]) loadHistory();
+  }, [selectedId, streams]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ------------------------ Realtime: INSERT + UPDATE ------------------------ */
+  useEffect(() => {
+    if (!supabase) return;
+
+    const onChange = (payload) => {
+      const r = payload.new || {};
+      if (!r.source_id || !r.metric || typeof r.value !== "number") return;
+      const key = `${r.source_id}::${r.metric}`;
+
+      // Update/insert in the list
+      setStreams((prev) => {
+        const idx = prev.findIndex((p) => p.id === key);
+        const th = thresholds[key] || DEFAULT_WARNING;
+        const row = {
+          id: key,
+          name: prev[idx]?.name || r.source_id,
+          temp: r.value,
+          status: computeStatus(r.value, th),
+          lastReading: r.ts ? new Date(r.ts).toLocaleString() : "Current Reading",
+          source_id: r.source_id,
+          metric: r.metric,
+        };
+        if (idx === -1) return [...prev, row].sort((a, b) => a.name.localeCompare(b.name));
+        const next = [...prev];
+        next[idx] = row;
+        return next;
+      });
+
+      // Append to series for this stream (if we have it open)
+      setSeries((prev) => {
+        const arr = prev[key] ? [...prev[key], r.value] : [r.value];
+        return { ...prev, [key]: arr.slice(-HISTORY_LEN) };
+      });
+    };
+
+    const ch = supabase
+      .channel("raw-readings-all")
+      .on("postgres_changes", { event: "*", schema: "public", table: "raw_readings" }, onChange)
+      .subscribe();
+
+    return () => supabase.removeChannel(ch);
+  }, [thresholds]);
 
   /* ------------------------ Handlers ------------------------ */
-  const handleAddAlert = () => setCurrentView("addAlert");
-  const handleAlertClick = (alert) => {
-    setSelectedAlert(alert);
+  const handleAlertClick = (item) => {
+    setSelectedId(item.id);
     setCurrentView("alertDetail");
   };
   const handleBack = () => {
     setCurrentView("alerts");
-    setSelectedAlert(null);
+    setSelectedId(null);
   };
 
-  const sliderStyle = {
-    position: "relative",
-    display: "inline-block",
-    width: "60px",
-    height: "34px",
-    backgroundColor: darkMode ? "#4a4a4a" : "#ccc",
-    borderRadius: "34px",
-  };
-  const sliderBeforeStyle = {
-    position: "absolute",
-    content: '""',
-    height: "26px",
-    width: "26px",
-    left: darkMode ? "calc(100% - 30px)" : "4px",
-    bottom: "4px",
-    backgroundColor: "#ffffffff",
-    transition: "0.4s",
-    borderRadius: "50%",
+  const updateThreshold = (displayName, next) => {
+    const item = streams.find((s) => s.name === displayName);
+    if (!item) return;
+    const key = item.id;
+
+    setThresholds((prev) => {
+      const updated = { ...prev, [key]: next };
+      // Recompute status immediately for the card
+      setStreams((prevS) =>
+        prevS.map((s) =>
+          s.id === key ? { ...s, status: computeStatus(s.temp, next) } : s
+        )
+      );
+      return updated;
+    });
+
+    // (Optional) persist back to sensors.metadata if you want:
+    // supabase.from("sensors").update({ metadata: { min: next.min, max: next.max } }).eq("sensor_id", item.source_id);
   };
 
-  /* ------------------------ Views ------------------------ */
+  /* ------------------------ Small UI bits ------------------------ */
   const SectionHeader = ({ icon, label, status }) => {
     const { section } = getStatusStyles(status, darkMode);
     return (
@@ -136,103 +408,83 @@ export default function Alerts() {
     );
   };
 
-  const AlertCard = ({ alert }) => {
-    const { border, value } = getStatusStyles(alert.status, darkMode);
+  const AlertCard = ({ sensor }) => {
+    const { value } = getStatusStyles(sensor.status, darkMode);
     return (
       <div
-  className={`rounded-lg shadow p-4 border-l-4 ${cardClass(alert.status)} cursor-pointer hover:shadow-lg`}
-  onClick={() => handleAlertClick(alert)}
->
-
+        className={`rounded-lg shadow p-4 border-l-4 ${cardClass(sensor.status, darkMode)} cursor-pointer hover:shadow-lg`}
+        onClick={() => handleAlertClick(sensor)}
+      >
         <div className="flex justify-between items-center">
           <div>
-            <p className="font-semibold text-lg">{alert.name}</p>
-            <p className={`text-sm flex items-center mt-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-              <span className="mr-1">🕐</span>{" "}
-              {alert.lastReading === "Current Reading" ? "Current Reading" : `Last Reading: ${alert.lastReading}`}
+            <p className="font-semibold text-lg">{sensor.name}</p>
+            <p className={`text-sm flex items-center mt-1 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
+              <span className="mr-1">🕐</span>
+              {sensor.lastReading}
             </p>
           </div>
           <div className="text-right">
-            <div className={`${value} text-xl mb-1`}>🌡️ {alert.temp}</div>
+            <div className={`${value} text-xl mb-1`}>
+              🌡️ {sensor.temp != null ? Math.round(sensor.temp) : "--"}°F
+            </div>
           </div>
         </div>
       </div>
     );
   };
-const CARD_STYLES = {
-  "Needs Attention": {
-    light: "bg-red-50 border-red-500 text-red-900",
-    dark:  "bg-red-950/40 border-red-400 text-red-200",
-  },
-  "Warning": {
-    light: "bg-yellow-50 border-yellow-400 text-yellow-900",
-    dark:  "bg-yellow-950/40 border-yellow-300 text-yellow-200",
-  },
-  "Good": {
-    light: "bg-green-50 border-green-500 text-green-900",
-    dark:  "bg-green-950/40 border-green-400 text-green-200",
-  },
-};
 
-const cardClass = (status) =>
-  darkMode ? CARD_STYLES[status].dark : CARD_STYLES[status].light;
+  /* ------------------------ Views ------------------------ */
   const renderAlertsView = () => (
     <main className="flex-1 p-6">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-bold">Alerts</h2>
         <div className="flex items-center space-x-4">
-          <button
-            className={`px-4 py-2 rounded ${
-              darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"
-            }`}
-          >
-            Log out
-          </button>
-          <div
-            className={`w-10 h-10 ${darkMode ? "bg-amber-700" : "bg-amber-600"} rounded-full flex items-center justify-center text-white text-sm font-bold`}
-          >
-            FA
-          </div>
+          <button className={`px-4 py-2 rounded ${darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"}`}>Log out</button>
+          <div className={`w-10 h-10 ${darkMode ? "bg-amber-700" : "bg-amber-600"} rounded-full flex items-center justify-center text-white text-sm font-bold`}>FA</div>
         </div>
       </div>
+
+      {missingEnv && (
+        <div className={`${darkMode ? "bg-red-900 text-red-200" : "bg-red-100 text-red-700"} p-3 rounded mb-4`}>
+          Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local
+        </div>
+      )}
 
       <div className="space-y-6">
         {/* Needs Attention */}
         <SectionHeader icon="🚨" label="Needs Attention" status="Needs Attention" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {alerts.filter((a) => a.status === "Needs Attention").map((a, i) => (
-            <AlertCard key={`na-${i}`} alert={a} />
+          {streams.filter((s) => s.status === "Needs Attention").map((s) => (
+            <AlertCard key={`na-${s.id}`} sensor={s} />
           ))}
         </div>
 
         {/* Warning */}
         <SectionHeader icon="⚠️" label="Warning" status="Warning" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {alerts.filter((a) => a.status === "Warning").map((a, i) => (
-            <AlertCard key={`w-${i}`} alert={a} />
+          {streams.filter((s) => s.status === "Warning").map((s) => (
+            <AlertCard key={`w-${s.id}`} sensor={s} />
           ))}
         </div>
 
         {/* Good */}
         <SectionHeader icon="✅" label="Good" status="Good" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {alerts.filter((a) => a.status === "Good").map((a, i) => (
-            <AlertCard key={`g-${i}`} alert={a} />
+          {streams.filter((s) => s.status === "Good").map((s) => (
+            <AlertCard key={`g-${s.id}`} sensor={s} />
           ))}
         </div>
 
-        {/* System Alerts */}
+        {/* System Alerts placeholder (unchanged) */}
         <div className={`${darkMode ? "bg-gray-700 text-gray-300" : "bg-gray-100 text-gray-600"} p-3 rounded flex items-center`}>
           <span className="mr-3 text-xl">🛠️</span> System Alerts
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {systemAlerts.map((a, i) => (
-            <div
-              key={`sys-${i}`}
-              className={`rounded-lg shadow p-4 border-l-4 border-gray-400 ${
-                darkMode ? "bg-gray-800 text-white" : "bg-white"
-              }`}
-            >
+          {[
+            { name: "Meat Freezer", status: "Disconnected", lastReading: "2 hours ago" },
+            { name: "Fry Products", status: "Need battery replacement", lastReading: "5 hours ago" },
+          ].map((a, i) => (
+            <div key={`sys-${i}`} className={`rounded-lg shadow p-4 border-l-4 border-gray-400 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
               <div className="flex justify-between items-center">
                 <div>
                   <p className="font-semibold text-lg">{a.name}</p>
@@ -251,10 +503,8 @@ const cardClass = (status) =>
 
         <div className="flex justify-end mt-8">
           <button
-            className={`px-6 py-3 rounded-lg font-semibold text-white border ${
-              darkMode ? "bg-orange-700 hover:bg-orange-800 border-orange-700" : "bg-orange-500 hover:bg-orange-600 border-orange-500"
-            }`}
-            onClick={handleAddAlert}
+            className={`px-6 py-3 rounded-lg font-semibold text-white border ${darkMode ? "bg-orange-700 hover:bg-orange-800 border-orange-700" : "bg-orange-500 hover:bg-orange-600 border-orange-500"}`}
+            onClick={() => setCurrentView("addAlert")}
           >
             Add Alert
           </button>
@@ -263,236 +513,97 @@ const cardClass = (status) =>
     </main>
   );
 
-  const renderAlertDetailView = () => (
-    <main className="flex-1 p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-bold">Alerts</h2>
-        <div className="flex items-center space-x-4">
-          <button
-            className={`px-4 py-2 rounded ${
-              darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"
-            }`}
-          >
-            Log out
-          </button>
-          <div
-            className={`w-10 h-10 ${darkMode ? "bg-amber-700" : "bg-amber-600"} rounded-full flex items-center justify-center text-white text-sm font-bold`}
-          >
-            FA
+  const renderAlertDetailView = () => {
+    const selected = streams.find((s) => s.id === selectedId);
+    if (!selected) return null;
+    const t = thresholds[selected.id] || DEFAULT_WARNING;
+    const data = series[selected.id] || (selected.temp != null ? [selected.temp] : []);
+
+    return (
+      <main className="flex-1 p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-3xl font-bold">Alerts</h2>
+          <div className="flex items-center space-x-4">
+            <button className={`px-4 py-2 rounded ${darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"}`}>Log out</button>
+            <div className={`w-10 h-10 ${darkMode ? "bg-amber-700" : "bg-amber-600"} rounded-full flex items-center justify-center text-white text-sm font-bold`}>FA</div>
           </div>
         </div>
-      </div>
 
-      {selectedAlert && (
         <div className="space-y-6">
-          {/* Always show the section as the selected alert's status */}
           <SectionHeader
-            icon={selectedAlert.status === "Needs Attention" ? "🚨" : selectedAlert.status === "Warning" ? "⚠️" : "✅"}
-            label={selectedAlert.status}
-            status={selectedAlert.status}
+            icon={selected.status === "Needs Attention" ? "🚨" : selected.status === "Warning" ? "⚠️" : "✅"}
+            label={selected.status}
+            status={selected.status}
           />
 
-          {/* Selected card */}
-          <div
-            className={`rounded-lg shadow p-4 border-l-4 ${
-              getStatusStyles(selectedAlert.status, darkMode).border
-            } ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}
-          >
+          <div className={`rounded-lg shadow p-4 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
             <div className="flex justify-between items-center">
               <div>
-                <p className="font-semibold text-lg">{selectedAlert.name}</p>
+                <p className="font-semibold text-lg">{selected.name}</p>
                 <p className={`text-sm flex items-center mt-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-                  <span className="mr-1">🕐</span> Current Reading
+                  <span className="mr-1">🕐</span> {selected.lastReading}
                 </p>
               </div>
               <div className="text-right">
-                <div className={`${getStatusStyles(selectedAlert.status, darkMode).value} text-xl mb-1`}>
-                  🌡️ {selectedAlert.temp || "—"}
+                <div className={`${getStatusStyles(selected.status, darkMode).value} text-xl mb-1`}>
+                  🌡️ {selected.temp != null ? Math.round(selected.temp) : "--"}°F
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Fake history card (UI only) */}
-          <div
-            className={`rounded-lg shadow p-6 border-2 border-blue-400 ${
-              darkMode ? "bg-gray-800 text-white" : "bg-white"
-            }`}
-          >
+          <div className={`rounded-lg shadow p-6 border-2 border-blue-400 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
             <div className="flex justify-between items-center mb-4">
               <div>
                 <h3 className="text-lg font-semibold">Temperature History</h3>
-                <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{selectedAlert.name}</p>
+                <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>{selected.name} • {selected.metric}</p>
               </div>
-              <select
-                className={`border rounded px-3 py-1 text-sm ${
-                  darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white border-gray-300"
-                }`}
-              >
-                <option>Show Temp</option>
-              </select>
+              <div className="text-sm">
+                Limits: <strong>{t.min}°F</strong> – <strong>{t.max}°F</strong>
+              </div>
             </div>
 
             <div className="flex justify-center">
-              <div
-                className={`relative h-64 w-96 rounded border-2 ${
-                  darkMode ? "bg-gray-700 border-gray-600" : "bg-gray-50 border-gray-300"
-                }`}
-              >
-                {/* Y axis + labels */}
-                <div className="absolute left-0 top-0 h-full w-20 flex flex-col py-4">
-                  <div
-                    className={`absolute left-2 top-1/2 transform -translate-y-1/2 -rotate-90 text-sm ${
-                      darkMode ? "text-gray-400" : "text-gray-600"
-                    } whitespace-nowrap origin-center`}
-                  >
-                    Temperature (Fahrenheit)
-                  </div>
-                  <div className="flex flex-col justify-between h-full ml-12 text-xs text-gray-400">
-                    <span>60</span>
-                    <span>50</span>
-                    <span>40</span>
-                    <span>30</span>
-                    <span>20</span>
-                    <span>10</span>
-                    <span>0</span>
-                  </div>
-                </div>
-
-                {/* Chart bg bands */}
-                <div className="ml-20 mr-4 h-full relative">
-                  <div className="absolute inset-0 flex flex-col pb-8">
-                    <div className="flex-1 bg-red-100"></div>
-                    <div className="flex-1 bg-white border-t border-b border-dashed border-red-400"></div>
-                    <div className="flex-1 bg-red-100"></div>
-                  </div>
-
-                  {/* Line (static for mock) */}
-                  <svg className="absolute inset-0 w-full h-full">
-                    <path
-                      d="M 10 120 Q 50 100 100 110 T 200 100 T 280 105"
-                      stroke="#10B981"
-                      strokeWidth="2"
-                      fill="none"
-                    />
-                  </svg>
-
-                  <div className="absolute top-8 left-1/2 transform -translate-x-1/2 text-red-500 text-xl">⚠️</div>
-                  <div className="absolute bottom-12 left-1/4 transform -translate-x-1/2 text-red-500 text-xl">⚠️</div>
-                </div>
-
-                {/* X-axis */}
-                <div
-                  className={`absolute bottom-2 left-20 right-4 flex justify-between text-xs ${
-                    darkMode ? "text-gray-400" : "text-gray-500"
-                  }`}
-                >
-                  <span>6H</span>
-                  <span>12H</span>
-                  <span>1D</span>
-                  <span>1M</span>
-                  <span>1W</span>
-                </div>
-              </div>
+              <ThresholdChart
+                data={data}
+                min={t.min}
+                max={t.max}
+                darkMode={darkMode}
+                onChange={({ min, max }) => updateThreshold(selected.name, { min, max })}
+              />
             </div>
           </div>
 
-          {/* Details mock cards */}
           <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
             <h3 className="text-lg font-semibold mb-4">Last Reading</h3>
             <div className="space-y-3">
-              <div className="flex justify-between">
-                <span>Time</span>
-                <span className="font-medium">Current</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Threshold</span>
-                <span className="font-medium">30°F - 40°F</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Air Temperature</span>
-                <span className="font-medium">{selectedAlert.temp || "—"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Battery Level</span>
-                <span className="font-medium">High</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Signal Strength</span>
-                <span className="font-medium">Excellent</span>
-              </div>
-            </div>
-          </div>
-
-          <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-            <h3 className="text-lg font-semibold mb-4">Sensor Details</h3>
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span>ID</span>
-                <span className="font-medium">29220d00000000e</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Broadcast Method</span>
-                <span className="font-medium">Lora</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Frequency</span>
-                <span className="font-medium">US915</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Model</span>
-                <span className="font-medium">SSN D05</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Firmware</span>
-                <span className="font-medium">2.3.0</span>
-              </div>
-            </div>
-          </div>
-
-          <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-            <h3 className="text-lg font-semibold mb-4">Alert Created</h3>
-            <div className="flex justify-between">
-              <div>
-                <span>Alert Added</span>
-                <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>(Fridge Temperature)</p>
-              </div>
-              <span className="font-medium">July 20, 2025</span>
+              <div className="flex justify-between"><span>Time</span><span className="font-medium">{selected.lastReading}</span></div>
+              <div className="flex justify-between"><span>Threshold</span><span className="font-medium">{t.min}°F - {t.max}°F</span></div>
+              <div className="flex justify-between"><span>Air Temperature</span><span className="font-medium">{selected.temp != null ? Math.round(selected.temp) : "--"}°F</span></div>
+              <div className="flex justify-between"><span>Metric</span><span className="font-medium">{selected.metric}</span></div>
             </div>
           </div>
 
           <div className="flex justify-start">
             <button
-              className={`px-6 py-2 rounded ${
-                darkMode ? "bg-gray-600 text-white hover:bg-gray-700" : "bg-gray-300 text-gray-800 hover:bg-gray-400"
-              }`}
+              className={`px-6 py-2 rounded ${darkMode ? "bg-gray-600 text-white hover:bg-gray-700" : "bg-gray-300 text-gray-800 hover:bg-gray-400"}`}
               onClick={handleBack}
             >
               Back
             </button>
           </div>
         </div>
-      )}
-    </main>
-  );
+      </main>
+    );
+  };
 
   const renderAddAlertView = () => (
     <main className="flex-1 p-6">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-bold">Add Alert</h2>
         <div className="flex items-center space-x-4">
-          <button
-            className={`px-4 py-2 rounded ${
-              darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"
-            }`}
-          >
-            Log out
-          </button>
-          <div
-            className={`w-10 h-10 ${darkMode ? "bg-amber-700" : "bg-amber-600"} rounded-full flex items-center justify-center text-white text-sm font-bold`}
-          >
-            FA
-          </div>
+          <button className={`px-4 py-2 rounded ${darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"}`}>Log out</button>
+          <div className={`w-10 h-10 ${darkMode ? "bg-amber-700" : "bg-amber-600"} rounded-full flex items-center justify-center text-white text-sm font-bold`}>FA</div>
         </div>
       </div>
 
@@ -500,8 +611,7 @@ const cardClass = (status) =>
         <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
           <h3 className="text-xl font-semibold mb-2">Create New Alert</h3>
           <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"} mb-6`}>
-            Set up alerts for your sensors to receive push notifications, text messages, or emails whenever the
-            conditions you specify are met.
+            Set up alerts for your streams to receive notifications.
           </p>
 
           <div className="mb-6">
@@ -511,7 +621,6 @@ const cardClass = (status) =>
               value={alertName}
               onChange={(e) => setAlertName(e.target.value)}
               className={`border rounded px-3 py-2 w-full ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white border-gray-300"}`}
-              placeholder=""
             />
           </div>
         </div>
@@ -519,193 +628,34 @@ const cardClass = (status) =>
         <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
           <h4 className="text-lg font-semibold mb-2">Trigger</h4>
           <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"} mb-6`}>
-            If the temperature goes over the <strong>maximum threshold</strong> or below the{" "}
-            <strong>minimum threshold</strong>, your selected contacts will be alerted.
+            Drag the side handles to set minimum and maximum temperature limits. Warning zone is ±{WARNING_MARGIN}°F.
           </p>
 
           <div className="flex justify-center">
-            <div
-              className={`flex h-48 w-96 relative ${
-                darkMode ? "bg-gray-700" : "bg-gray-50"
-              } rounded border-2 ${darkMode ? "border-gray-600" : "border-gray-300"}`}
-            >
-              {/* Y axis */}
-              <div className="w-16 flex flex-col justify-between py-4 relative">
-                <div
-                  className={`absolute -left-8 top-1/2 transform -translate-x-1/2 -translate-y-1/2 -rotate-90 text-sm ${
-                    darkMode ? "text-gray-400" : "text-gray-600"
-                  } whitespace-nowrap`}
-                >
-                  Temperature (Fahrenheit)
-                </div>
-                <div className="flex flex-col justify-between h-full">
-                  {[60, 50, 40, 30, 20, 10, 0].map((val) => (
-                    <div key={val} className="flex items-center justify-end pr-2">
-                      <span className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-400"}`}>{val}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Bands + handles (visual only) */}
-              <div className="w-64 relative">
-                <div className="absolute inset-0 flex flex-col">
-                  <div className="flex-1 bg-red-100"></div>
-                  <div className="flex-1 bg-white border-t border-b border-dashed border-red-400"></div>
-                  <div className="flex-1 bg-red-100"></div>
-                </div>
-
-                <div className="absolute inset-x-0 top-1/3 border-t-2 border-dashed border-red-500"></div>
-                <div className="absolute inset-x-0 top-2/3 border-t-2 border-dashed border-red-500"></div>
-
-                <div className="absolute top-1/6 left-1/2 transform -translate-x-1/2 text-red-500 text-xl">⚠️</div>
-                <div className="absolute top-5/6 left-1/2 transform -translate-x-1/2 text-red-500 text-xl">⚠️</div>
-
-                <div
-                  className={`absolute right-2 top-1/3 transform -translate-y-1/2 w-4 h-3 rounded cursor-pointer ${
-                    darkMode ? "bg-gray-300" : "bg-black"
-                  }`}
-                />
-                <div
-                  className={`absolute right-2 top-2/3 transform -translate-y-1/2 w-4 h-3 rounded cursor-pointer ${
-                    darkMode ? "bg-gray-300" : "bg-black"
-                  }`}
-                />
-              </div>
-
-              <div className="flex flex-col justify-center ml-6 space-y-8">
-                <div className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"} leading-tight`}>
-                  Move the handle to
-                  <br />
-                  adjust the Maximum
-                  <br />
-                  Threshold
-                </div>
-                <div className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"} leading-tight`}>
-                  Move the handle to
-                  <br />
-                  adjust the Minimum
-                  <br />
-                  Threshold
-                </div>
-              </div>
-            </div>
+            <ThresholdChart data={[32, 33, 31, 34, 30, 29]} min={25} max={40} darkMode={darkMode} />
           </div>
         </div>
 
         <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-          <h4 className="text-lg font-semibold mb-2">Choose Sensor</h4>
-          <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"} mb-4`}>
-            Which sensor should this alert be assigned to?
-          </p>
-
+          <h4 className="text-lg font-semibold mb-2">Choose Stream</h4>
           <div className="mb-4">
-            <label className="block text-sm font-medium mb-2">Sensor Name</label>
+            <label className="block text-sm font-medium mb-2">Stream</label>
             <select
               value={sensorName}
               onChange={(e) => setSensorName(e.target.value)}
-              className={`border rounded px-3 py-2 w-full ${
-                darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white border-gray-300"
-              }`}
+              className={`border rounded px-3 py-2 w-full ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white border-gray-300"}`}
             >
-              <option>8 Active Sensors</option>
+              <option>Select a Stream</option>
+              {streams.map((s) => (
+                <option key={s.id}>{`${s.name} • ${s.metric}`}</option>
+              ))}
             </select>
           </div>
         </div>
 
-        <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-          <h4 className="text-lg font-semibold mb-2">Alert Settings</h4>
-          <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"} mb-4`}>
-            Configure your alert notifications and messages.
-          </p>
-
-          <div className="mb-6">
-            <label className="block text-sm font-medium mb-2">Alert Message</label>
-            <input
-              type="text"
-              value={alertMessage}
-              onChange={(e) => setAlertMessage(e.target.value)}
-              className={`border rounded px-3 py-2 w-full ${
-                darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white border-gray-300"
-              }`}
-              placeholder="Ex My (Sensor Name): Temperature above 50°F"
-            />
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center">
-              <div
-                className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer mr-4 ${
-                  sendEmail ? "bg-orange-500" : darkMode ? "bg-gray-600" : "bg-gray-300"
-                }`}
-                onClick={() => setSendEmail(!sendEmail)}
-              >
-                <div
-                  className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                    sendEmail ? "translate-x-6" : "translate-x-0"
-                  }`}
-                />
-              </div>
-              <div>
-                <div className="font-medium">Send email alert</div>
-                <div className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-                  Send an Email when this alert is triggered to selected contacts
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center">
-              <div
-                className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer mr-4 ${
-                  sendSMS ? "bg-orange-500" : darkMode ? "bg-gray-600" : "bg-gray-300"
-                }`}
-                onClick={() => setSendSMS(!sendSMS)}
-              >
-                <div
-                  className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                    sendSMS ? "translate-x-6" : "translate-x-0"
-                  }`}
-                />
-              </div>
-              <div>
-                <div className="font-medium">Send SMS alerts</div>
-                <div className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-                  Send an SMS when this alert is triggered to selected contacts
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Dark mode toggle (visual) */}
-        <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-          <h4 className="text-lg font-semibold mb-2">Mode</h4>
-          <label style={sliderStyle} className="relative inline-block cursor-pointer">
-            <input type="checkbox" checked={darkMode} onChange={toggleDarkMode} className="absolute opacity-0 w-0 h-0" />
-            <span style={sliderBeforeStyle} className="absolute cursor-pointer" />
-          </label>
-        </div>
-
         <div className="flex justify-between items-center pt-6">
-          <button
-            className={`px-6 py-3 rounded-lg ${
-              darkMode ? "bg-gray-600 text-white hover:bg-gray-700" : "bg-gray-300 text-gray-800 hover:bg-gray-400"
-            }`}
-            onClick={handleBack}
-          >
-            Cancel
-          </button>
-          <button
-            className={`px-6 py-3 rounded-lg font-semibold text-white border ${
-              darkMode ? "bg-orange-700 hover:bg-orange-800 border-orange-700" : "bg-orange-500 hover:bg-orange-600 border-orange-500"
-            }`}
-            onClick={() => {
-              console.log("Alert added:", { alertName, sensorName, alertMessage, sendEmail, sendSMS });
-              setCurrentView("alerts");
-            }}
-          >
-            Create Alert
-          </button>
+          <button className={`px-6 py-3 rounded-lg ${darkMode ? "bg-gray-600 text-white hover:bg-gray-700" : "bg-gray-300 text-gray-800 hover:bg-gray-400"}`} onClick={() => setCurrentView("alerts")}>Cancel</button>
+          <button className={`px-6 py-3 rounded-lg font-semibold text-white border ${darkMode ? "bg-orange-700 hover:bg-orange-800 border-orange-700" : "bg-orange-500 hover:bg-orange-600 border-orange-500"}`} onClick={() => setCurrentView("alerts")}>Create Alert</button>
         </div>
       </div>
     </main>
