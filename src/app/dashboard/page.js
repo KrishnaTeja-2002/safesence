@@ -24,38 +24,21 @@ try {
 }
 
 export default function Dashboard() {
-  const [data] = useState({
-    notifications: 3,
+  const [data, setData] = useState({
+    notifications: 0,
     sensors: {
-      total: 11,
-      error: 3,
-      warning: 1,
-      success: 4,
-      disconnected: 2,
+      total: 0,
+      error: 0,
+      warning: 0,
+      success: 0,
+      disconnected: 0,
     },
     users: 6,
-    temperatures: [
-      { name: 'Walk-In Fridge', value: 40, displayValue: '40°F', color: 'bg-yellow-400', type: 'fridge' },
-      { name: 'Beverages', value: 31, displayValue: '31°F', color: 'bg-red-400', type: 'fridge' },
-      { name: 'DT Fridge', value: 20, displayValue: '20°F', color: 'bg-red-500', type: 'fridge' },
-      { name: 'FC Fridge', value: 34, displayValue: '34°F', color: 'bg-green-400', type: 'fridge' },
-      { name: 'Freezer 1', value: -18, displayValue: '18°F', color: 'bg-red-300', type: 'freezer' },
-      { name: 'Meat Freezer', value: -13, displayValue: '13°F', color: 'bg-green-300', type: 'freezer' },
-      { name: 'Fry Product', value: -15, displayValue: '15°F', color: 'bg-green-300', type: 'freezer' },
-      { name: 'Freezer 2', value: -22, displayValue: '22°F', color: 'bg-green-400', type: 'freezer' },
-      { name: 'Placeholder 1', value: null, displayValue: '--', color: 'bg-gray-300', type: 'fridge' },
-      { name: 'Placeholder 2', value: null, displayValue: '--', color: 'bg-gray-300', type: 'fridge' },
-      { name: 'Placeholder 3', value: null, displayValue: '--', color: 'bg-gray-300', type: 'freezer' },
-    ],
-    notificationsList: [
-      { id: 1, title: 'Needs attention (Freezer 1)', date: '07/16/2025', type: 'warning' },
-      { id: 2, title: 'Needs attention (Drive Thru Fridge)', date: '07/16/2025', type: 'warning' },
-      { id: 3, title: 'Sensor Battery Low (Fry Product)', date: '07/16/2025', type: 'battery' },
-    ],
+    temperatures: [],
+    notificationsList: [],
   });
-
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState(data.notificationsList);
+  const [notifications, setNotifications] = useState([]);
   const [username, setUsername] = useState('User');
   const [error, setError] = useState('');
   const popupRef = useRef(null);
@@ -92,6 +75,93 @@ export default function Dashboard() {
     checkSession();
   }, [router]);
 
+  // Fetch sensors from Supabase
+  useEffect(() => {
+    const fetchSensors = async () => {
+      try {
+        const { data: sensorData, error } = await supabase.from('sensors').select('*');
+        if (error) throw error;
+
+        // Filter to only Temperature, Humidity, Temp1
+        const targetSensors = ['Temperature', 'Humidity', 'Temp1'];
+        const filteredSensors = sensorData.filter(sensor => targetSensors.includes(sensor.name));
+
+        // Map sensors to temperatures array
+        const temperatures = filteredSensors.length >= 3
+          ? filteredSensors.map(sensor => {
+              const isFreezer = sensor.function === 'Air and Surface Temp';
+              const status = sensor.status || 'Active';
+              const color = status === 'Active' ? 'bg-green-400' : status === 'Inactive' ? 'bg-red-400' : 'bg-yellow-400';
+              // Assume value is in the sensors table; fallback to placeholders if not present
+              const value = sensor.value || (sensor.name === 'Temperature' ? 42 : sensor.name === 'Humidity' ? 36 : -20);
+              return {
+                name: sensor.name,
+                value,
+                displayValue: `${Math.abs(value)}°F`,
+                color,
+                type: isFreezer ? 'freezer' : 'fridge',
+              };
+            })
+          : [
+              { name: 'Temperature', value: 42, displayValue: '42°F', color: 'bg-yellow-400', type: 'fridge' },
+              { name: 'Humidity', value: 36, displayValue: '36°F', color: 'bg-green-400', type: 'fridge' },
+              { name: 'Temp1', value: -20, displayValue: '20°F', color: 'bg-red-400', type: 'freezer' },
+            ];
+
+        // Generate notifications based on sensor status
+        const notificationsList = temperatures
+          .filter(temp => temp.color !== 'bg-green-400') // Only error/warning
+          .map((temp, index) => ({
+            id: index + 1,
+            title: `Needs attention (${temp.name})`,
+            date: new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
+            type: temp.color === 'bg-red-400' ? 'error' : 'warning',
+          }));
+
+        // Calculate sensor stats
+        const sensors = {
+          total: temperatures.length,
+          error: temperatures.filter(t => t.color === 'bg-red-400').length,
+          warning: temperatures.filter(t => t.color === 'bg-yellow-400').length,
+          success: temperatures.filter(t => t.color === 'bg-green-400').length,
+          disconnected: 0, // Assume no disconnected sensors for now
+        };
+
+        setData({
+          notifications: notificationsList.length,
+          sensors,
+          users: 6,
+          temperatures,
+          notificationsList,
+        });
+        setNotifications(notificationsList);
+        console.log('Sensors fetched successfully:', temperatures);
+      } catch (err) {
+        console.error('Sensor fetch error:', err.message);
+        setError('Failed to fetch sensor data: ' + err.message);
+        // Fallback data
+        const fallbackTemperatures = [
+          { name: 'Temperature', value: 42, displayValue: '42°F', color: 'bg-yellow-400', type: 'fridge' },
+          { name: 'Humidity', value: 36, displayValue: '36°F', color: 'bg-green-400', type: 'fridge' },
+          { name: 'Temp1', value: -20, displayValue: '20°F', color: 'bg-red-400', type: 'freezer' },
+        ];
+        const notificationsList = [
+          { id: 1, title: 'Needs attention (Temp1)', date: '08/16/2025', type: 'error' },
+          { id: 2, title: 'Needs attention (Temperature)', date: '08/16/2025', type: 'warning' },
+        ];
+        setData({
+          notifications: 2,
+          sensors: { total: 3, error: 1, warning: 1, success: 1, disconnected: 0 },
+          users: 6,
+          temperatures: fallbackTemperatures,
+          notificationsList,
+        });
+        setNotifications(notificationsList);
+      }
+    };
+    fetchSensors();
+  }, []);
+
   // Handle click outside to close notifications
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -127,12 +197,14 @@ export default function Dashboard() {
   // Close individual notification
   const closeNotification = (id) => {
     setNotifications(notifications.filter((notification) => notification.id !== id));
+    setData(prev => ({ ...prev, notifications: prev.notifications - 1 }));
   };
 
   // Clear all notifications
   const clearAllNotifications = () => {
     setNotifications([]);
     setShowNotifications(false);
+    setData(prev => ({ ...prev, notifications: 0 }));
   };
 
   // Calculate bar height for temperature graph
@@ -217,7 +289,7 @@ export default function Dashboard() {
               </div>
               <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Notifications</p>
               <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
-                {notifications.length}
+                {data.notifications}
               </p>
               <div className="flex items-center justify-center">
                 <div className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? 'bg-red-400' : ''}`}></div>
@@ -422,7 +494,7 @@ export default function Dashboard() {
                     {data.temperatures.map((temp, i) => {
                       const barHeight = getBarHeight(temp);
                       return (
-                        <div key={i} className="flex flex-col items-center relative" style={{ flexBasis: '8%' }}>
+                        <div key={i} className="flex flex-col items-center relative" style={{ flexBasis: '25%' }}>
                           {temp.value !== null && (
                             <div
                               className={`absolute text-xs font-medium bg-white px-1 rounded border ${
@@ -434,8 +506,6 @@ export default function Dashboard() {
                                 color: temp.color
                                   .replace('bg-', 'text-')
                                   .replace('-400', darkMode ? '-300' : '-700')
-                                  .replace('-300', darkMode ? '-200' : '-600')
-                                  .replace('-500', darkMode ? '-400' : '-800'),
                               }}
                             >
                               {temp.displayValue}
@@ -443,13 +513,10 @@ export default function Dashboard() {
                           )}
                           {temp.value !== null && (
                             <div
-                              className={`${temp.color} w-6 rounded-t`}
+                              className={`${temp.color} w-12 rounded-t`}
                               style={{ height: `${barHeight}px`, minHeight: '4px' }}
                               title={`${temp.name}: ${temp.displayValue}`}
                             ></div>
-                          )}
-                          {temp.value === null && (
-                            <div className={`bg-gray-300 w-6`} style={{ height: '4px', position: 'absolute', bottom: 0 }}></div>
                           )}
                         </div>
                       );
@@ -458,17 +525,8 @@ export default function Dashboard() {
                 </div>
                 <div className={`flex justify-around mt-2 pt-2 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
                   {data.temperatures.map((temp, i) => (
-                    <div key={i} className="text-center" style={{ flexBasis: '8%' }}>
-                      <p className="text-xs leading-tight">
-                        {temp.name.includes(' ') ? (
-                          <>
-                            {temp.name.split(' ')[0]}<br />
-                            {temp.name.split(' ')[1]}
-                          </>
-                        ) : (
-                          temp.name
-                        )}
-                      </p>
+                    <div key={i} className="text-center" style={{ flexBasis: '25%' }}>
+                      <p className="text-xs leading-tight">{temp.name}</p>
                     </div>
                   ))}
                 </div>
