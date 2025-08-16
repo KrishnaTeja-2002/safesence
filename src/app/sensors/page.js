@@ -1,10 +1,24 @@
-"use client";
+'use client';
 
-import { useState, Component } from 'react';
+import { useState, useEffect, Component } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 import { Bluetooth, ChevronDown, Edit, Trash, AlertTriangle, X } from 'lucide-react';
-import Sidebar from '../../components/Sidebar'; // Adjusted path
+import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
+
+// Supabase configuration
+const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
+
+// Initialize Supabase client
+let supabase;
+try {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
+  console.log('Supabase client initialized');
+} catch (err) {
+  console.error('Failed to initialize Supabase client:', err.message);
+}
 
 class ErrorBoundary extends Component {
   state = { hasError: false, error: null };
@@ -13,24 +27,18 @@ class ErrorBoundary extends Component {
   }
   render() {
     if (this.state.hasError) {
-      return <div className={`p-4 ${useDarkMode ? 'text-red-400' : 'text-red-500'}`}>Error: {this.state.error?.message || 'Something went wrong'}</div>;
+      return (
+        <div className={`p-4 ${this.props.darkMode ? 'text-red-400' : 'text-red-500'}`}>
+          Error: {this.state.error?.message || 'Something went wrong'}
+        </div>
+      );
     }
     return this.props.children;
   }
 }
 
 export default function Sensors() {
-  const [sensors, setSensors] = useState([
-    { id: 1, name: 'Walk-In Fridge', function: 'Air Temp', alert: 'On', date: 'June 28 2025', status: 'Active' },
-    { id: 2, name: 'Freezer 1', function: 'Air Temp', alert: 'On', date: 'May 25 2025', status: 'Inactive' },
-    { id: 3, name: 'Drive Thru Fridge', function: 'Air and Surface Temp', alert: 'On', date: 'May 6 2025', status: 'Inactive' },
-    { id: 4, name: 'FC Fridge', function: 'Surface Temp', alert: 'On', date: 'April 4 2025', status: 'Active' },
-    { id: 5, name: 'Freezer 2', function: 'Air and Surface Temp', alert: 'On', date: 'Jan 2025', status: 'Active' },
-    { id: 6, name: 'Meat Freezer', function: 'Air and Surface Temp', alert: 'On', date: 'Dec 25 2024', status: 'Active' },
-    { id: 7, name: 'Fry Products', function: 'Air and Surface Temp', alert: 'On', date: 'Oct 18 2024', status: 'Active' },
-    { id: 8, name: 'Beverage Fridge', function: 'Air Temp', alert: 'Off', date: 'Sep 18 2024', status: 'Inactive' },
-  ]);
-
+  const [sensors, setSensors] = useState([]);
   const [currentView, setCurrentView] = useState('list');
   const [selectedSensor, setSelectedSensor] = useState(null);
   const [step, setStep] = useState(1);
@@ -40,46 +48,231 @@ export default function Sensors() {
   const [sortBy, setSortBy] = useState('Newest');
   const [connectedDevice, setConnectedDevice] = useState(null);
   const [deviceId, setDeviceId] = useState(null);
+  const [username, setUsername] = useState('User');
+  const [error, setError] = useState('');
   const router = useRouter();
-  const { darkMode, toggleDarkMode } = useDarkMode();
+  const { darkMode } = useDarkMode();
+
+  // Fetch user session and set username
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        console.log('Checking session...');
+        const { data: sessionData, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!sessionData.session) {
+          console.log('No session found, redirecting to login');
+          router.push('/login');
+        } else {
+          const user = sessionData.session.user;
+          const displayName = user?.user_metadata?.username || user?.email?.split('@')[0] || 'User';
+          console.log('Session found, user:', displayName);
+          setUsername(displayName);
+        }
+      } catch (err) {
+        console.error('Session check error:', err.message);
+        setError(
+          err.message === 'Failed to fetch'
+            ? 'Unable to connect to authentication server. Please check your network or contact support.'
+            : 'Failed to verify session: ' + err.message
+        );
+        router.push('/login');
+      }
+    };
+    checkSession();
+  }, [router]);
+
+  // Fetch sensors from Supabase
+  useEffect(() => {
+    const fetchSensors = async () => {
+      try {
+        const { data: sensorData, error } = await supabase.from('sensors').select('*');
+        if (error) throw error;
+        if (sensorData && sensorData.length > 0) {
+          setSensors(
+            sensorData.map(sensor => ({
+              id: sensor.id,
+              name: sensor.name,
+              function: sensor.function,
+              alert: sensor.alert || 'On',
+              date: sensor.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+              status: sensor.status || 'Active',
+            }))
+          );
+        } else {
+          // Fallback to hardcoded data if Supabase returns no data
+          setSensors([
+            { id: 1, name: 'Walk-In Fridge', function: 'Air Temp', alert: 'On', date: 'June 28 2025', status: 'Active' },
+            { id: 2, name: 'Freezer 1', function: 'Air Temp', alert: 'On', date: 'May 25 2025', status: 'Inactive' },
+            { id: 3, name: 'Drive Thru Fridge', function: 'Air and Surface Temp', alert: 'On', date: 'May 6 2025', status: 'Inactive' },
+            { id: 4, name: 'FC Fridge', function: 'Surface Temp', alert: 'On', date: 'April 4 2025', status: 'Active' },
+            { id: 5, name: 'Freezer 2', function: 'Air and Surface Temp', alert: 'On', date: 'Jan 2025', status: 'Active' },
+            { id: 6, name: 'Meat Freezer', function: 'Air and Surface Temp', alert: 'On', date: 'Dec 25 2024', status: 'Active' },
+            { id: 7, name: 'Fry Products', function: 'Air and Surface Temp', alert: 'On', date: 'Oct 18 2024', status: 'Active' },
+            { id: 8, name: 'Beverage Fridge', function: 'Air Temp', alert: 'Off', date: 'Sep 18 2024', status: 'Inactive' },
+          ]);
+        }
+      } catch (err) {
+        console.error('Sensor fetch error:', err.message);
+        setError('Failed to fetch sensor data: ' + err.message);
+        // Fallback to hardcoded data
+        setSensors([
+          { id: 1, name: 'Walk-In Fridge', function: 'Air Temp', alert: 'On', date: 'June 28 2025', status: 'Active' },
+          { id: 2, name: 'Freezer 1', function: 'Air Temp', alert: 'On', date: 'May 25 2025', status: 'Inactive' },
+          { id: 3, name: 'Drive Thru Fridge', function: 'Air and Surface Temp', alert: 'On', date: 'May 6 2025', status: 'Inactive' },
+          { id: 4, name: 'FC Fridge', function: 'Surface Temp', alert: 'On', date: 'April 4 2025', status: 'Active' },
+          { id: 5, name: 'Freezer 2', function: 'Air and Surface Temp', alert: 'On', date: 'Jan 2025', status: 'Active' },
+          { id: 6, name: 'Meat Freezer', function: 'Air and Surface Temp', alert: 'On', date: 'Dec 25 2024', status: 'Active' },
+          { id: 7, name: 'Fry Products', function: 'Air and Surface Temp', alert: 'On', date: 'Oct 18 2024', status: 'Active' },
+          { id: 8, name: 'Beverage Fridge', function: 'Air Temp', alert: 'Off', date: 'Sep 18 2024', status: 'Inactive' },
+        ]);
+      }
+    };
+    fetchSensors();
+  }, []);
+
+  // Handle sign-out
+  const handleSignOut = async () => {
+    try {
+      console.log('Attempting sign-out...');
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      console.log('Sign-out successful');
+      router.push('/login');
+    } catch (err) {
+      console.error('Sign-out error:', err.message);
+      setError('Failed to sign out: ' + err.message);
+    }
+  };
+
+  // Get initials for avatar
+  const getInitials = (name) => {
+    return name
+      .split(' ')
+      .map(word => word[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  // Handle edit sensor
+  const handleEditSensor = (sensor) => {
+    setSelectedSensor(sensor);
+    setSensorName(sensor.name);
+    setSensorFunction(sensor.function);
+    setCurrentView('edit');
+  };
+
+  // Handle save edited sensor
+  const handleSaveEditSensor = async () => {
+    if (sensorName && sensorFunction && selectedSensor) {
+      try {
+        // Update in Supabase
+        const { error } = await supabase
+          .from('sensors')
+          .update({
+            name: sensorName,
+            function: sensorFunction,
+            date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+          })
+          .eq('id', selectedSensor.id);
+        if (error) throw error;
+
+        // Update local state
+        setSensors(
+          sensors.map(sensor =>
+            sensor.id === selectedSensor.id
+              ? {
+                  ...sensor,
+                  name: sensorName,
+                  function: sensorFunction,
+                  date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                }
+              : sensor
+          )
+        );
+        setSensorName('');
+        setSensorFunction('');
+        setSelectedSensor(null);
+        setCurrentView('list');
+        console.log('Sensor updated successfully:', selectedSensor.id);
+      } catch (err) {
+        console.error('Sensor update error:', err.message);
+        setError('Failed to update sensor: ' + err.message);
+      }
+    }
+  };
+
+  // Handle delete sensor
+  const handleDeleteSensor = async (sensorId) => {
+    if (window.confirm('Are you sure you want to delete this sensor?')) {
+      try {
+        // Delete from Supabase
+        const { error } = await supabase.from('sensors').delete().eq('id', sensorId);
+        if (error) throw error;
+
+        // Update local state
+        setSensors(sensors.filter(sensor => sensor.id !== sensorId));
+        console.log('Sensor deleted successfully:', sensorId);
+      } catch (err) {
+        console.error('Sensor delete error:', err.message);
+        setError('Failed to delete sensor: ' + err.message);
+      }
+    }
+  };
 
   const handleAddSensor = () => {
     setCurrentView('connect');
     setStep(1);
     setConnectedDevice(null);
     setDeviceId(null);
+    setSensorName('');
+    setSensorFunction('');
   };
 
+  // Updated handleNextStep function
   const handleNextStep = () => {
-    if (step < 3) {
-      setStep(step + 1);
-    } else {
-      setCurrentView('success');
+    if (currentView === 'connect') {
+      setCurrentView('settings');
+      setStep(2);
     }
   };
 
-  const handleFinishAddSensor = () => {
+  // Updated handleFinishAddSensor function
+  const handleFinishAddSensor = async () => {
     if (sensorName && sensorFunction) {
-      const newSensor = {
-        id: sensors.length + 1,
-        name: sensorName,
-        function: sensorFunction,
-        alert: 'On',
-        date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-        status: 'Active',
-      };
-      setSensors([...sensors, newSensor]);
-      setSensorName('');
-      setSensorFunction('');
-      setConnectedDevice(null);
-      setDeviceId(null);
-      setCurrentView('success');
+      try {
+        // Insert into Supabase
+        const newSensor = {
+          name: sensorName,
+          function: sensorFunction,
+          alert: 'On',
+          date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+          status: 'Active',
+        };
+        const { data: insertedSensor, error } = await supabase.from('sensors').insert([newSensor]).select();
+        if (error) throw error;
+
+        // Update local state
+        setSensors([...sensors, { id: insertedSensor[0].id, ...newSensor }]);
+        setSensorName('');
+        setSensorFunction('');
+        setConnectedDevice(null);
+        setDeviceId(null);
+        setCurrentView('success');
+        setStep(3);
+        console.log('Sensor added successfully:', insertedSensor[0].id);
+      } catch (err) {
+        console.error('Sensor add error:', err.message);
+        setError('Failed to add sensor: ' + err.message);
+      }
     }
   };
 
   const handleDone = () => {
     setCurrentView('list');
     setStep(1);
+    setSelectedSensor(null);
   };
 
   const handleSensorClick = (sensor) => {
@@ -95,16 +288,16 @@ export default function Sensors() {
 
   const renderEmptyState = () => (
     <div className="flex-1 flex items-center justify-center">
-      <div className={`rounded-lg shadow-lg p-16 text-center max-w-lg bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+      <div className={`rounded-lg shadow-lg p-16 text-center max-w-lg ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
         <div className="mb-8">
-          <div className={`w-20 h-20 bg-${darkMode ? 'gray-700' : 'gray-100'} rounded-full flex items-center justify-center mx-auto mb-6`}>
-            <AlertTriangle className={`w-10 h-10 text-${darkMode ? 'gray-400' : 'gray-400'}`} />
+          <div className={`w-20 h-20 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'} rounded-full flex items-center justify-center mx-auto mb-6`}>
+            <AlertTriangle className={`w-10 h-10 ${darkMode ? 'text-gray-400' : 'text-gray-400'}`} />
           </div>
-          <p className={`text-lg mb-8 text-${darkMode ? 'gray-400' : 'gray-500'}`}>No Sensor connected with this<br />Server.</p>
+          <p className={`text-lg mb-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No Sensor connected with this<br />Server.</p>
         </div>
         <button
           onClick={handleAddSensor}
-          className={`px-8 py-3 rounded-lg font-medium text-white border bg-${darkMode ? 'orange-700 hover:bg-orange-800 border-orange-700' : 'orange-500 hover:bg-orange-600 border-orange-500'}`}
+          className={`px-8 py-3 rounded-lg font-medium text-white border ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
         >
           Add Sensor
         </button>
@@ -125,7 +318,6 @@ export default function Sensors() {
       console.log('Connected to device:', device.name);
       setConnectedDevice(device.name);
       setDeviceId(device.id);
-      setCurrentView('settings');
     } catch (error) {
       console.error('Bluetooth connection failed:', error);
       if (error.message.includes('User cancelled')) {
@@ -146,33 +338,33 @@ export default function Sensors() {
 
   const renderSensorsList = () => (
     <div className="space-y-6">
-      <div className={`rounded-lg shadow-sm overflow-hidden bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+      <div className={`rounded-lg shadow-sm overflow-hidden ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="text-xl font-semibold">Sensors</h3>
-              <p className={`text-blue-500 cursor-pointer text-sm font-medium ${darkMode ? 'text-blue-400' : ''}`}>Paired Sensors</p>
+              <p className={`cursor-pointer text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>Paired Sensors</p>
             </div>
             <div className="flex items-center space-x-4">
               <div className="relative">
-                <select className={`border rounded-lg px-4 py-2 text-sm bg-${darkMode ? 'gray-700' : 'white'} border-${darkMode ? 'gray-600' : 'gray-300'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+                <select className={`border rounded-lg px-4 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-300' : 'bg-white border-gray-300 text-gray-800'}`}>
                   <option>Sensors</option>
                 </select>
-                <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-${darkMode ? 'gray-400' : 'gray-400'} pointer-events-none`} />
+                <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 ${darkMode ? 'text-gray-400' : 'text-gray-400'} pointer-events-none`} />
               </div>
               <div className="flex items-center space-x-2">
-                <span className={`text-sm text-${darkMode ? 'gray-400' : 'gray-500'}`}>Sort by:</span>
+                <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Sort by:</span>
                 <div className="relative">
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value)}
-                    className={`border rounded-lg px-4 py-2 text-sm bg-${darkMode ? 'gray-700' : 'white'} border-${darkMode ? 'gray-600' : 'gray-300'} text-${darkMode ? 'gray-300' : 'gray-800'} appearance-none pr-8`}
+                    className={`border rounded-lg px-4 py-2 text-sm appearance-none pr-8 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-300' : 'bg-white border-gray-300 text-gray-800'}`}
                   >
                     <option>Newest</option>
                     <option>Oldest</option>
                     <option>Name</option>
                   </select>
-                  <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-${darkMode ? 'gray-400' : 'gray-400'} pointer-events-none`} />
+                  <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 ${darkMode ? 'text-gray-400' : 'text-gray-400'} pointer-events-none`} />
                 </div>
               </div>
             </div>
@@ -180,7 +372,7 @@ export default function Sensors() {
 
           <table className="w-full">
             <thead>
-              <tr className={`border-b border-${darkMode ? 'gray-700' : 'gray-200'} text-${darkMode ? 'gray-400' : 'gray-600'}`}>
+              <tr className={`border-b ${darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-200 text-gray-600'}`}>
                 <th className="pb-3 font-medium text-sm text-left">Sensor Name</th>
                 <th className="pb-3 font-medium text-sm text-left">Function</th>
                 <th className="pb-3 font-medium text-sm text-left">Tools</th>
@@ -191,30 +383,36 @@ export default function Sensors() {
             </thead>
             <tbody>
               {currentSensors.map((sensor) => (
-                <tr key={sensor.id} className={`border-b border-${darkMode ? 'gray-700' : 'gray-100'} hover:bg-${darkMode ? 'gray-700' : 'gray-50'}`}>
+                <tr key={sensor.id} className={`border-b ${darkMode ? 'border-gray-700 hover:bg-gray-700' : 'border-gray-100 hover:bg-gray-50'}`}>
                   <td className="py-4">
                     <button
-                      className={`text-blue-500 hover:text-blue-700 font-medium text-sm ${darkMode ? 'hover:text-blue-400' : ''}`}
+                      className={`font-medium text-sm ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-700'}`}
                       onClick={() => handleSensorClick(sensor)}
                     >
                       {sensor.name}
                     </button>
                   </td>
-                  <td className={`py-4 text-sm text-${darkMode ? 'gray-400' : 'gray-700'}`}>{sensor.function}</td>
+                  <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.function}</td>
                   <td className="py-4">
                     <div className="flex items-center space-x-3">
-                      <button className={`text-blue-500 hover:text-blue-700 ${darkMode ? 'hover:text-blue-400' : ''}`}>
+                      <button
+                        onClick={() => handleEditSensor(sensor)}
+                        className={`${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-700'}`}
+                      >
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button className={`text-orange-500 hover:text-orange-700 ${darkMode ? 'hover:text-orange-400' : ''}`}>
+                      <button className={`${darkMode ? 'text-orange-400 hover:text-orange-300' : 'text-orange-500 hover:text-orange-700'}`}>
                         <AlertTriangle className="w-4 h-4" />
                       </button>
-                      <button className={`text-red-500 hover:text-red-700 ${darkMode ? 'hover:text-red-400' : ''}`}>
+                      <button
+                        onClick={() => handleDeleteSensor(sensor.id)}
+                        className={`${darkMode ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-700'}`}
+                      >
                         <Trash className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
-                  <td className={`py-4 text-sm text-${darkMode ? 'gray-400' : 'gray-700'}`}>{sensor.date}</td>
+                  <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.date}</td>
                   <td className="py-4">
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-medium ${
@@ -230,18 +428,18 @@ export default function Sensors() {
                       {sensor.status}
                     </span>
                   </td>
-                  <td className={`py-4 text-sm text-${darkMode ? 'gray-400' : 'gray-700'}`}>{sensor.alert}</td>
+                  <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.alert}</td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          <div className={`flex justify-between items-center mt-6 text-sm text-${darkMode ? 'gray-400' : 'gray-500'}`}>
+          <div className={`flex justify-between items-center mt-6 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
             <span>Showing Sensors 1 to {Math.min(endIndex, sensors.length)} of {sensors.length}</span>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                className={`px-3 py-1 border rounded border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-700' : 'gray-50'}`}
+                className={`px-3 py-1 border rounded ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`}
                 disabled={currentPage === 1}
               >
                 &lt;
@@ -250,25 +448,27 @@ export default function Sensors() {
                 onClick={() => setCurrentPage(1)}
                 className={`px-3 py-1 border rounded ${
                   currentPage === 1
-                    ? `bg-${darkMode ? 'orange-700' : 'orange-500'} text-white border-${darkMode ? 'orange-700' : 'orange-500'}`
-                    : `border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-700' : 'gray-50'}`
+                    ? `${darkMode ? 'bg-orange-700 text-white border-orange-700' : 'bg-orange-500 text-white border-orange-500'}`
+                    : `${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`
                 }`}
               >
                 1
               </button>
-              <button
-                onClick={() => setCurrentPage(2)}
-                className={`px-3 py-1 border rounded ${
-                  currentPage === 2
-                    ? `bg-${darkMode ? 'orange-700' : 'orange-500'} text-white border-${darkMode ? 'orange-700' : 'orange-500'}`
-                    : `border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-700' : 'gray-50'}`
-                }`}
-              >
-                2
-              </button>
+              {totalPages > 1 && (
+                <button
+                  onClick={() => setCurrentPage(2)}
+                  className={`px-3 py-1 border rounded ${
+                    currentPage === 2
+                      ? `${darkMode ? 'bg-orange-700 text-white border-orange-700' : 'bg-orange-500 text-white border-orange-500'}`
+                      : `${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`
+                  }`}
+                >
+                  2
+                </button>
+              )}
               <button
                 onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                className={`px-3 py-1 border rounded border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-700' : 'gray-50'}`}
+                className={`px-3 py-1 border rounded ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`}
                 disabled={currentPage === totalPages}
               >
                 &gt;
@@ -281,7 +481,7 @@ export default function Sensors() {
       <div className="flex justify-end">
         <button
           onClick={handleAddSensor}
-          className={`px-8 py-3 rounded-lg font-medium text-white border bg-${darkMode ? 'orange-700 hover:bg-orange-800 border-orange-700' : 'orange-500 hover:bg-orange-600 border-orange-500'}`}
+          className={`px-8 py-3 rounded-lg font-medium text-white border ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
         >
           Add Sensor
         </button>
@@ -291,60 +491,60 @@ export default function Sensors() {
 
   const renderConnectStep = () => (
     <div className="flex-1 flex items-center justify-center">
-      <div className={`rounded-lg shadow-lg p-12 text-center max-w-md w-full bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+      <div className={`rounded-lg shadow-lg p-12 text-center max-w-md w-full ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
         <div className="flex justify-center items-center space-x-4 mb-8">
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 bg-${darkMode ? 'orange-700' : 'orange-500'} text-white rounded-full flex items-center justify-center text-sm font-medium`}>
+            <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-sm font-medium ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}>
               1
             </div>
-            <span className={`text-sm ${darkMode ? 'text-orange-400' : 'text-orange-500'} font-medium`}>Connect</span>
+            <span className={`text-sm font-medium ${darkMode ? 'text-orange-400' : 'text-orange-500'}`}>Connect</span>
           </div>
           <div className={`w-12 h-px ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}></div>
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 bg-${darkMode ? 'gray-700' : 'gray-200'} text-${darkMode ? 'gray-400' : 'gray-500'} rounded-full flex items-center justify-center text-sm font-medium`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${darkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-500'}`}>
               2
             </div>
-            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} font-medium`}>Settings</span>
+            <span className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Settings</span>
           </div>
           <div className="w-12 h-px bg-gray-300"></div>
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 bg-${darkMode ? 'gray-700' : 'gray-200'} text-${darkMode ? 'gray-400' : 'gray-500'} rounded-full flex items-center justify-center text-sm font-medium`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${darkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-500'}`}>
               3
             </div>
-            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} font-medium`}>Finish</span>
+            <span className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Finish</span>
           </div>
         </div>
 
         <div className="mb-8">
           <div
-            className={`w-20 h-20 bg-${darkMode ? 'blue-900' : 'blue-100'} rounded-full flex items-center justify-center mx-auto mb-6 cursor-pointer`}
+            className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 cursor-pointer ${darkMode ? 'bg-blue-900' : 'bg-blue-100'}`}
             onClick={connectToBluetoothDevice}
           >
-            <Bluetooth className={`w-10 h-10 text-${darkMode ? 'blue-400' : 'blue-500'}`} />
+            <Bluetooth className={`w-10 h-10 ${darkMode ? 'text-blue-400' : 'text-blue-500'}`} />
           </div>
           <h3 className="text-xl font-semibold mb-4">Automatic Device Detection</h3>
-          <p className={`mb-4 text-${darkMode ? 'gray-400' : 'gray-600'}`}>Pair with your phone (e.g., Android or Bluefy on iPhone)</p>
-          <p className={`text-sm text-${darkMode ? 'gray-500' : 'gray-500'}`}>Device: <span className={`text-${darkMode ? 'gray-400' : 'gray-400'}`}>{connectedDevice || 'Not connected'}</span></p>
+          <p className={`mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Pair with your phone (e.g., Android or Bluefy on iPhone)</p>
+          <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>Device: <span className={`${darkMode ? 'text-gray-400' : 'text-gray-400'}`}>{connectedDevice || 'Not connected'}</span></p>
         </div>
 
         <div className="flex space-x-4">
           {connectedDevice && (
             <button
               onClick={disconnectDevice}
-              className={`px-4 py-2 rounded-lg font-medium text-white bg-${darkMode ? 'red-700 hover:bg-red-800' : 'red-500 hover:bg-red-600'}`}
+              className={`px-4 py-2 rounded-lg font-medium text-white ${darkMode ? 'bg-red-700 hover:bg-red-800' : 'bg-red-500 hover:bg-red-600'}`}
             >
               <X className="w-4 h-4 inline mr-1" /> Disconnect
             </button>
           )}
           <button
             onClick={() => setCurrentView('list')}
-            className={`flex-1 px-6 py-3 rounded-lg font-medium bg-${darkMode ? 'gray-700' : 'white'} text-${darkMode ? 'gray-300' : 'gray-700'} border border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-600' : 'gray-50'}`}
+            className={`flex-1 px-6 py-3 rounded-lg font-medium border ${darkMode ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
           >
             Cancel
           </button>
           <button
             onClick={handleNextStep}
-            className={`flex-1 px-6 py-3 rounded-lg font-medium text-white border bg-${darkMode ? 'orange-700 hover:bg-orange-800 border-orange-700' : 'orange-500 hover:bg-orange-600 border-orange-500'}`}
+            className={`flex-1 px-6 py-3 rounded-lg font-medium text-white border ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
             disabled={!connectedDevice}
           >
             Next
@@ -354,43 +554,47 @@ export default function Sensors() {
     </div>
   );
 
-  const renderSettingsStep = () => (
+  const renderSettingsStep = (isEdit = false) => (
     <div className="flex-1 flex items-center justify-center">
-      <div className={`rounded-lg shadow-lg p-12 max-w-md w-full bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+      <div className={`rounded-lg shadow-lg p-12 max-w-md w-full ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
         <div className="flex justify-center items-center space-x-4 mb-8">
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 bg-${darkMode ? 'orange-700' : 'orange-500'} text-white rounded-full flex items-center justify-center text-sm`}>
-              ✓
+            <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-sm ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}>
+              {isEdit ? '✓' : '1'}
             </div>
-            <span className={`text-sm ${darkMode ? 'text-orange-400' : 'text-orange-500'} font-medium`}>Connect</span>
+            <span className={`text-sm font-medium ${darkMode ? 'text-orange-400' : 'text-orange-500'}`}>Connect</span>
           </div>
           <div className={`w-12 h-px ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}></div>
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 bg-${darkMode ? 'orange-700' : 'orange-500'} text-white rounded-full flex items-center justify-center text-sm font-medium`}>
+            <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-sm font-medium ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}>
               2
             </div>
-            <span className={`text-sm ${darkMode ? 'text-orange-400' : 'text-orange-500'} font-medium`}>Settings</span>
+            <span className={`text-sm font-medium ${darkMode ? 'text-orange-400' : 'text-orange-500'}`}>Settings</span>
           </div>
           <div className="w-12 h-px bg-gray-300"></div>
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 bg-${darkMode ? 'gray-700' : 'gray-200'} text-${darkMode ? 'gray-400' : 'gray-500'} rounded-full flex items-center justify-center text-sm font-medium`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${darkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-500'}`}>
               3
             </div>
-            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'} font-medium`}>Finish</span>
+            <span className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Finish</span>
           </div>
         </div>
 
         <div className="space-y-8">
           <div>
-            <h3 className="text-xl font-semibold mb-2">Sensor Name</h3>
-            <p className={`mb-6 text-${darkMode ? 'gray-400' : 'gray-600'}`}>Give this Sensor a name</p>
+            <h3 className="text-xl font-semibold mb-2">{isEdit ? 'Edit Sensor' : 'Sensor Name'}</h3>
+            <p className={`mb-6 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{isEdit ? 'Update the sensor details' : 'Give this Sensor a name'}</p>
             <div>
               <label className="block text-sm font-medium mb-2">Name</label>
               <input
                 type="text"
                 value={sensorName}
                 onChange={(e) => setSensorName(e.target.value)}
-                className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-${darkMode ? 'orange-700' : 'orange-500'} focus:border-${darkMode ? 'orange-700' : 'orange-500'} outline-none bg-${darkMode ? 'gray-700' : 'white'} text-${darkMode ? 'gray-300' : 'gray-900'} border-${darkMode ? 'gray-600' : 'gray-300'}`}
+                className={`w-full p-3 border rounded-lg outline-none ${
+                  darkMode 
+                    ? 'bg-gray-700 text-gray-300 border-gray-600 focus:ring-2 focus:ring-orange-700 focus:border-orange-700' 
+                    : 'bg-white text-gray-900 border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500'
+                }`}
                 placeholder="Enter sensor name"
               />
             </div>
@@ -398,37 +602,49 @@ export default function Sensors() {
 
           <div>
             <h3 className="text-lg font-semibold mb-2">Function</h3>
-            <p className={`mb-6 text-${darkMode ? 'gray-400' : 'gray-600'}`}>What is this sensor monitoring?</p>
+            <p className={`mb-6 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>What is this sensor monitoring?</p>
             <div className="relative">
               <select
                 value={sensorFunction}
                 onChange={(e) => setSensorFunction(e.target.value)}
-                className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-${darkMode ? 'orange-700' : 'orange-500'} focus:border-${darkMode ? 'orange-700' : 'orange-500'} outline-none appearance-none bg-${darkMode ? 'gray-700' : 'white'} text-${darkMode ? 'gray-300' : 'gray-900'} border-${darkMode ? 'gray-600' : 'gray-300'}`}
+                className={`w-full p-3 border rounded-lg outline-none appearance-none ${
+                  darkMode 
+                    ? 'bg-gray-700 text-gray-300 border-gray-600 focus:ring-2 focus:ring-orange-700 focus:border-orange-700' 
+                    : 'bg-white text-gray-900 border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500'
+                }`}
               >
                 <option value="">Select function</option>
                 <option value="Air Temp">Air Temp</option>
                 <option value="Surface Temp">Surface Temp</option>
                 <option value="Air and Surface Temp">Air and Surface Temp</option>
               </select>
-              <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-${darkMode ? 'gray-400' : 'gray-400'} pointer-events-none`} />
+              <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 pointer-events-none ${darkMode ? 'text-gray-400' : 'text-gray-400'}`} />
             </div>
           </div>
 
           <div className="flex space-x-4 pt-4">
             <button
-              onClick={() => setCurrentView('connect')}
-              className={`flex-1 px-6 py-3 rounded-lg font-medium bg-${darkMode ? 'gray-700' : 'white'} text-${darkMode ? 'gray-300' : 'gray-700'} border border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-600' : 'gray-50'}`}
-            >
-              Back
-            </button>
-            <button
-              onClick={handleFinishAddSensor}
-              disabled={!sensorName || !sensorFunction}
-              className={`flex-1 px-6 py-3 rounded-lg font-medium text-white border bg-${darkMode ? 'orange-700 hover:bg-orange-800 border-orange-700' : 'orange-500 hover:bg-orange-600 border-orange-500'} ${
-                !sensorName || !sensorFunction ? 'bg-gray-300 cursor-not-allowed' : ''
+              onClick={() => setCurrentView(isEdit ? 'list' : 'connect')}
+              className={`flex-1 px-6 py-3 rounded-lg font-medium border ${
+                darkMode 
+                  ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' 
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
               }`}
             >
-              Finish
+              {isEdit ? 'Cancel' : 'Back'}
+            </button>
+            <button
+              onClick={isEdit ? handleSaveEditSensor : handleFinishAddSensor}
+              disabled={!sensorName || !sensorFunction}
+              className={`flex-1 px-6 py-3 rounded-lg font-medium text-white border ${
+                (!sensorName || !sensorFunction)
+                  ? 'bg-gray-300 cursor-not-allowed border-gray-300'
+                  : darkMode 
+                    ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' 
+                    : 'bg-orange-500 hover:bg-orange-600 border-orange-500'
+              }`}
+            >
+              {isEdit ? 'Save' : 'Finish'}
             </button>
           </div>
         </div>
@@ -439,50 +655,54 @@ export default function Sensors() {
   const renderSuccessStep = () => (
     <div className="relative h-full">
       <div className="flex-1 flex items-center justify-center">
-        <div className={`rounded-lg shadow-lg p-12 text-center max-w-md w-full bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+        <div className={`rounded-lg shadow-lg p-12 text-center max-w-md w-full ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
           <div className="flex justify-center items-center space-x-4 mb-8">
             <div className="flex items-center space-x-2">
-              <div className={`w-8 h-8 bg-${darkMode ? 'orange-700' : 'orange-500'} text-white rounded-full flex items-center justify-center text-sm`}>
+              <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-sm ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}>
                 ✓
               </div>
-              <span className={`text-sm ${darkMode ? 'text-orange-400' : 'text-orange-500'} font-medium`}>Connect</span>
+              <span className={`text-sm font-medium ${darkMode ? 'text-orange-400' : 'text-orange-500'}`}>Connect</span>
             </div>
             <div className={`w-12 h-px ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}></div>
             <div className="flex items-center space-x-2">
-              <div className={`w-8 h-8 bg-${darkMode ? 'orange-700' : 'orange-500'} text-white rounded-full flex items-center justify-center text-sm`}>
+              <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-sm ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}>
                 ✓
               </div>
-              <span className={`text-sm ${darkMode ? 'text-orange-400' : 'text-orange-500'} font-medium`}>Settings</span>
+              <span className={`text-sm font-medium ${darkMode ? 'text-orange-400' : 'text-orange-500'}`}>Settings</span>
             </div>
             <div className={`w-12 h-px ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}></div>
             <div className="flex items-center space-x-2">
-              <div className={`w-8 h-8 bg-${darkMode ? 'orange-700' : 'orange-500'} text-white rounded-full flex items-center justify-center text-sm font-medium`}>
+              <div className={`w-8 h-8 text-white rounded-full flex items-center justify-center text-sm font-medium ${darkMode ? 'bg-orange-700' : 'bg-orange-500'}`}>
                 3
               </div>
-              <span className={`text-sm ${darkMode ? 'text-orange-400' : 'text-orange-500'} font-medium`}>Finish</span>
+              <span className={`text-sm font-medium ${darkMode ? 'text-orange-400' : 'text-orange-500'}`}>Finish</span>
             </div>
           </div>
 
           <div className="mb-8">
-            <div className={`w-16 h-16 bg-${darkMode ? 'green-900' : 'green-100'} rounded-full flex items-center justify-center mx-auto mb-6`}>
-              <div className={`w-8 h-8 bg-${darkMode ? 'green-700' : 'green-500'} rounded-full flex items-center justify-center`}>
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 ${darkMode ? 'bg-green-900' : 'bg-green-100'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${darkMode ? 'bg-green-700' : 'bg-green-500'}`}>
                 <span className="text-white text-sm">✓</span>
               </div>
             </div>
-            <p className={`mb-1 text-${darkMode ? 'gray-400' : 'gray-600'}`}>This sensor is added</p>
-            <p className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>successfully to your Dashboard</p>
+            <p className={`mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>This sensor is added</p>
+            <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>successfully to your Dashboard</p>
           </div>
 
           <div className="space-y-3">
             <button
               onClick={handleDone}
-              className={`w-48 px-4 py-3 rounded-lg font-medium text-white border bg-${darkMode ? 'orange-700 hover:bg-orange-800 border-orange-700' : 'orange-500 hover:bg-orange-600 border-orange-500'} mx-auto block`}
+              className={`w-48 px-4 py-3 rounded-lg font-medium text-white border mx-auto block ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
             >
               Apply Alert
             </button>
             <button
               onClick={handleDone}
-              className={`w-48 px-4 py-3 rounded-lg font-medium bg-${darkMode ? 'gray-700' : 'white'} text-${darkMode ? 'gray-300' : 'gray-700'} border border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-600' : 'gray-50'} mx-auto block`}
+              className={`w-48 px-4 py-3 rounded-lg font-medium border mx-auto block ${
+                darkMode 
+                  ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' 
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
             >
               Later
             </button>
@@ -493,7 +713,7 @@ export default function Sensors() {
       <div className="absolute bottom-8 right-8">
         <button
           onClick={handleDone}
-          className={`px-8 py-3 rounded-lg font-medium text-white border bg-${darkMode ? 'orange-700 hover:bg-orange-800 border-orange-700' : 'orange-500 hover:bg-orange-600 border-orange-500'}`}
+          className={`px-8 py-3 rounded-lg font-medium text-white border ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
         >
           Done
         </button>
@@ -507,63 +727,67 @@ export default function Sensors() {
         <h2 className="text-2xl font-bold">{selectedSensor?.name}</h2>
         <button
           onClick={() => setCurrentView('list')}
-          className={`px-6 py-2 rounded-lg font-medium bg-${darkMode ? 'gray-700' : 'white'} text-${darkMode ? 'gray-300' : 'gray-700'} border border-${darkMode ? 'gray-600' : 'gray-300'} hover:bg-${darkMode ? 'gray-600' : 'gray-50'}`}
+          className={`px-6 py-2 rounded-lg font-medium border ${
+            darkMode 
+              ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' 
+              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          }`}
         >
           Back
         </button>
       </div>
 
       <div className="grid grid-cols-1 gap-6">
-        <div className={`rounded-lg shadow-sm p-6 bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+        <div className={`rounded-lg shadow-sm p-6 ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
           <h3 className="text-lg font-semibold mb-6">Sensor Details</h3>
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>ID</span>
-              <span className="font-mono text-sm">2323e0000000e</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>ID</span>
+              <span className="font-mono text-sm">{selectedSensor?.id || '2323e0000000e'}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Broadcast Method</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Broadcast Method</span>
               <span>LoRa</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Frequency</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Frequency</span>
               <span>US915</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Model</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Model</span>
               <span>SSN 006</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Firmware</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Firmware</span>
               <span>2.3.0</span>
             </div>
           </div>
         </div>
 
-        <div className={`rounded-lg shadow-sm p-6 bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+        <div className={`rounded-lg shadow-sm p-6 ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
           <h3 className="text-lg font-semibold mb-6">Sensor Alerts</h3>
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Alert Added</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Alert Added</span>
               <span>{selectedSensor?.date || 'N/A'}</span>
             </div>
-            <div className={`text-${darkMode ? 'blue-400' : 'blue-500'} text-sm`}>{`(${selectedSensor?.function || 'N/A'})`}</div>
+            <div className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>{`(${selectedSensor?.function || 'N/A'})`}</div>
           </div>
         </div>
 
-        <div className={`rounded-lg shadow-sm p-6 bg-${darkMode ? 'gray-800' : 'white'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+        <div className={`rounded-lg shadow-sm p-6 ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
           <h3 className="text-lg font-semibold mb-6">Sensor History</h3>
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Sensor Added</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sensor Added</span>
               <span>{selectedSensor?.date || 'N/A'}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Sensor Paired</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sensor Paired</span>
               <span>Dec 18, 2023</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className={`text-${darkMode ? 'gray-400' : 'gray-600'}`}>Sensor Added</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sensor Added</span>
               <span>May 10, 2023</span>
             </div>
           </div>
@@ -586,6 +810,8 @@ export default function Sensors() {
         return renderConnectStep();
       case 'settings':
         return renderSettingsStep();
+      case 'edit':
+        return renderSettingsStep(true);
       case 'success':
         return renderSuccessStep();
       case 'details':
@@ -596,22 +822,29 @@ export default function Sensors() {
   };
 
   return (
-    <ErrorBoundary>
-      <div className={`flex min-h-screen bg-${darkMode ? 'gray-800' : 'gray-100'} text-${darkMode ? 'gray-300' : 'gray-800'}`}>
+    <ErrorBoundary darkMode={darkMode}>
+      <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-800'}`}>
         <Sidebar activeKey="sensors" darkMode={darkMode} />
         <main className="flex-1 p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-3xl font-bold">Sensors</h2>
             <div className="flex items-center space-x-4">
-              <button className={`px-4 py-2 rounded ${darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'}`}>
+              {error && <p className="text-red-500 text-sm">{error}</p>}
+              <button
+                onClick={handleSignOut}
+                className={`px-4 py-2 rounded ${darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'}`}
+              >
                 Log out
               </button>
-              <div className={`w-10 h-10 ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} rounded-full flex items-center justify-center text-white text-sm font-bold`}>
-                FA
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold ${darkMode ? 'bg-amber-700' : 'bg-amber-600'}`}>
+                {getInitials(username)}
               </div>
             </div>
           </div>
           <div>{renderContent()}</div>
+          <footer className={`text-center mt-8 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+            © 2025 Safe Sense. All rights reserved.
+          </footer>
         </main>
       </div>
     </ErrorBoundary>

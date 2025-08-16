@@ -1,9 +1,27 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation'; // Import useRouter
+import { useRouter } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
+
+// Supabase configuration
+const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
+
+// Log configuration for debugging
+console.log('Supabase URL:', supabaseUrl);
+console.log('Supabase Anon Key:', supabaseAnonKey);
+
+// Initialize Supabase client
+let supabase;
+try {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
+  console.log('Supabase client initialized');
+} catch (err) {
+  console.error('Failed to initialize Supabase client:', err.message);
+}
 
 export default function Dashboard() {
   const [data] = useState({
@@ -38,20 +56,43 @@ export default function Dashboard() {
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState(data.notificationsList);
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState('User');
+  const [error, setError] = useState('');
   const popupRef = useRef(null);
   const notificationCardRef = useRef(null);
   const { darkMode } = useDarkMode();
-  const router = useRouter(); // Initialize router
+  const router = useRouter();
 
-  // Fetch username from localStorage
+  // Fetch user session and set username
   useEffect(() => {
-    const user = localStorage.getItem('loggedInUser');
-    if (user) {
-      setUsername(user);
-    }
-  }, []);
+    const checkSession = async () => {
+      try {
+        console.log('Checking session...');
+        const { data: sessionData, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!sessionData.session) {
+          console.log('No session found, redirecting to login');
+          router.push('/login');
+        } else {
+          const user = sessionData.session.user;
+          const displayName = user?.user_metadata?.username || user?.email?.split('@')[0] || 'User';
+          console.log('Session found, user:', displayName);
+          setUsername(displayName);
+        }
+      } catch (err) {
+        console.error('Session check error:', err.message);
+        setError(
+          err.message === 'Failed to fetch'
+            ? 'Unable to connect to authentication server. Please check your network or contact support.'
+            : 'Failed to verify session: ' + err.message
+        );
+        router.push('/login');
+      }
+    };
+    checkSession();
+  }, [router]);
 
+  // Handle click outside to close notifications
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -69,15 +110,32 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Handle sign-out
+  const handleSignOut = async () => {
+    try {
+      console.log('Attempting sign-out...');
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      console.log('Sign-out successful');
+      router.push('/login');
+    } catch (err) {
+      console.error('Sign-out error:', err.message);
+      setError('Failed to sign out: ' + err.message);
+    }
+  };
+
+  // Close individual notification
   const closeNotification = (id) => {
     setNotifications(notifications.filter((notification) => notification.id !== id));
   };
 
+  // Clear all notifications
   const clearAllNotifications = () => {
     setNotifications([]);
     setShowNotifications(false);
   };
 
+  // Calculate bar height for temperature graph
   const getBarHeight = (temp) => {
     const actualChartHeight = 256;
     if (temp.value === null) {
@@ -97,6 +155,16 @@ export default function Dashboard() {
     return 0;
   };
 
+  // Get initials for avatar
+  const getInitials = (name) => {
+    return name
+      .split(' ')
+      .map(word => word[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
   return (
     <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'}`}>
       <Sidebar />
@@ -105,15 +173,12 @@ export default function Dashboard() {
           <div>
             <h2 className="text-3xl font-bold">Dashboard</h2>
             <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-              Hi {username || 'Francis Anino'}
+              Hi {username}
             </p>
           </div>
           <div className="flex items-center space-x-3">
             <button
-              onClick={() => {
-                localStorage.removeItem('loggedInUser'); // Clear stored username
-                router.push('/login'); // Redirect to login page
-              }}
+              onClick={handleSignOut}
               className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${
                 darkMode ? 'bg-red-600 hover:bg-red-700' : ''
               }`}
@@ -125,10 +190,12 @@ export default function Dashboard() {
                 darkMode ? 'bg-amber-700' : ''
               }`}
             >
-              {username ? username.slice(0, 2).toUpperCase() : 'FA'}
+              {getInitials(username)}
             </div>
           </div>
         </div>
+
+        {error && <p className="text-red-500 text-center mb-4">{error}</p>}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           <div
@@ -427,6 +494,9 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+        <footer className={`text-center mt-8 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+          © 2025 Safe Sense. All rights reserved.
+        </footer>
       </main>
     </div>
   );

@@ -1,39 +1,24 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { supabase } from '@/lib/supabaseClient';
 
 export async function POST(req) {
   try {
-    const { username, email, password } = await req.json();
+    const { email, password, username } = await req.json();
 
-    // Check if user already exists by email
-    const existingUser = await prisma.user.findUnique({
-      where: { email }, // Check by email to align with login
+    // Use Supabase signup
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
     });
 
-    if (existingUser) {
-      return new Response(JSON.stringify({ message: 'User already exists' }), {
-        status: 400,
-      });
+    if (error) {
+      return new Response(JSON.stringify({ message: error.message }), { status: 400 });
     }
 
-    // Create new user
-    const newUser = await prisma.user.create({
-      data: { username, email, password }, // Store both username and email
-    });
+    // Optional: Store extra user info (username) in a profile table if needed
+    // await supabase.from('profiles').insert({ id: data.user.id, username });
 
-    return new Response(
-      JSON.stringify({
-        message: 'Account created successfully!',
-        username: newUser.username,
-        email: newUser.email,
-      }),
-      { status: 201 }
-    );
+    return new Response(JSON.stringify({ message: 'Account created successfully!', email: data.user.email }), { status: 200 });
   } catch (err) {
-    console.error(err);
-    return new Response(JSON.stringify({ message: 'Error creating account' }), {
-      status: 500,
-    });
+    return new Response(JSON.stringify({ message: err.message }), { status: 500 });
   }
 }

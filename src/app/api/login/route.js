@@ -1,29 +1,21 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { supabase } from '@/lib/supabaseClient';
 
 export async function POST(req) {
   try {
-    const { username, password } = await req.json();
+    const { email, password } = await req.json();
 
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { username }, // works now
+    // Use Supabase login
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
-    if (!user || user.password !== password) {
-      return new Response(JSON.stringify({ message: 'Invalid credentials' }), {
-        status: 401,
-      });
+
+    if (error) {
+      return new Response(JSON.stringify({ message: error.message }), { status: 400 });
     }
 
-    return new Response(
-      JSON.stringify({ message: 'Login successful!', username: user.username }),
-      { status: 200 }
-    );
+    return new Response(JSON.stringify({ message: 'Logged in successfully!', email: data.user.email }), { status: 200 });
   } catch (err) {
-    console.error(err);
-    return new Response(JSON.stringify({ message: 'Error logging in' }), {
-      status: 500,
-    });
+    return new Response(JSON.stringify({ message: err.message }), { status: 500 });
   }
 }
