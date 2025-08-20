@@ -8,7 +8,8 @@ import { useDarkMode } from '../DarkModeContext';
 
 // Supabase configuration
 const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
+const supabaseAnonKey =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
 
 let supabase;
 try {
@@ -18,7 +19,7 @@ try {
   console.error('Failed to initialize Supabase client:', err);
 }
 
-// Error Boundary
+// ---------- Error Boundary (JS) ----------
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -45,7 +46,7 @@ class ErrorBoundary extends Component {
 
 const DEFAULT_WARNING = { min: 20, max: 60 };
 
-// Status → Styles
+// ---------- Styles ----------
 const getStatusStyles = (status, darkMode) => {
   switch (status) {
     case 'Needs Attention':
@@ -75,7 +76,6 @@ const getStatusStyles = (status, darkMode) => {
   }
 };
 
-// Card fills
 const CARD_STYLES = {
   'Needs Attention': {
     light: 'bg-red-50 border-red-500 text-red-900',
@@ -95,7 +95,7 @@ const cardClass = (status, darkMode) =>
   (darkMode ? CARD_STYLES[status]?.dark : CARD_STYLES[status]?.light) ||
   (darkMode ? 'bg-gray-800 border-gray-500 text-white' : 'bg-white border-gray-300 text-gray-800');
 
-// Helpers
+// ---------- Helpers ----------
 const WARNING_MARGIN = 5;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const computeStatus = (temp, { min, max }) => {
@@ -105,22 +105,31 @@ const computeStatus = (temp, { min, max }) => {
   return 'Good';
 };
 
-// Threshold Chart
+const toLocalFromReading = (r) => {
+  if (r?.approx_time) {
+    try { return new Date(r.approx_time).toLocaleString(); } catch {}
+  }
+  if (r?.timestamp != null) {
+    const n = Number(r.timestamp);
+    const ms = n > 1e12 ? n : n * 1000; // sec vs ms
+    try { return new Date(ms).toLocaleString(); } catch {}
+  }
+  return 'Current Reading';
+};
+
+const cToF = (c) => (c * 9) / 5 + 32;
+const toF = (val, unit) => (val == null ? null : unit === 'C' ? cToF(Number(val)) : Number(val));
+
+// ---------- Chart ----------
 function ThresholdChart({ data, min, max, darkMode, onChange }) {
   const svgRef = useRef(null);
   const [drag, setDrag] = useState(null);
 
-  const W = 720,
-    H = 380;
-  const padL = 60,
-    padR = 56,
-    padT = 18,
-    padB = 28;
-  const chartW = W - padL - padR,
-    chartH = H - padT - padB;
+  const W = 720, H = 380;
+  const padL = 60, padR = 56, padT = 18, padB = 28;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
 
-  const yMin = -20,
-    yMax = 100;
+  const yMin = -20, yMax = 100;
   const y = (t) =>
     padT + chartH * (1 - (clamp(t, yMin, yMax) - yMin) / (yMax - yMin));
   const x = (i) => padL + (chartW * i) / Math.max(1, data.length - 1);
@@ -140,10 +149,7 @@ function ThresholdChart({ data, min, max, darkMode, onChange }) {
   const red = '#EF4444';
 
   const trackX = padL + chartW + 16;
-  const trackW = 12,
-    handleW = 18,
-    handleH = 22,
-    handleRX = 4;
+  const trackW = 12, handleW = 18, handleH = 22, handleRX = 4;
 
   const minWarnTop = Math.min(min + WARNING_MARGIN, max);
   const maxWarnBot = Math.max(max - WARNING_MARGIN, min);
@@ -173,39 +179,25 @@ function ThresholdChart({ data, min, max, darkMode, onChange }) {
       <rect x={padL} y={y(minWarnTop)} width={chartW} height={Math.max(0, y(min) - y(minWarnTop))} fill={orange} opacity="0.28" />
       <line x1={padL} x2={padL + chartW} y1={y(max)} y2={y(max)} stroke={red} strokeWidth="3" strokeDasharray="8 6" />
       <line x1={padL} x2={padL + chartW} y1={y(min)} y2={y(min)} stroke={red} strokeWidth="3" strokeDasharray="8 6" />
-      {[-20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((t) => (
+      {[-20,-10,0,10,20,30,40,50,60,70,80,90,100].map((t) => (
         <g key={t}>
           <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
-          <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
-            {t}
-          </text>
+          <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>{t}</text>
         </g>
       ))}
       <path d={linePath} fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" />
       {data.length > 0 && <circle cx={x(data.length - 1)} cy={y(data[data.length - 1])} r="5" fill="#10B981" />}
       <rect x={trackX} y={padT} width={trackW} height={chartH} fill="#E5E7EB" stroke="#D1D5DB" />
-      <g
-        transform={`translate(${trackX + trackW / 2}, ${y(max)})`}
-        style={{ cursor: 'ns-resize' }}
-        onPointerDown={(e) => {
-          e.preventDefault();
-          setDrag('max');
-        }}
-      >
-        <rect x={-handleW / 2} y={-handleH / 2} width={handleW} height={handleH} rx={handleRX} fill="#FFFFFF" stroke="#9CA3AF" />
+      <g transform={`translate(${trackX + trackW / 2}, ${y(max)})`} style={{ cursor: 'ns-resize' }}
+         onPointerDown={(e) => { e.preventDefault(); setDrag('max'); }}>
+        <rect x={-handleW/2} y={-handleH/2} width={handleW} height={handleH} rx={handleRX} fill="#FFFFFF" stroke="#9CA3AF" />
         <line x1={-5} x2={5} y1={-4} y2={-4} stroke="#9CA3AF" strokeWidth="2" />
         <line x1={-5} x2={5} y1={0} y2={0} stroke="#9CA3AF" strokeWidth="2" />
         <line x1={-5} x2={5} y1={4} y2={4} stroke="#9CA3AF" strokeWidth="2" />
       </g>
-      <g
-        transform={`translate(${trackX + trackW / 2}, ${y(min)})`}
-        style={{ cursor: 'ns-resize' }}
-        onPointerDown={(e) => {
-          e.preventDefault();
-          setDrag('min');
-        }}
-      >
-        <rect x={-handleW / 2} y={-handleH / 2} width={handleW} height={handleH} rx={handleRX} fill="#FFFFFF" stroke="#9CA3AF" />
+      <g transform={`translate(${trackX + trackW / 2}, ${y(min)})`} style={{ cursor: 'ns-resize' }}
+         onPointerDown={(e) => { e.preventDefault(); setDrag('min'); }}>
+        <rect x={-handleW/2} y={-handleH/2} width={handleW} height={handleH} rx={handleRX} fill="#FFFFFF" stroke="#9CA3AF" />
         <line x1={-5} x2={5} y1={-4} y2={-4} stroke="#9CA3AF" strokeWidth="2" />
         <line x1={-5} x2={5} y1={0} y2={0} stroke="#9CA3AF" strokeWidth="2" />
         <line x1={-5} x2={5} y1={4} y2={4} stroke="#9CA3AF" strokeWidth="2" />
@@ -214,7 +206,7 @@ function ThresholdChart({ data, min, max, darkMode, onChange }) {
   );
 }
 
-// Main Component
+// ---------- Main Component ----------
 export default function Alerts() {
   const [currentView, setCurrentView] = useState('alerts');
   const [selectedId, setSelectedId] = useState(null);
@@ -228,26 +220,26 @@ export default function Alerts() {
   const { darkMode } = useDarkMode();
 
   // State
-  const [streams, setStreams] = useState([]);
-  const [thresholds, setThresholds] = useState({});
-  const [series, setSeries] = useState({});
+  const [streams, setStreams] = useState([]);     // rows for UI list
+  const [thresholds, setThresholds] = useState({}); // id -> {min,max}
+  const [series, setSeries] = useState({});       // id -> number[]
   const HISTORY_LEN = 120;
 
-  const makeKey = (r) => `${r.source_id}::${r.metric}`;
+  // Sensor Settings state / modal
+  const [newSensorName, setNewSensorName] = useState('');
+  const [newMetric, setNewMetric] = useState('F'); // 'C' | 'F' stored in DB
+  const [savingSensorName, setSavingSensorName] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
-  // Check session and redirect if not authenticated
+  const makeKey = (sensor_id) => `${sensor_id}::temperature`;
+
+  // Session check
   useEffect(() => {
     const checkSession = async () => {
       try {
-        console.log('Checking session...');
         const { data: sessionData, error } = await supabase.auth.getSession();
         if (error) throw error;
-        if (!sessionData.session) {
-          console.log('No session found, redirecting to login');
-          router.push('/login');
-        } else {
-          console.log('Session verified');
-        }
+        if (!sessionData.session) router.push('/login');
       } catch (err) {
         console.error('Session check error:', err.message);
         setError('Failed to verify session: ' + err.message);
@@ -257,96 +249,69 @@ export default function Alerts() {
     checkSession();
   }, [router]);
 
-  // Initial load
+  // Initial load: sensors list (read sensor_name + metric)
   useEffect(() => {
-    if (!supabase) {
-      setError('Supabase client not initialized');
-      setLoading(false);
-      return;
-    }
-
     const load = async () => {
       try {
-        console.log('Loading data from latest_by_sensor_metric...');
-        // Fetch latest temperature readings
-        const { data: latestRows, error: lErr } = await supabase
-          .from('latest_by_sensor_metric')
-          .select('source_id, metric, value, ts')
-          .eq('metric', 'temperature')
-          .order('source_id', { ascending: true });
-
-        if (lErr) {
-          console.error('Load latest_by_sensor_metric error:', lErr);
-          throw new Error('Failed to fetch latest readings: ' + lErr.message);
-        }
-
-        console.log('Latest rows:', latestRows);
-
-        // Fetch sensor metadata
         const { data: sensorRows, error: sErr } = await supabase
           .from('sensors')
-          .select('sensor_id, label, metadata');
+          .select('sensor_id, sensor_name, metric, latest_temp, approx_time, last_fetched_time, updated_at');
 
-        if (sErr) {
-          console.warn('Could not load sensors table:', sErr);
+        if (sErr) throw sErr;
+
+        // fallback latest from raw_readings_v2
+        const ids = (sensorRows || []).map(r => r.sensor_id).filter(Boolean);
+        let latestMap = new Map();
+        if (ids.length) {
+          const { data: latest, error: lErr } = await supabase
+            .from('raw_readings_v2')
+            .select('sensor_id, reading_value, timestamp, approx_time')
+            .in('sensor_id', ids)
+            .order('timestamp', { ascending: false });
+          if (!lErr && latest) {
+            for (const row of latest) {
+              if (!latestMap.has(row.sensor_id)) latestMap.set(row.sensor_id, row);
+            }
+          }
         }
 
-        console.log('Sensor rows:', sensorRows);
-
-        // Validate and filter sensor data for unique IDs
-        const seenIds = new Set();
-        const validSensors = (sensorRows || []).filter((sensor) => {
-          if (!sensor.sensor_id) {
-            console.warn('Sensor missing sensor_id:', sensor);
-            return false;
-          }
-          if (seenIds.has(sensor.sensor_id)) {
-            console.warn('Duplicate sensor_id:', sensor.sensor_id, sensor);
-            return false;
-          }
-          seenIds.add(sensor.sensor_id);
-          return true;
-        });
-
-        const labelMap = new Map();
-        validSensors.forEach((r) =>
-          labelMap.set(r.sensor_id, { label: r.label || r.sensor_id, meta: r.metadata || {} })
-        );
-
-        // Build UI list + thresholds
         const nextThresholds = {};
-        const ui = latestRows
-          .filter((r) => r.metric === 'temperature')
-          .map((r) => {
-            const key = makeKey(r);
-            const info = labelMap.get(r.source_id) || {};
-            const name = info.label || r.source_id;
-            const meta = info.meta || {};
-            const th = meta.min != null && meta.max != null
-              ? { min: Number(meta.min), max: Number(meta.max) }
-              : DEFAULT_WARNING;
+        const ui = (sensorRows || []).map(r => {
+          const unit = (r.metric || 'F').toUpperCase() === 'C' ? 'C' : 'F';
+          const key = makeKey(r.sensor_id);
+          const lr = latestMap.get(r.sensor_id);
 
-            nextThresholds[key] = th;
+          const raw = r.latest_temp ?? (lr ? Number(lr.reading_value) : null);
+          const tempF = raw != null ? toF(raw, unit) : null;
 
-            return {
-              id: key,
-              name,
-              temp: r.value,
-              status: computeStatus(r.value, th),
-              lastReading: r.ts ? new Date(r.ts).toLocaleString() : 'No readings yet',
-              source_id: r.source_id,
-              metric: r.metric,
-            };
-          });
+          const lastIso =
+            r.approx_time ||
+            r.last_fetched_time ||
+            r.updated_at ||
+            (lr ? (lr.approx_time ||
+              new Date((Number(lr.timestamp) > 1e12 ? Number(lr.timestamp) : Number(lr.timestamp) * 1000)).toISOString()
+            ) : null);
 
-        console.log('UI data:', ui);
-        console.log('Thresholds:', nextThresholds);
+          const th = DEFAULT_WARNING;
+          nextThresholds[key] = th;
+
+          return {
+            id: key,
+            name: r.sensor_name || r.sensor_id,
+            temp: tempF,
+            status: computeStatus(tempF, th),
+            lastReading: lastIso ? new Date(lastIso).toLocaleString() : 'No readings yet',
+            sensor_id: r.sensor_id,
+            unit,                 // <--- stored unit (C or F)
+            metric: 'F',          // <--- displayed unit is always F
+          };
+        });
 
         setThresholds(nextThresholds);
         setStreams(ui.sort((a, b) => a.name.localeCompare(b.name)));
       } catch (err) {
         console.error('Load error:', err);
-        setError('Failed to load data: ' + err.message);
+        setError('Failed to load data: ' + (err?.message || err));
       } finally {
         setLoading(false);
       }
@@ -354,6 +319,13 @@ export default function Alerts() {
 
     load();
   }, []);
+
+  // Keep modal fields synced to selected sensor
+  useEffect(() => {
+    const sel = streams.find((s) => s.id === selectedId);
+    setNewSensorName(sel ? (sel.name || '') : '');
+    setNewMetric(sel ? (sel.unit || 'F') : 'F');
+  }, [selectedId, streams]);
 
   // Load history when opening detail
   useEffect(() => {
@@ -364,22 +336,19 @@ export default function Alerts() {
     const loadHistory = async () => {
       try {
         const { data, error } = await supabase
-          .from('raw_readings')
-          .select('value, ts')
-          .eq('source_id', sel.source_id)
-          .eq('metric', sel.metric)
-          .order('ts', { ascending: true })
+          .from('raw_readings_v2')
+          .select('reading_value, timestamp, approx_time')
+          .eq('sensor_id', sel.sensor_id)
+          .order('timestamp', { ascending: true })
           .limit(HISTORY_LEN);
 
-        if (error) {
-          console.error('Load history error:', error);
-          throw new Error('Failed to load history: ' + error.message);
-        }
+        if (error) throw error;
 
-        const values = (data || []).map((d) => d.value);
+        const unit = sel.unit || 'F';
+        const values = (data || []).map((d) => toF(d.reading_value, unit));
         setSeries((prev) => ({
           ...prev,
-          [selectedId]: values.length > 0 ? values : [sel.temp || 42],
+          [selectedId]: values.length > 0 ? values : [sel.temp ?? 42],
         }));
       } catch (err) {
         console.error('History load error:', err);
@@ -391,65 +360,183 @@ export default function Alerts() {
       }
     };
 
-    if (!series[selectedId]) {
-      loadHistory();
-    }
-  }, [selectedId, streams, loading]);
+    if (!series[selectedId]) loadHistory();
+  }, [selectedId, streams, loading, series]);
 
-  // Realtime Updates
+  // Realtime Updates (raw_readings_v2) -> always convert to F using stored unit
   useEffect(() => {
     if (!supabase || loading) return;
 
-    const onChange = (payload) => {
+    const onInsert = (payload) => {
       const r = payload.new || {};
-      if (!r.source_id || r.metric !== 'temperature' || typeof r.value !== 'number') {
-        console.log('Skipping invalid payload:', r);
-        return;
-      }
-      const key = makeKey(r);
-
-      console.log('Received real-time update:', r);
+      if (!r.sensor_id || (typeof r.reading_value !== 'number' && typeof r.reading_value !== 'string')) return;
 
       setStreams((prev) => {
-        const idx = prev.findIndex((p) => p.id === key);
-        const th = thresholds[key] || DEFAULT_WARNING;
-        const info = idx !== -1 ? prev[idx] : { name: r.source_id };
+        const idx = prev.findIndex((p) => p.sensor_id === r.sensor_id);
+        const unit = idx !== -1 ? prev[idx].unit : 'F';
+        const tempValF = toF(Number(r.reading_value), unit);
+        const id = idx !== -1 ? prev[idx].id : makeKey(r.sensor_id);
+        const th = thresholds[id] || DEFAULT_WARNING;
+        const name = idx !== -1 ? prev[idx].name : r.sensor_id;
+
         const row = {
-          id: key,
-          name: info.name || r.source_id,
-          temp: r.value,
-          status: computeStatus(r.value, th),
-          lastReading: r.ts ? new Date(r.ts).toLocaleString() : 'Current Reading',
-          source_id: r.source_id,
-          metric: r.metric,
+          id,
+          name,
+          temp: tempValF,
+          status: computeStatus(tempValF, th),
+          lastReading: toLocalFromReading(r),
+          sensor_id: r.sensor_id,
+          unit,
+          metric: 'F',
         };
 
-        if (idx === -1) {
-          return [...prev, row].sort((a, b) => a.name.localeCompare(b.name));
-        }
+        if (idx === -1) return [...prev, row].sort((a, b) => a.name.localeCompare(b.name));
         const next = [...prev];
         next[idx] = row;
         return next.sort((a, b) => a.name.localeCompare(b.name));
       });
 
       setSeries((prev) => {
-        const arr = prev[key] ? [...prev[key], r.value] : [r.value];
-        return { ...prev, [key]: arr.slice(-HISTORY_LEN) };
+        const id = makeKey(r.sensor_id);
+        const existing = streams.find((p) => p.sensor_id === r.sensor_id);
+        const unit = existing?.unit || 'F';
+        const nextVal = toF(Number(r.reading_value), unit);
+        const arr = prev[id] ? [...prev[id], nextVal] : [nextVal];
+        return { ...prev, [id]: arr.slice(-HISTORY_LEN) };
       });
     };
 
     const ch = supabase
-      .channel('raw-readings-all')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'raw_readings' }, onChange)
+      .channel('raw-readings-v2-all')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'raw_readings_v2' }, onInsert)
       .subscribe((status) => {
         console.log('Subscription status:', status);
       });
 
     return () => {
-      console.log('Unsubscribing from raw_readings channel');
       supabase.removeChannel(ch);
     };
-  }, [thresholds, loading]);
+  }, [thresholds, loading, streams]);
+
+  // Refresh one sensor's latest + history using a given unit
+  const refreshOneSensor = async (sensor_id, unit) => {
+    try {
+      const key = makeKey(sensor_id);
+
+      // latest
+      const { data: latest, error: lErr } = await supabase
+        .from('raw_readings_v2')
+        .select('reading_value, timestamp, approx_time')
+        .eq('sensor_id', sensor_id)
+        .order('timestamp', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lErr) throw lErr;
+
+      const latestTempF = latest ? toF(latest.reading_value, unit) : null;
+      const lastTime = latest ? toLocalFromReading(latest) : 'No readings yet';
+
+      setStreams((prev) =>
+        prev
+          .map((row) =>
+            row.sensor_id === sensor_id
+              ? {
+                  ...row,
+                  temp: latestTempF,
+                  lastReading: lastTime,
+                  unit,      // update stored unit
+                  metric: 'F'
+                }
+              : row
+          )
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+
+      // history
+      const { data: hist, error: hErr } = await supabase
+        .from('raw_readings_v2')
+        .select('reading_value, timestamp')
+        .eq('sensor_id', sensor_id)
+        .order('timestamp', { ascending: true })
+        .limit(HISTORY_LEN);
+
+      if (!hErr && hist) {
+        const values = hist.map((d) => toF(d.reading_value, unit));
+        setSeries((prev) => ({ ...prev, [key]: values }));
+      }
+    } catch (e) {
+      console.error('refreshOneSensor error:', e);
+    }
+  };
+
+  // Save sensor settings (name + metric)
+  const saveSensorName = async () => {
+    const sel = streams.find((s) => s.id === selectedId);
+    if (!sel) return;
+
+    const nextName = (newSensorName || '').trim();
+    if (!nextName) {
+      setError('Sensor name cannot be empty.');
+      return;
+    }
+
+    const targetMetric = (newMetric || 'F').toUpperCase() === 'C' ? 'C' : 'F';
+
+    try {
+      setSavingSensorName(true);
+
+      const updatePayload = {
+        updated_at: new Date().toISOString(),
+      };
+      if (nextName !== sel.name) updatePayload.sensor_name = nextName;
+      if (targetMetric !== sel.unit) updatePayload.metric = targetMetric;
+
+      // if nothing changed, just close
+      if (!updatePayload.sensor_name && !updatePayload.metric) {
+        setShowSettings(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('sensors')
+        .update(updatePayload)
+        .eq('sensor_id', sel.sensor_id)
+        .select('sensor_id, sensor_name, metric')
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Supabase update error: ${JSON.stringify(error)}`);
+      }
+      if (!data) {
+        throw new Error('Update returned no row. Check RLS or sensor_id.');
+      }
+
+      // reflect DB values in UI
+      const dbName = data.sensor_name ?? sel.name;
+      const dbUnit = (data.metric || sel.unit || 'F').toUpperCase() === 'C' ? 'C' : 'F';
+
+      setStreams((prev) =>
+        prev
+          .map((row) =>
+            row.sensor_id === sel.sensor_id
+              ? { ...row, name: dbName, unit: dbUnit }
+              : row
+          )
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+
+      // Re-fetch latest + history to apply conversion with new unit
+      await refreshOneSensor(sel.sensor_id, dbUnit);
+
+      setShowSettings(false);
+      setError('');
+    } catch (e) {
+      console.error('Update sensors error:', e);
+      setError(typeof e === 'string' ? e : e?.message || JSON.stringify(e));
+    } finally {
+      setSavingSensorName(false);
+    }
+  };
 
   // Handlers
   const handleAlertClick = (item) => {
@@ -462,34 +549,24 @@ export default function Alerts() {
     setSelectedId(null);
   };
 
+  // Thresholds are local-only
   const updateThreshold = async (displayName, next) => {
     const item = streams.find((s) => s.name === displayName);
     if (!item) return;
     const key = item.id;
 
-    try {
-      const { error } = await supabase
-        .from('sensors')
-        .update({ metadata: { ...(item.meta || {}), min: next.min, max: next.max } })
-        .eq('sensor_id', item.source_id);
-      if (error) throw error;
-
-      setThresholds((prev) => {
-        const updated = { ...prev, [key]: next };
-        setStreams((prevS) =>
-          prevS.map((s) =>
-            s.id === key ? { ...s, status: computeStatus(s.temp, next) } : s
-          ).sort((a, b) => a.name.localeCompare(b.name))
-        );
-        return updated;
-      });
-    } catch (err) {
-      console.error('Failed to update threshold:', err);
-      setError('Failed to update threshold: ' + err.message);
-    }
+    setThresholds((prev) => {
+      const updated = { ...prev, [key]: next };
+      setStreams((prevS) =>
+        prevS
+          .map((s) => (s.id === key ? { ...s, status: computeStatus(s.temp, next) } : s))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
+      return updated;
+    });
   };
 
-  // UI Components
+  // UI bits
   const SectionHeader = ({ icon, label, status }) => {
     const { section } = getStatusStyles(status, darkMode);
     return (
@@ -516,7 +593,7 @@ export default function Alerts() {
           </div>
           <div className="text-right">
             <div className={`${value} text-xl mb-1 font-bold`}>
-              🌡️ {sensor.temp != null ? Math.round(sensor.temp) : '--'}°F
+              🌡️ {sensor.temp != null && !Number.isNaN(sensor.temp) ? Math.round(sensor.temp) : '--'}°F
             </div>
           </div>
         </div>
@@ -524,7 +601,6 @@ export default function Alerts() {
     );
   };
 
-  // Loading State
   if (loading) {
     return (
       <ErrorBoundary darkMode={darkMode}>
@@ -650,8 +726,17 @@ export default function Alerts() {
 
     return (
       <main className="flex-1 p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold">Alert Detail</h2>
+        {/* TOP BAR with Back */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleBack}
+              className={`px-3 py-2 rounded border ${darkMode ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}
+            >
+              ← Back
+            </button>
+            <h2 className="text-3xl font-bold">Alert Detail</h2>
+          </div>
           <div className="flex items-center space-x-4">
             <button
               onClick={async () => {
@@ -680,6 +765,7 @@ export default function Alerts() {
             status={selected.status}
           />
 
+          {/* INFO CARD with temperature + Settings button */}
           <div className={`rounded-lg shadow p-4 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div className="flex justify-between items-center">
               <div>
@@ -688,19 +774,97 @@ export default function Alerts() {
                   <span className="mr-1">🕐</span> {selected.lastReading}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="flex items-center gap-3">
                 <div className={`${getStatusStyles(selected.status, darkMode).value} text-xl mb-1 font-bold`}>
                   🌡️ {selected.temp != null ? Math.round(selected.temp) : '--'}°F
                 </div>
+                <button
+                  onClick={() => { setNewSensorName(selected.name || ''); setNewMetric(selected.unit || 'F'); setShowSettings(true); }}
+                  className={`px-3 py-1.5 rounded text-sm font-medium border ${
+                    darkMode
+                      ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
+                      : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
+                  }`}
+                  title="Open sensor settings"
+                >
+                  ⚙️ Settings
+                </button>
               </div>
             </div>
           </div>
+
+          {/* SETTINGS MODAL */}
+          {showSettings && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/40" onClick={() => setShowSettings(false)} />
+              <div className={`relative w-full max-w-lg mx-4 rounded-xl shadow-lg ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'} p-6`}>
+                <h3 className="text-lg font-semibold mb-4">Sensor Settings</h3>
+
+                <label className="block text-sm font-medium mb-2">Sensor name</label>
+                <input
+                  type="text"
+                  value={newSensorName}
+                  onChange={(e) => setNewSensorName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveSensorName(); }}
+                  className={`border rounded px-3 py-2 w-full mb-4 ${
+                    darkMode
+                      ? 'bg-gray-700 text-white border-gray-600 focus:border-orange-500'
+                      : 'bg-white border-gray-300 focus:border-orange-500'
+                  } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+                  placeholder="Enter sensor display name"
+                />
+
+                <label className="block text-sm font-medium mb-2">Metric (sensor unit)</label>
+                <select
+                  value={newMetric}
+                  onChange={(e) => setNewMetric(e.target.value)}
+                  className={`border rounded px-3 py-2 w-full mb-2 ${
+                    darkMode
+                      ? 'bg-gray-700 text-white border-gray-600 focus:border-orange-500'
+                      : 'bg-white border-gray-300 focus:border-orange-500'
+                  } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+                >
+                  <option value="F">Fahrenheit (°F)</option>
+                  <option value="C">Celsius (°C)</option>
+                </select>
+                <p className={`text-xs mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  The dashboard always displays temperatures in <strong>°F</strong>. If your sensor reports in °C, we’ll convert to °F for display.
+                </p>
+
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className={`px-4 py-2 rounded ${
+                      darkMode ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveSensorName}
+                    disabled={
+                      savingSensorName ||
+                      !newSensorName.trim()
+                    }
+                    className={`px-4 py-2 rounded font-semibold text-white ${
+                      darkMode ? 'bg-orange-700 hover:bg-orange-800 disabled:bg-gray-600'
+                               : 'bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300'
+                    }`}
+                  >
+                    {savingSensorName ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className={`rounded-lg shadow p-6 border-2 border-blue-400 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div className="flex justify-between items-center mb-4">
               <div>
                 <h3 className="text-lg font-semibold">Temperature History</h3>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{selected.name} • {selected.metric}</p>
+                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  {selected.name} • F
+                </p>
               </div>
               <div className="text-sm">
                 Limits: <strong>{t.min}°F</strong> – <strong>{t.max}°F</strong>
@@ -734,23 +898,14 @@ export default function Alerts() {
                 <span className="font-medium">{selected.temp != null ? Math.round(selected.temp) : '--'}°F</span>
               </div>
               <div className="flex justify-between">
-                <span>Metric</span>
-                <span className="font-medium">{selected.metric}</span>
+                <span>Displayed Unit</span>
+                <span className="font-medium">Fahrenheit (°F)</span>
               </div>
               <div className="flex justify-between">
-                <span>Source ID</span>
-                <span className="font-medium font-mono text-sm">{selected.source_id}</span>
+                <span>Sensor ID</span>
+                <span className="font-medium font-mono text-sm">{selected.sensor_id}</span>
               </div>
             </div>
-          </div>
-
-          <div className="flex justify-start">
-            <button
-              className={`px-6 py-2 rounded ${darkMode ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-300 text-gray-800 hover:bg-gray-400'}`}
-              onClick={handleBack}
-            >
-              Back
-            </button>
           </div>
         </div>
       </main>
