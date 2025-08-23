@@ -10,10 +10,6 @@ import { useDarkMode } from '../DarkModeContext';
 const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
 
-// Log configuration for debugging
-console.log('Supabase URL:', supabaseUrl);
-console.log('Supabase Anon Key:', supabaseAnonKey);
-
 // Initialize Supabase client
 let supabase;
 try {
@@ -22,6 +18,41 @@ try {
 } catch (err) {
   console.error('Failed to initialize Supabase client:', err.message);
 }
+
+// Temperature thresholds for different sensor types
+const TEMPERATURE_THRESHOLDS = {
+  fridge: { min: 35, max: 45, ideal: 40 }, // Fridge should be around 35-45°F
+  freezer: { min: -5, max: 5, ideal: 0 }, // Freezer should be around -5 to 5°F
+  default: { min: 20, max: 60, ideal: 40 }
+};
+
+const computeStatus = (temp, type = 'default') => {
+  if (temp == null) return 'Good';
+  
+  const threshold = TEMPERATURE_THRESHOLDS[type] || TEMPERATURE_THRESHOLDS.default;
+  const { min, max } = threshold;
+  
+  if (temp < min || temp > max) return 'Needs Attention';
+  if (temp <= min + 3 || temp >= max - 3) return 'Warning';
+  return 'Good';
+};
+
+const toF = (val, unit) => (val == null ? null : unit === 'C' ? (val * 9 / 5 + 32) : val);
+
+// Determine sensor type based on name or ID
+const getSensorType = (name, sensorId) => {
+  const nameStr = (name || sensorId || '').toLowerCase();
+  if (nameStr.includes('freezer') || nameStr.includes('freeze') || nameStr === 'temp1') {
+    return 'freezer';
+  }
+  if (nameStr.includes('fridge') || nameStr.includes('refrigerator')) {
+    return 'fridge';
+  }
+  if (nameStr.includes('humidity') || nameStr.includes('humid')) {
+    return 'fridge'; // Humidity sensors are usually in fridge
+  }
+  return 'fridge'; // Default to fridge
+};
 
 export default function Dashboard() {
   const [data, setData] = useState({
@@ -75,56 +106,87 @@ export default function Dashboard() {
     checkSession();
   }, [router]);
 
+  // Process temperature data and generate notifications
+  const processTemperatureData = (temperatures) => {
+    const notificationsList = [];
+    let notificationId = 1;
+
+    temperatures.forEach(temp => {
+      if (temp.status === 'Needs Attention' || temp.status === 'Warning') {
+        notificationsList.push({
+          id: notificationId++,
+          title: `${temp.status} (${temp.name})`,
+          description: `Temperature: ${temp.displayValue} - ${temp.status === 'Needs Attention' ? 'Critical' : 'Warning'} level`,
+          date: new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
+          type: temp.status === 'Needs Attention' ? 'error' : 'warning',
+          sensorId: temp.sensor_id,
+          temperature: temp.displayValue
+        });
+      }
+    });
+
+    return notificationsList;
+  };
+
   // Fetch sensors from Supabase
   useEffect(() => {
     const fetchSensors = async () => {
       try {
-        const { data: sensorData, error } = await supabase.from('sensors').select('*');
-        if (error) throw error;
+        const { data: sensorRows, error: sErr } = await supabase
+          .from('sensors')
+          .select('sensor_id, sensor_name, metric, latest_temp, approx_time, last_fetched_time, updated_at');
 
-        // Filter to only Temperature, Humidity, Temp1
-        const targetSensors = ['Temperature', 'Humidity', 'Temp1'];
-        const filteredSensors = sensorData.filter(sensor => targetSensors.includes(sensor.name));
+        if (sErr) throw sErr;
 
-        // Map sensors to temperatures array
-        const temperatures = filteredSensors.length >= 3
-          ? filteredSensors.map(sensor => {
-              const isFreezer = sensor.function === 'Air and Surface Temp';
-              const status = sensor.status || 'Active';
-              const color = status === 'Active' ? 'bg-green-400' : status === 'Inactive' ? 'bg-red-400' : 'bg-yellow-400';
-              // Assume value is in the sensors table; fallback to placeholders if not present
-              const value = sensor.value || (sensor.name === 'Temperature' ? 42 : sensor.name === 'Humidity' ? 36 : -20);
-              return {
-                name: sensor.name,
-                value,
-                displayValue: `${Math.abs(value)}°F`,
-                color,
-                type: isFreezer ? 'freezer' : 'fridge',
-              };
-            })
-          : [
-              { name: 'Temperature', value: 42, displayValue: '42°F', color: 'bg-yellow-400', type: 'fridge' },
-              { name: 'Humidity', value: 36, displayValue: '36°F', color: 'bg-green-400', type: 'fridge' },
-              { name: 'Temp1', value: -20, displayValue: '20°F', color: 'bg-red-400', type: 'freezer' },
-            ];
+        // Fallback latest from raw_readings_v2
+        const ids = (sensorRows || []).map(r => r.sensor_id).filter(Boolean);
+        let latestMap = new Map();
+        if (ids.length) {
+          const { data: latest, error: lErr } = await supabase
+            .from('raw_readings_v2')
+            .select('sensor_id, reading_value, timestamp, approx_time')
+            .in('sensor_id', ids)
+            .order('timestamp', { ascending: false });
+          if (lErr) throw lErr;
+          for (const row of latest) {
+            if (!latestMap.has(row.sensor_id)) latestMap.set(row.sensor_id, row);
+          }
+        }
+
+        const temperatures = (sensorRows || []).map(r => {
+          const unit = (r.metric || 'F').toUpperCase() === 'C' ? 'C' : 'F';
+          const lr = latestMap.get(r.sensor_id);
+          const raw = r.latest_temp ?? (lr ? Number(lr.reading_value) : null);
+          const value = raw != null ? toF(raw, unit) : null;
+          const name = r.sensor_name || r.sensor_id;
+          const type = getSensorType(name, r.sensor_id);
+          const status = computeStatus(value, type);
+          const color = status === 'Needs Attention' ? 'bg-red-500' : status === 'Warning' ? 'bg-yellow-500' : 'bg-green-500';
+          const displayValue = value != null ? `${Math.round(value)}°F` : '--°F';
+
+          return {
+            sensor_id: r.sensor_id,
+            unit,
+            name,
+            value,
+            displayValue,
+            color,
+            type,
+            status,
+            lastUpdated: r.updated_at || lr?.timestamp || new Date().toISOString()
+          };
+        }).sort((a, b) => a.name.localeCompare(b.name));
 
         // Generate notifications based on sensor status
-        const notificationsList = temperatures
-          .filter(temp => temp.color !== 'bg-green-400') // Only error/warning
-          .map((temp, index) => ({
-            id: index + 1,
-            title: `Needs attention (${temp.name})`,
-            date: new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
-            type: temp.color === 'bg-red-400' ? 'error' : 'warning',
-          }));
+        const notificationsList = processTemperatureData(temperatures);
 
         // Calculate sensor stats
         const sensors = {
           total: temperatures.length,
-          error: temperatures.filter(t => t.color === 'bg-red-400').length,
-          warning: temperatures.filter(t => t.color === 'bg-yellow-400').length,
-          success: temperatures.filter(t => t.color === 'bg-green-400').length,
-          disconnected: 0, // Assume no disconnected sensors for now
+          error: temperatures.filter(t => t.status === 'Needs Attention').length,
+          warning: temperatures.filter(t => t.status === 'Warning').length,
+          success: temperatures.filter(t => t.status === 'Good').length,
+          disconnected: temperatures.filter(t => t.value === null).length,
         };
 
         setData({
@@ -139,27 +201,127 @@ export default function Dashboard() {
       } catch (err) {
         console.error('Sensor fetch error:', err.message);
         setError('Failed to fetch sensor data: ' + err.message);
-        // Fallback data
+        
+        // Enhanced fallback data with realistic values
         const fallbackTemperatures = [
-          { name: 'Temperature', value: 42, displayValue: '42°F', color: 'bg-yellow-400', type: 'fridge' },
-          { name: 'Humidity', value: 36, displayValue: '36°F', color: 'bg-green-400', type: 'fridge' },
-          { name: 'Temp1', value: -20, displayValue: '20°F', color: 'bg-red-400', type: 'freezer' },
+          { 
+            sensor_id: '284C4F41000000FF', 
+            unit: 'F', 
+            name: '284C4F41000000FF', 
+            value: 76, 
+            displayValue: '76°F', 
+            color: 'bg-red-500', 
+            type: 'fridge',
+            status: 'Needs Attention',
+            lastUpdated: new Date().toISOString()
+          },
+          { 
+            sensor_id: 'DHT22_Temp', 
+            unit: 'F', 
+            name: 'DHT22_Temp', 
+            value: 77, 
+            displayValue: '77°F', 
+            color: 'bg-red-500', 
+            type: 'fridge',
+            status: 'Needs Attention',
+            lastUpdated: new Date().toISOString()
+          },
+          { 
+            sensor_id: 'Humidity_Sensor', 
+            unit: 'F', 
+            name: 'Humidity Sensor', 
+            value: 67, 
+            displayValue: '67°F', 
+            color: 'bg-red-500', 
+            type: 'fridge',
+            status: 'Needs Attention',
+            lastUpdated: new Date().toISOString()
+          },
         ];
-        const notificationsList = [
-          { id: 1, title: 'Needs attention (Temp1)', date: '08/16/2025', type: 'error' },
-          { id: 2, title: 'Needs attention (Temperature)', date: '08/16/2025', type: 'warning' },
-        ];
+        
+        const fallbackNotifications = processTemperatureData(fallbackTemperatures);
+        
         setData({
-          notifications: 2,
-          sensors: { total: 3, error: 1, warning: 1, success: 1, disconnected: 0 },
+          notifications: fallbackNotifications.length,
+          sensors: { 
+            total: 3, 
+            error: fallbackTemperatures.filter(t => t.status === 'Needs Attention').length,
+            warning: fallbackTemperatures.filter(t => t.status === 'Warning').length,
+            success: fallbackTemperatures.filter(t => t.status === 'Good').length,
+            disconnected: 0 
+          },
           users: 6,
           temperatures: fallbackTemperatures,
-          notificationsList,
+          notificationsList: fallbackNotifications,
         });
-        setNotifications(notificationsList);
+        setNotifications(fallbackNotifications);
       }
     };
     fetchSensors();
+  }, []);
+
+  // Realtime updates with proper notification handling
+  useEffect(() => {
+    if (!supabase) return;
+
+    const onInsert = (payload) => {
+      const r = payload.new || {};
+      if (!r.sensor_id || r.reading_value == null) return;
+
+      setData((prev) => {
+        const prevTemps = prev.temperatures;
+        const idx = prevTemps.findIndex((p) => p.sensor_id === r.sensor_id);
+        if (idx === -1) return prev;
+
+        const unit = prevTemps[idx].unit;
+        const value = toF(Number(r.reading_value), unit);
+        const type = prevTemps[idx].type;
+        const status = computeStatus(value, type);
+        const color = status === 'Needs Attention' ? 'bg-red-500' : status === 'Warning' ? 'bg-yellow-500' : 'bg-green-500';
+        const displayValue = `${Math.round(value)}°F`;
+
+        const nextTemps = [...prevTemps];
+        nextTemps[idx] = { 
+          ...nextTemps[idx], 
+          value, 
+          displayValue, 
+          color, 
+          status,
+          lastUpdated: r.timestamp || new Date().toISOString()
+        };
+
+        const newNotif = processTemperatureData(nextTemps);
+
+        const newSensors = {
+          total: nextTemps.length,
+          error: nextTemps.filter((t) => t.status === 'Needs Attention').length,
+          warning: nextTemps.filter((t) => t.status === 'Warning').length,
+          success: nextTemps.filter((t) => t.status === 'Good').length,
+          disconnected: nextTemps.filter((t) => t.value === null).length,
+        };
+
+        setNotifications(newNotif);
+
+        return {
+          ...prev,
+          temperatures: nextTemps,
+          notifications: newNotif.length,
+          sensors: newSensors,
+          notificationsList: newNotif,
+        };
+      });
+    };
+
+    const ch = supabase
+      .channel('raw-readings-v2-all')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'raw_readings_v2' }, onInsert)
+      .subscribe((status) => {
+        console.log('Subscription status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, []);
 
   // Handle click outside to close notifications
@@ -196,35 +358,39 @@ export default function Dashboard() {
 
   // Close individual notification
   const closeNotification = (id) => {
-    setNotifications(notifications.filter((notification) => notification.id !== id));
-    setData(prev => ({ ...prev, notifications: prev.notifications - 1 }));
+    const updatedNotifications = notifications.filter((notification) => notification.id !== id);
+    setNotifications(updatedNotifications);
+    setData(prev => ({ 
+      ...prev, 
+      notifications: updatedNotifications.length,
+      notificationsList: updatedNotifications
+    }));
   };
 
   // Clear all notifications
   const clearAllNotifications = () => {
     setNotifications([]);
     setShowNotifications(false);
-    setData(prev => ({ ...prev, notifications: 0 }));
+    setData(prev => ({ 
+      ...prev, 
+      notifications: 0,
+      notificationsList: []
+    }));
   };
 
-  // Calculate bar height for temperature graph
+  // Calculate bar height for temperature graph with proper scaling (0-100°F)
   const getBarHeight = (temp) => {
-    const actualChartHeight = 256;
+    const actualChartHeight = 320; // Increased height for better precision
     if (temp.value === null) {
       return 0;
     }
-    if (temp.type === 'fridge') {
-      const minFridge = 0;
-      const maxFridge = 60;
-      const rangeFridge = maxFridge - minFridge;
-      return ((temp.value - minFridge) / rangeFridge) * actualChartHeight;
-    } else if (temp.type === 'freezer') {
-      const minFreezer = -30;
-      const maxFreezer = 30;
-      const rangeFreezer = maxFreezer - minFreezer;
-      return ((temp.value - minFreezer) / rangeFreezer) * actualChartHeight;
-    }
-    return 0;
+    
+    // Universal scale 0-100°F for all sensors
+    const minTemp = 0;
+    const maxTemp = 100;
+    const range = maxTemp - minTemp;
+    const normalizedValue = Math.max(minTemp, Math.min(temp.value, maxTemp));
+    return ((normalizedValue - minTemp) / range) * actualChartHeight;
   };
 
   // Get initials for avatar
@@ -293,7 +459,9 @@ export default function Dashboard() {
               </p>
               <div className="flex items-center justify-center">
                 <div className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? 'bg-red-400' : ''}`}></div>
-                <span className={`text-red-500 text-sm ${darkMode ? 'text-red-400' : ''}`}>Unread</span>
+                <span className={`text-red-500 text-sm ${darkMode ? 'text-red-400' : ''}`}>
+                  {data.notifications > 0 ? 'Unread' : 'All Clear'}
+                </span>
               </div>
             </div>
             {showNotifications && (
@@ -313,13 +481,18 @@ export default function Dashboard() {
                         key={notification.id}
                         className={`flex items-start justify-between p-3 mb-2 bg-gray-50 rounded-md ${
                           darkMode ? 'bg-gray-700 text-white' : ''
-                        }`}
+                        } ${notification.type === 'error' ? 'border-l-4 border-red-500' : 'border-l-4 border-yellow-500'}`}
                       >
                         <div className="flex-1">
                           <p className={`text-gray-700 text-sm font-medium ${darkMode ? 'text-white' : ''}`}>
                             {notification.title}
                           </p>
-                          <p className={`text-gray-500 text-xs ${darkMode ? 'text-gray-300' : ''}`}>
+                          {notification.description && (
+                            <p className={`text-gray-600 text-xs ${darkMode ? 'text-gray-300' : ''}`}>
+                              {notification.description}
+                            </p>
+                          )}
+                          <p className={`text-gray-500 text-xs ${darkMode ? 'text-gray-400' : ''}`}>
                             {notification.date}
                           </p>
                         </div>
@@ -358,6 +531,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+          
           <div className={`rounded-lg p-6 shadow text-center ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div
               className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
@@ -372,11 +546,7 @@ export default function Dashboard() {
             </p>
             <div className="flex items-center justify-center space-x-3 text-sm">
               <div className="flex items-center">
-                <div
-                  className={`w-0 h-0 border-l-2 border-r-2 border-b-3 border-transparent border-b-red-500 mr-1 ${
-                    darkMode ? 'border-b-red-400' : ''
-                  }`}
-                ></div>
+                <div className={`w-2 h-2 bg-red-500 rounded-full mr-1 ${darkMode ? 'bg-red-400' : ''}`}></div>
                 <span className={`text-red-500 font-medium ${darkMode ? 'text-red-400' : ''}`}>
                   {data.sensors.error}
                 </span>
@@ -388,7 +558,7 @@ export default function Dashboard() {
                 </span>
               </div>
               <div className="flex items-center">
-                <div className={`w-2 h-2 bg-green-500 mr-1 ${darkMode ? 'bg-green-400' : ''}`}></div>
+                <div className={`w-2 h-2 bg-green-500 rounded-full mr-1 ${darkMode ? 'bg-green-400' : ''}`}></div>
                 <span className={`text-green-500 font-medium ${darkMode ? 'text-green-400' : ''}`}>
                   {data.sensors.success}
                 </span>
@@ -401,6 +571,7 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          
           <div className={`rounded-lg p-6 shadow text-center ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div
               className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
@@ -441,117 +612,269 @@ export default function Dashboard() {
             <h3 className={`text-lg font-semibold text-gray-900 ${darkMode ? 'text-white' : ''}`}>
               Temperature Monitoring System
             </h3>
+            <div className="text-sm text-gray-500">
+              Last updated: {new Date().toLocaleString()}
+            </div>
           </div>
           <div className="relative">
-            <div className="flex">
-              <div className="flex flex-col w-12 mr-4">
-                <div
-                  className={`flex flex-col-reverse h-64 text-xs text-gray-500 justify-between items-end pr-2 mt-6 ${
-                    darkMode ? 'text-gray-300' : ''
-                  }`}
-                >
-                  <span>0°F</span>
-                  <span>10°F</span>
-                  <span>20°F</span>
-                  <span>30°F</span>
-                  <span>40°F</span>
-                  <span>50°F</span>
-                  <span>60°F</span>
+            <div className="flex items-start">
+              {/* Left Y-axis for Temperature Scale (0-100°F) */}
+              <div className="flex flex-col w-16 mr-3">
+                <div className="h-6"></div> {/* Spacer for title */}
+                <div className="relative h-80">
+                  <div className="absolute inset-0 flex flex-col justify-between text-xs text-gray-600 items-end pr-3 font-medium">
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">100°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">90°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">80°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">70°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">60°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">50°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">40°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">30°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">20°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">10°F</span>
+                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">0°F</span>
+                  </div>
                 </div>
               </div>
+
+              {/* Main chart area */}
               <div className="flex-1 relative">
                 <div className="absolute -top-6 left-0 right-0 flex justify-between z-10">
-                  <span className={`text-green-600 font-medium text-sm ${darkMode ? 'text-green-400' : ''}`}>
-                    Fridge
+                  <span className={`text-green-600 font-semibold text-sm ${darkMode ? 'text-green-400' : ''}`}>
+                    🌡️ Temperature Monitoring (0-100°F Scale)
                   </span>
-                  <span className={`text-blue-600 font-medium text-sm ${darkMode ? 'text-blue-400' : ''}`}>
-                    Freezer
-                  </span>
+                  <div className="text-xs text-gray-500">
+                    Ideal: Fridge 35-45°F | Freezer -5 to 5°F
+                  </div>
                 </div>
-                <div className="absolute inset-0 h-64">
+
+                {/* Enhanced Grid lines */}
+                <div className="absolute inset-0 h-80">
                   <div className="h-full flex flex-col justify-between">
-                    {[...Array(7)].map((_, i) => (
-                      <div key={i} className={`border-t border-gray-200 w-full ${darkMode ? 'border-gray-700' : ''}`}></div>
+                    {[...Array(11)].map((_, i) => (
+                      <div key={i} className={`border-t w-full ${
+                        i === 0 || i === 10 ? 'border-gray-400 border-t-2' : 
+                        i === 5 ? 'border-gray-300 border-t-2' : 
+                        'border-gray-200'
+                      } ${darkMode ? 'border-gray-600' : ''}`}></div>
                     ))}
                   </div>
                   <div className="absolute inset-0">
-                    <div className={`absolute left-0 top-0 bottom-0 w-0.5 bg-gray-200 ${darkMode ? 'bg-gray-700' : ''}`}></div>
-                    <div
-                      className={`absolute right-0 top-0 bottom-0 w-0.5 bg-gray-200 ${darkMode ? 'bg-gray-700' : ''}`}
-                    ></div>
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? 'bg-gray-500' : ''}`}></div>
+                    <div className={`absolute right-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? 'bg-gray-500' : ''}`}></div>
                   </div>
                 </div>
-                <div
-                  className={`absolute top-4 left-1/2 transform -translate-x-1/2 bg-green-100 border-2 border-green-300 rounded-lg px-3 py-2 z-10 ${
-                    darkMode ? 'bg-gray-700 border-gray-600 text-white' : ''
-                  }`}
-                >
-                  <div className="text-xs text-green-700 text-center font-medium">Temperature</div>
-                  <div className="text-sm font-bold text-green-700 text-center">41°F</div>
+                
+                {/* Temperature ideal range indicators */}
+                <div className="absolute inset-0 h-80 pointer-events-none">
+                  {/* Fridge ideal range (35-45°F) */}
+                  <div 
+                    className="absolute left-0 bg-green-100 bg-opacity-50 border-t-2 border-b-2 border-green-500"
+                    style={{
+                      bottom: `${(35/100) * 320}px`,
+                      height: `${((45-35)/100) * 320}px`,
+                      width: '100%',
+                      borderStyle: 'dashed'
+                    }}
+                  >
+                    <div className="absolute left-2 top-1/2 transform -translate-y-1/2 text-xs font-bold text-green-700 bg-green-200 px-2 py-1 rounded">
+                      Fridge Ideal Zone
+                    </div>
+                  </div>
+                  
+                  {/* Critical temperature zones */}
+                  <div 
+                    className="absolute left-0 bg-red-100 bg-opacity-30 border-t border-red-400"
+                    style={{
+                      bottom: `${(80/100) * 320}px`,
+                      height: `${((100-80)/100) * 320}px`,
+                      width: '100%'
+                    }}
+                  >
+                    <div className="absolute left-2 top-2 text-xs font-bold text-red-700 bg-red-200 px-2 py-1 rounded">
+                      Danger Zone
+                    </div>
+                  </div>
                 </div>
-                <div className="relative h-64">
-                  <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full">
+
+                {/* Temperature bars with enhanced styling */}
+                <div className="relative h-80">
+                  <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full px-6">
                     {data.temperatures.map((temp, i) => {
                       const barHeight = getBarHeight(temp);
                       return (
-                        <div key={i} className="flex flex-col items-center relative" style={{ flexBasis: '25%' }}>
+                        <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: '30%', maxWidth: '100px' }}>
+                          {/* Temperature value label */}
                           {temp.value !== null && (
                             <div
-                              className={`absolute text-xs font-medium bg-white px-1 rounded border ${
-                                darkMode ? 'text-white border-gray-700' : 'text-gray-700 border-gray-300'
+                              className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
+                                temp.status === 'Needs Attention' 
+                                  ? 'bg-red-500 text-white border-2 border-red-600 animate-bounce' 
+                                  : temp.status === 'Warning'
+                                  ? 'bg-yellow-500 text-white border-2 border-yellow-600'
+                                  : 'bg-green-500 text-white border-2 border-green-600'
                               }`}
                               style={{
-                                bottom: `${barHeight + 8}px`,
+                                bottom: `${barHeight + 12}px`,
+                                left: '50%',
+                                transform: 'translateX(-50%)',
                                 whiteSpace: 'nowrap',
-                                color: temp.color
-                                  .replace('bg-', 'text-')
-                                  .replace('-400', darkMode ? '-300' : '-700')
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
                               }}
                             >
                               {temp.displayValue}
+                              <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
                             </div>
                           )}
+                          
+                          {/* Temperature bar */}
                           {temp.value !== null && (
                             <div
-                              className={`${temp.color} w-12 rounded-t`}
-                              style={{ height: `${barHeight}px`, minHeight: '4px' }}
-                              title={`${temp.name}: ${temp.displayValue}`}
-                            ></div>
+                              className={`relative w-16 rounded-t-lg shadow-xl transition-all duration-500 group-hover:w-20 ${temp.color} ${
+                                temp.status === 'Needs Attention' ? 'animate-pulse' : ''
+                              }`}
+                              style={{ 
+                                height: `${Math.max(barHeight, 8)}px`,
+                                background: temp.status === 'Needs Attention' 
+                                  ? 'linear-gradient(to top, #dc2626, #ef4444)' 
+                                  : temp.status === 'Warning'
+                                  ? 'linear-gradient(to top, #d97706, #f59e0b)'
+                                  : 'linear-gradient(to top, #059669, #10b981)',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+                              }}
+                              title={`${temp.name}: ${temp.displayValue} (${temp.status})`}
+                            >
+                              {/* Bar pattern for visual appeal */}
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 rounded-t-lg"></div>
+                            </div>
+                          )}
+                          
+                          {/* No data indicator */}
+                          {temp.value === null && (
+                            <div
+                              className="bg-gray-400 w-16 rounded-t-lg opacity-50"
+                              style={{ height: '8px' }}
+                              title={`${temp.name}: No data available`}
+                            >
+                              <div className="text-xs text-center text-gray-600 mt-1">No Data</div>
+                            </div>
                           )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
-                <div className={`flex justify-around mt-2 pt-2 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+
+                {/* Enhanced sensor labels */}
+                <div className={`flex justify-around mt-4 pt-3 px-6 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   {data.temperatures.map((temp, i) => (
-                    <div key={i} className="text-center" style={{ flexBasis: '25%' }}>
-                      <p className="text-xs leading-tight">{temp.name}</p>
+                    <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: '30%', maxWidth: '100px' }}>
+                      <p className="text-sm font-bold truncate group-hover:text-blue-600 transition-colors">{temp.name}</p>
+                      <p className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
+                        temp.status === 'Needs Attention' ? 'bg-red-100 text-red-700' :
+                        temp.status === 'Warning' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {temp.status}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1 capitalize">{temp.type} sensor</p>
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="flex flex-col w-12 ml-4">
-                <div
-                  className={`flex flex-col-reverse h-64 text-xs text-gray-500 justify-between items-start pl-2 mt-6 ${
-                    darkMode ? 'text-gray-300' : ''
-                  }`}
-                >
-                  <span>-30°F</span>
-                  <span>-20°F</span>
-                  <span>-10°F</span>
-                  <span>0°F</span>
-                  <span>10°F</span>
-                  <span>20°F</span>
-                  <span>30°F</span>
+
+              {/* Right side reference */}
+              <div className="flex flex-col w-16 ml-3">
+                <div className="h-6"></div>
+                <div className="relative h-80">
+                  <div className="absolute inset-0 flex flex-col justify-between text-xs text-gray-500 items-start pl-3">
+                    <span className="bg-red-100 px-1 rounded text-red-700">Critical</span>
+                    <span className="bg-yellow-100 px-1 rounded text-yellow-700">Hot</span>
+                    <span className="bg-orange-100 px-1 rounded text-orange-700">Warm</span>
+                    <span className="bg-blue-100 px-1 rounded text-blue-700">Room</span>
+                    <span className="bg-green-100 px-1 rounded text-green-700">Cool</span>
+                    <span className="bg-green-200 px-1 rounded text-green-800">Ideal</span>
+                    <span className="bg-cyan-100 px-1 rounded text-cyan-700">Cold</span>
+                    <span className="bg-blue-200 px-1 rounded text-blue-800">Very Cold</span>
+                    <span className="bg-purple-100 px-1 rounded text-purple-700">Freezing</span>
+                    <span className="bg-indigo-100 px-1 rounded text-indigo-700">Ice</span>
+                    <span className="bg-gray-100 px-1 rounded text-gray-700">Frozen</span>
+                  </div>
                 </div>
               </div>
             </div>
             <div className="text-center mt-4">
               <span className={`text-sm text-gray-600 font-medium ${darkMode ? 'text-gray-300' : ''}`}>Sensors</span>
             </div>
+            
+            {/* Temperature status legend */}
+            <div className="flex justify-center mt-4 space-x-6 text-xs">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
+                <span>Normal (Good)</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-yellow-500 rounded mr-2"></div>
+                <span>Warning</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
+                <span>Critical (Needs Attention)</span>
+              </div>
+            </div>
+
+            {/* Sensor details table */}
+            <div className="mt-6">
+              <h4 className={`text-md font-semibold mb-3 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                Sensor Details
+              </h4>
+              <div className="overflow-x-auto">
+                <table className={`w-full text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                  <thead>
+                    <tr className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                      <th className="text-left py-2">Sensor</th>
+                      <th className="text-left py-2">Temperature</th>
+                      <th className="text-left py-2">Status</th>
+                      <th className="text-left py-2">Type</th>
+                      <th className="text-left py-2">Last Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.temperatures.map((temp, i) => (
+                      <tr key={i} className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-100'}`}>
+                        <td className="py-2 font-medium">{temp.name}</td>
+                        <td className="py-2">
+                          <span className={`font-bold ${
+                            temp.status === 'Needs Attention' ? 'text-red-500' :
+                            temp.status === 'Warning' ? 'text-yellow-500' : 'text-green-500'
+                          }`}>
+                            {temp.displayValue}
+                          </span>
+                        </td>
+                        <td className="py-2">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            temp.status === 'Needs Attention' 
+                              ? 'bg-red-100 text-red-800' 
+                              : temp.status === 'Warning'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-green-100 text-green-800'
+                          } ${darkMode ? 'bg-gray-700 text-white' : ''}`}>
+                            {temp.status}
+                          </span>
+                        </td>
+                        <td className="py-2 capitalize">{temp.type}</td>
+                        <td className="py-2">
+                          {temp.lastUpdated ? new Date(temp.lastUpdated).toLocaleTimeString() : 'Never'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
+        
         <footer className={`text-center mt-8 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
           © 2025 Safe Sense. All rights reserved.
         </footer>
