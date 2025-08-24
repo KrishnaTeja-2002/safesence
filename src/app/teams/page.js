@@ -2,8 +2,15 @@
 
 import { useState, useEffect, Component } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
+import { LogOut } from 'lucide-react';
+
+// Supabase configuration
+const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 class ErrorBoundary extends Component {
   state = { hasError: false, error: null };
@@ -21,61 +28,212 @@ class ErrorBoundary extends Component {
 
 export default function Team() {
   const { darkMode } = useDarkMode();
-  const [members, setMembers] = useState([
-    { name: 'Francis Anino', role: 'Owner' },
-    { name: 'Ronald Richards', role: 'Full access' },
-    { name: 'Cameron Williamson', role: 'Full access' },
-    { name: 'Ariene McCoy', role: 'Full access' },
-    { name: 'Jerome Bell', role: 'Full access' },
-    { name: 'Dianne Russell', role: 'Full access' },
-  ]);
-
+  const [members, setMembers] = useState([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('Access');
   const [showPopup, setShowPopup] = useState(false);
   const [rejectedName, setRejectedName] = useState('');
+  const [error, setError] = useState('');
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Get initials for avatar
+  const getInitials = (name) => {
+    return name
+      ? name
+          .split(' ')
+          .map(word => word[0])
+          .join('')
+          .toUpperCase()
+          .slice(0, 2)
+      : 'NA';
+  };
+
+  // Check user session
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: sessionData, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!sessionData.session) {
+          router.push('/login');
+        }
+      } catch (err) {
+        setError('Failed to verify session: ' + err.message);
+        router.push('/login');
+      }
+    };
+    checkSession();
+  }, [router]);
+
+  // Fetch team members from Supabase (only accepted members)
+  useEffect(() => {
+    const fetchTeamMembers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('team_members')
+          .select('name, role')
+          .eq('status', 'accepted');
+        
+        if (error) throw error;
+        console.log('Fetched team members:', data);
+        setMembers(data || []);
+      } catch (err) {
+        setError('Failed to fetch team members: ' + err.message);
+        console.log('Error fetching team members:', err);
+        setMembers([
+          { name: 'Francis Anino', role: 'Owner' },
+          { name: 'Ronald Richards', role: 'Full access' },
+          { name: 'Cameron Williamson', role: 'Full access' },
+          { name: 'Ariene McCoy', role: 'Full access' },
+          { name: 'Jerome Bell', role: 'Full access' },
+          { name: 'Dianne Russell', role: 'Full access' },
+        ]);
+      }
+    };
+    fetchTeamMembers();
+  }, []);
+
+  // Handle invitation acceptance/rejection from URL params
   useEffect(() => {
     const accepted = searchParams.get('accepted');
     const rejected = searchParams.get('rejected');
     const name = searchParams.get('name');
     const role = searchParams.get('role');
-    if (accepted === 'true' && name && role) {
-      const newMember = { name: decodeURIComponent(name), role: decodeURIComponent(role) };
-      if (!members.some(member => member.name === newMember.name)) {
-        setMembers(prevMembers => [...prevMembers, newMember]);
-      }
-      alert(`${name} has been added to the team!`);
-      // Clear the URL parameters after processing
-      window.history.replaceState({}, document.title, '/team');
-    } else if (rejected === 'true' && name) {
-      setRejectedName(decodeURIComponent(name));
-      setShowPopup(true);
-      window.history.replaceState({}, document.title, '/team');
-    }
-  }, [searchParams]); // Depend on searchParams to re-run on URL change
+    const token = searchParams.get('token');
 
+    console.log('Query params:', { accepted, rejected, name, role, token });
+
+    if (accepted === 'true' && name && role && token) {
+      const handleAccept = async () => {
+        try {
+          console.log('Processing acceptance for:', { name, role, token });
+          const { data: invitation, error } = await supabase
+            .from('team_invitations')
+            .select('status')
+            .eq('token', token)
+            .single();
+          
+          if (error || !invitation) {
+            throw new Error(error?.message || 'Invalid token');
+          }
+          if (invitation.status !== 'pending') {
+            throw new Error('Invitation already processed');
+          }
+
+          const decodedName = decodeURIComponent(name);
+          const decodedRole = decodeURIComponent(role);
+          const newMember = { name: decodedName, role: decodedRole };
+
+          // Check if member already exists
+          const memberExists = members.some(member => member.name === newMember.name);
+          if (!memberExists) {
+            console.log('Adding new member:', newMember);
+            setMembers(prevMembers => [...prevMembers, newMember]);
+            const { error: insertError } = await supabase
+              .from('team_members')
+              .insert([{ name: decodedName, role: decodedRole, status: 'accepted' }]);
+            
+            if (insertError) throw insertError;
+          } else {
+            console.log('Member already exists:', decodedName);
+          }
+
+          alert(`${decodedName} has been added to the team!`);
+          window.history.replaceState({}, document.title, '/team');
+        } catch (err) {
+          console.error('Acceptance error:', err);
+          setError('Failed to process acceptance: ' + err.message);
+        }
+      };
+      handleAccept();
+    } else if (rejected === 'true' && name && token) {
+      const handleReject = async () => {
+        try {
+          console.log('Processing rejection for:', { name, token });
+          const { data: invitation, error } = await supabase
+            .from('team_invitations')
+            .select('status')
+            .eq('token', token)
+            .single();
+          
+          if (error || !invitation) {
+            throw new Error(error?.message || 'Invalid token');
+          }
+          if (invitation.status !== 'pending') {
+            throw new Error('Invitation already processed');
+          }
+
+          setRejectedName(decodeURIComponent(name));
+          setShowPopup(true);
+          window.history.replaceState({}, document.title, '/team');
+        } catch (err) {
+          console.error('Rejection error:', err);
+          setError('Failed to process rejection: ' + err.message);
+        }
+      };
+      handleReject();
+    }
+  }, [searchParams, members]);
+
+  // Handle sending invitation
   const handleSendInvite = async () => {
-    if (inviteEmail) {
+    if (!inviteEmail) {
+      alert('Please enter an email address.');
+      return;
+    }
+
+    try {
+      const token = Math.random().toString(36).substring(2, 15);
+      const inviteLink = `http://localhost:3000/api/sendInvite?token=${token}`;
+
+      console.log('Sending invite:', { email: inviteEmail, role: inviteRole, token });
+
+      const { error } = await supabase
+        .from('team_invitations')
+        .insert([{
+          token,
+          email: inviteEmail,
+          role: inviteRole,
+          status: 'pending',
+          invite_link: inviteLink
+        }]);
+
+      if (error) throw error;
+
       const response = await fetch('/api/sendInvite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole, token })
       });
+      
       const result = await response.json();
       if (result.success) {
+        console.log('Invite sent successfully to:', inviteEmail);
         alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
+        setInviteEmail('');
       } else {
-        alert(`Failed to send invitation: ${result.error}`);
+        throw new Error(result.error || 'Failed to send invitation');
       }
-      setInviteEmail('');
-    } else {
-      alert('Please enter an email address.');
+    } catch (err) {
+      console.error('Send invite error:', err);
+      setError(`Failed to send invitation: ${err.message}`);
+      alert(`Failed to send invitation: ${err.message}`);
     }
   };
 
+  // Handle sign-out
+  const handleSignOut = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      router.push('/login');
+    } catch (err) {
+      setError('Failed to sign out: ' + err.message);
+    }
+  };
+
+  // Close rejection popup
   const closePopup = () => {
     setShowPopup(false);
     setRejectedName('');
@@ -90,17 +248,21 @@ export default function Team() {
             <h2 className="text-3xl font-bold">Team</h2>
             <div className="flex items-center space-x-4">
               <button
-                className={`px-4 py-2 rounded ${
+                onClick={handleSignOut}
+                className={`px-4 py-2 rounded flex items-center space-x-2 ${
                   darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'
                 }`}
               >
-                Log out
+                <LogOut size={16} />
+                <span>Log out</span>
               </button>
               <div className={`w-10 h-10 ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} rounded-full flex items-center justify-center text-white text-sm font-bold`}>
-                FA
+                {getInitials('Francis Anino')}
               </div>
             </div>
           </div>
+
+          {error && <p className="text-red-500 text-center mb-4">{error}</p>}
 
           <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div className="mb-6">
@@ -151,7 +313,9 @@ export default function Team() {
               {members.map((member, idx) => (
                 <div key={idx} className={`flex justify-between items-center py-2 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
                   <div className="flex items-center">
-                    <div className={`w-10 h-10 rounded-full ${darkMode ? 'bg-gray-600' : 'bg-gray-300'} mr-3`}></div>
+                    <div className={`w-10 h-10 rounded-full ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} mr-3 flex items-center justify-center text-white text-sm font-bold`}>
+                      {getInitials(member.name)}
+                    </div>
                     <span>{member.name}</span>
                   </div>
                   <button
