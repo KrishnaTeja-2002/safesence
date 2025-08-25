@@ -14,31 +14,25 @@ const supabase = createClient(
 );
 
 /* ===== Thresholds & helpers ===== */
-// Temperature thresholds (°F). Converted to °C as needed.
-const THRESHOLDS_F = {
-  fridge: { min: 35, max: 45, idealMin: 35, idealMax: 45 },
-  freezer: { min: -5, max: 5, idealMin: -5, idealMax: 5 },
-  default: { min: 20, max: 60, idealMin: 35, idealMax: 45 },
-};
-// Humidity thresholds (%RH)
-const HUMIDITY_THRESHOLDS = { min: 30, max: 60, idealMin: 30, idealMax: 60 };
-
 const fToC = (v) => (v == null ? null : (v - 32) * 5 / 9);
 const cToF = (v) => (v == null ? null : v * 9 / 5 + 32);
 const convertVal = (v, fromUnit, toUnit) => {
   if (v == null || fromUnit === toUnit) return v;
   return fromUnit === "C" ? cToF(v) : fToC(v);
 };
-const getTempCategoryByName = (name, sensorId) => {
-  const s = (name || sensorId || "").toLowerCase();
-  if (s.includes("freezer") || s.includes("freeze")) return "freezer";
-  if (s.includes("fridge") || s.includes("refrigerator")) return "fridge";
-  return "default";
-};
-const computeStatusGeneric = (value, thresholds, pad = 3) => {
-  if (value == null) return "Good";
-  if (value < thresholds.min || value > thresholds.max) return "Needs Attention";
-  if (value <= thresholds.min + pad || value >= thresholds.max - pad) return "Warning";
+
+// Compute status based on sensor limits from database
+const computeStatusGeneric = (value, thresholds) => {
+  if (value == null) return "Unconfigured";
+  if (!thresholds || !Number.isFinite(thresholds.min) || !Number.isFinite(thresholds.max) || Number(thresholds.min) >= Number(thresholds.max)) {
+    return "Unconfigured";
+  }
+  
+  const span = Number(thresholds.max) - Number(thresholds.min);
+  const margin = Math.max(0, Math.min(Number(thresholds.warning ?? 0), span / 2)); // clamp to half-range
+  
+  if (value < Number(thresholds.min) || value > Number(thresholds.max)) return "Needs Attention";
+  if (value < Number(thresholds.min) + margin || value > Number(thresholds.max) - margin) return "Warning";
   return "Good";
 };
 
@@ -97,6 +91,9 @@ export default function Dashboard() {
     sensors: { total: 0, error: 0, warning: 0, success: 0, disconnected: 0 },
     notificationsList: [],
   });
+
+  // Sensor thresholds from database
+  const [thresholds, setThresholds] = useState({}); // sensor_id -> {min, max, warning}
 
   // Filter: 'all' | 'temperature' | 'humidity'
   const [selectedType, setSelectedType] = useState("all");
@@ -169,8 +166,21 @@ export default function Dashboard() {
       try {
         const { data: sensorRows, error: sErr } = await supabase
           .from("sensors")
-          .select("sensor_id, sensor_name, metric, sensor_type, latest_temp, approx_time, last_fetched_time, updated_at");
+          .select("sensor_id, sensor_name, metric, sensor_type, latest_temp, approx_time, last_fetched_time, updated_at, min_limit, max_limit, warning_limit");
         if (sErr) throw sErr;
+
+        // Store thresholds for each sensor
+        const thresholdsMap = {};
+        (sensorRows || []).forEach((r) => {
+          if (r.sensor_id) {
+            thresholdsMap[r.sensor_id] = {
+              min: r.min_limit,
+              max: r.max_limit,
+              warning: r.warning_limit,
+            };
+          }
+        });
+        setThresholds(thresholdsMap);
 
         const ids = (sensorRows || []).map((r) => r.sensor_id).filter(Boolean);
         let latestMap = new Map();
@@ -199,39 +209,51 @@ export default function Dashboard() {
             let color = "bg-green-500";
             let unit = prefs.unit;
 
-            if (kind === "temperature") {
-              const sensorUnit = (r.metric || "F").toUpperCase() === "C" ? "C" : "F";
-              const v = convertVal(raw, sensorUnit, prefs.unit);
-              const category = getTempCategoryByName(name, r.sensor_id);
-              const base = THRESHOLDS_F[category] || THRESHOLDS_F.default;
-              const thr =
-                prefs.unit === "F"
-                  ? base
-                  : { min: fToC(base.min), max: fToC(base.max), idealMin: fToC(base.idealMin), idealMax: fToC(base.idealMax) };
-              value = v;
-              status = computeStatusGeneric(value, thr, prefs.unit === "F" ? 3 : 1.7);
-              displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
-            } else {
-              unit = "%";
-              value = raw != null ? Number(raw) : null;
-              status = computeStatusGeneric(value, HUMIDITY_THRESHOLDS, 5);
-              displayValue = value != null ? `${Math.round(value)}%` : "--%";
-            }
+                         if (kind === "temperature") {
+               const sensorUnit = (r.metric || "F").toUpperCase() === "C" ? "C" : "F";
+               // Normalize to °F for status calculation
+               const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
+               
+               // Get thresholds for this sensor (already in °F)
+               const sensorThresholds = thresholdsMap[r.sensor_id];
+               // Calculate status using °F values
+               status = computeStatusGeneric(valueInF, sensorThresholds);
+               
+               // Convert to user's preferred unit for display only
+               value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
+               displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
+               
+               // Store sensor unit for realtime updates
+               unit = sensorUnit;
+                          } else {
+               unit = "%";
+               // Humidity values are already in the correct unit (%)
+               value = raw != null ? Number(raw) : null;
+               // Get thresholds for this sensor
+               const sensorThresholds = thresholdsMap[r.sensor_id];
+               status = computeStatusGeneric(value, sensorThresholds);
+               displayValue = value != null ? `${Math.round(value)}%` : "--%";
+             }
 
-            color = status === "Needs Attention" ? "bg-red-500" : status === "Warning" ? "bg-yellow-500" : "bg-green-500";
+                         // Update color based on status
+             if (status === "Needs Attention") color = "bg-red-500";
+             else if (status === "Warning") color = "bg-[#FF9866]";
+             else if (status === "Unconfigured") color = "bg-gray-500";
+             else color = "bg-[#98CC37]";
 
-            return {
-              sensor_id: r.sensor_id,
-              sensor_type: sType,
-              kind, // 'temperature' | 'humidity'
-              name,
-              unit,
-              value,
-              displayValue,
-              status,
-              color,
-              lastUpdated: r.updated_at || lr?.timestamp || new Date().toISOString(),
-            };
+                         return {
+               sensor_id: r.sensor_id,
+               sensor_type: sType,
+               kind, // 'temperature' | 'humidity'
+               name,
+               unit,
+               value,
+               displayValue,
+               status,
+               color,
+               approx_time: r.approx_time,
+               lastUpdated: r.updated_at || lr?.timestamp || new Date().toISOString(),
+             };
           })
           .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -243,6 +265,7 @@ export default function Dashboard() {
           error: filtered.filter((t) => t.status === "Needs Attention").length,
           warning: filtered.filter((t) => t.status === "Warning").length,
           success: filtered.filter((t) => t.status === "Good").length,
+          unconfigured: filtered.filter((t) => t.status === "Unconfigured").length,
           disconnected: filtered.filter((t) => t.value == null).length,
         };
 
@@ -283,28 +306,39 @@ export default function Dashboard() {
 
           const item = items[idx];
           if (item.kind === "temperature") {
-            // assume new value aligns with display unit already set for the item
-            const value = Number(r.reading_value);
-            const category = getTempCategoryByName(item.name, item.sensor_id);
-            const base = THRESHOLDS_F[category] || THRESHOLDS_F.default;
-            const thr =
-              item.unit === "F"
-                ? base
-                : { min: fToC(base.min), max: fToC(base.max), idealMin: fToC(base.idealMin), idealMax: fToC(base.idealMax) };
-            const status = computeStatusGeneric(value, thr, item.unit === "F" ? 3 : 1.7);
-            const color = status === "Needs Attention" ? "bg-red-500" : status === "Warning" ? "bg-yellow-500" : "bg-green-500";
+            // Normalize to °F for status calculation
+            const valueInF = Number(r.reading_value);
+            // Get thresholds for this sensor (already in °F)
+            const sensorThresholds = thresholds[r.sensor_id];
+            // Calculate status using °F values
+            const status = computeStatusGeneric(valueInF, sensorThresholds);
+            
+            // Convert to user's preferred unit for display only
+            const value = prefs.unit === "C" ? fToC(valueInF) : valueInF;
+            
+            let color = "bg-[#98CC37]";
+            if (status === "Needs Attention") color = "bg-red-500";
+            else if (status === "Warning") color = "bg-[#FF9866]";
+            else if (status === "Unconfigured") color = "bg-gray-500";
+            
             items[idx] = {
               ...item,
               value,
-              displayValue: `${Math.round(value)}°${item.unit}`,
+              displayValue: `${Math.round(value)}°${prefs.unit}`,
               status,
               color,
               lastUpdated: r.timestamp || new Date().toISOString(),
             };
           } else {
             const value = Number(r.reading_value);
-            const status = computeStatusGeneric(value, HUMIDITY_THRESHOLDS, 5);
-            const color = status === "Needs Attention" ? "bg-red-500" : status === "Warning" ? "bg-yellow-500" : "bg-green-500";
+            // Get thresholds for this sensor
+            const sensorThresholds = thresholds[r.sensor_id];
+            const status = computeStatusGeneric(value, sensorThresholds);
+            let color = "bg-[#98CC37]";
+            if (status === "Needs Attention") color = "bg-red-500";
+            else if (status === "Warning") color = "bg-[#FF9866]";
+            else if (status === "Unconfigured") color = "bg-gray-500";
+            
             items[idx] = {
               ...item,
               value,
@@ -322,6 +356,7 @@ export default function Dashboard() {
             error: filtered.filter((t) => t.status === "Needs Attention").length,
             warning: filtered.filter((t) => t.status === "Warning").length,
             success: filtered.filter((t) => t.status === "Good").length,
+            unconfigured: filtered.filter((t) => t.status === "Unconfigured").length,
             disconnected: filtered.filter((t) => t.value == null).length,
           };
           const notificationsList = buildNotifications(filtered, prefs.tz);
@@ -393,29 +428,25 @@ export default function Dashboard() {
     return ((clamped - ax.min) / (ax.max - ax.min)) * H;
   };
 
-  // Overlays for ideal zones
-  const tempBand = (() => {
-    const base =
-      prefs.unit === "F"
-        ? THRESHOLDS_F.fridge
-        : { min: fToC(THRESHOLDS_F.fridge.min), max: fToC(THRESHOLDS_F.fridge.max), idealMin: fToC(THRESHOLDS_F.fridge.idealMin), idealMax: fToC(THRESHOLDS_F.fridge.idealMax) };
-    const bottom = ((base.idealMin - axisTemp.min) / (axisTemp.max - axisTemp.min)) * H;
-    const height = ((base.idealMax - base.idealMin) / (axisTemp.max - axisTemp.min)) * H;
-    return { bottom, height };
-  })();
-  const humidityBand = (() => {
-    const bottom = ((HUMIDITY_THRESHOLDS.idealMin - axisHum.min) / (axisHum.max - axisHum.min)) * H;
-    const height = ((HUMIDITY_THRESHOLDS.idealMax - HUMIDITY_THRESHOLDS.idealMin) / (axisHum.max - axisHum.min)) * H;
-    return { bottom, height };
-  })();
+
 
   // Items to plot (respect prefs in ALL)
   const chartItems = itemsVisible;
 
-  return (
-    <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}>
-      <Sidebar />
-      <main className="flex-1 p-6">
+     return (
+     <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}>
+               <style jsx>{`
+          @keyframes customBounce {
+            0%, 50%, 100% {
+              transform: translateX(-50%) translateY(0);
+            }
+            25%, 75% {
+              transform: translateX(-50%) translateY(-8px);
+            }
+          }
+        `}</style>
+       <Sidebar />
+       <main className="flex-1 p-6">
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
@@ -445,9 +476,9 @@ export default function Dashboard() {
           {prefs.showAlerts && (
             <div className={`rounded-lg p-6 shadow text-center relative ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
               <div className="cursor-pointer" onClick={() => setShowNotifications(!showNotifications)} ref={notificationCardRef}>
-                <div className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-900" : ""}`}>
-                  <span className="text-2xl">🔔</span>
-                </div>
+                                 <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
+                   <span className="text-2xl">🔔</span>
+                 </div>
                 <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Notifications</p>
                 <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{data.notifications}</p>
                 <div className="flex items-center justify-center">
@@ -455,8 +486,8 @@ export default function Dashboard() {
                   <span className={`text-red-500 text-sm ${darkMode ? "text-red-400" : ""}`}>{data.notifications > 0 ? "Unread" : "All Clear"}</span>
                 </div>
               </div>
-              {showNotifications && (
-                <div ref={popupRef} className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-white rounded-lg shadow-lg z-20 border border-gray-200 ${darkMode ? "bg-gray-800 border-gray-700 text-white" : ""}`}>
+                             {showNotifications && (
+                 <div ref={popupRef} className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-white rounded-lg shadow-lg z-50 border border-gray-200 ${darkMode ? "bg-gray-800 border-gray-700 text-white" : ""}`}>
                   <div className="p-4">
                     <h4 className={`font-semibold text-gray-800 mb-3 ${darkMode ? "text-white" : ""}`}>Notifications</h4>
                     {data.notificationsList.length ? (
@@ -490,9 +521,9 @@ export default function Dashboard() {
 
           {prefs.showSensors && (
             <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-              <div className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-900" : ""}`}>
-                <span className="text-2xl">📶</span>
-              </div>
+                             <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
+                 <span className="text-2xl">📶</span>
+               </div>
               <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Sensors</p>
               {(() => {
                 const kpiItems = itemsVisible;
@@ -519,6 +550,12 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <div className="flex items-center">
+                        <div className={`w-2 h-2 bg-gray-500 rounded-full mr-1 ${darkMode ? "bg-gray-400" : ""}`}></div>
+                        <span className={`text-gray-500 font-medium ${darkMode ? "text-gray-400" : ""}`}>
+                          {kpiItems.filter((t) => t.status === "Unconfigured").length}
+                        </span>
+                      </div>
+                      <div className="flex items-center">
                         <span className={`mr-1 text-xs ${darkMode ? "text-gray-300" : "text-gray-500"}`}>✖</span>
                         <span className={`${darkMode ? "text-gray-300" : "text-gray-500"}`}>
                           {kpiItems.filter((t) => t.value == null).length}
@@ -533,9 +570,9 @@ export default function Dashboard() {
 
           {prefs.showUsers && (
             <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-              <div className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-900" : ""}`}>
-                <span className="text-2xl">👥</span>
-              </div>
+                             <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
+                 <span className="text-2xl">👥</span>
+               </div>
               <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Users</p>
               <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{data.users}</p>
             </div>
@@ -606,39 +643,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Ideal bands (show what's relevant) */}
-                <div className="absolute inset-0 h-80 pointer-events-none">
-                  {(selectedType !== "humidity") && (hasVisibleTemp || selectedType !== "all") && (
-                    <div
-                      className="absolute left-0 bg-green-100 bg-opacity-50 border-t-2 border-b-2 border-green-500"
-                      style={{
-                        bottom: `${tempBand.bottom}px`,
-                        height: `${tempBand.height}px`,
-                        width: "100%",
-                        borderStyle: "dashed",
-                      }}
-                    >
-                      <div className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-green-700 bg-green-200 px-2 py-1 rounded">
-                        Fridge Ideal (Temp)
-                      </div>
-                    </div>
-                  )}
-                  {(selectedType !== "temperature") && (hasVisibleHum || selectedType !== "all") && (
-                    <div
-                      className="absolute left-0 bg-green-100 bg-opacity-50 border-t-2 border-b-2 border-green-500"
-                      style={{
-                        bottom: `${((HUMIDITY_THRESHOLDS.idealMin - axisHum.min) / (axisHum.max - axisHum.min)) * H}px`,
-                        height: `${((HUMIDITY_THRESHOLDS.idealMax - HUMIDITY_THRESHOLDS.idealMin) / (axisHum.max - axisHum.min)) * H}px`,
-                        width: "100%",
-                        borderStyle: "dashed",
-                      }}
-                    >
-                      <div className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-green-700 bg-green-200 px-2 py-1 rounded">
-                        Comfort Zone (Humidity)
-                      </div>
-                    </div>
-                  )}
-                </div>
+                
 
                 {/* Bars (or empty) */}
                 <div className="relative h-80">
@@ -653,20 +658,23 @@ export default function Dashboard() {
                           <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
                             {it.value != null && (
                               <div
-                                className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
-                                  it.status === "Needs Attention"
-                                    ? "bg-red-500 text-white border-2 border-red-600 animate-bounce"
-                                    : it.status === "Warning"
-                                    ? "bg-yellow-500 text-white border-2 border-yellow-600"
-                                    : "bg-green-500 text-white border-2 border-green-600"
-                                }`}
-                                style={{
-                                  bottom: `${h + 12}px`,
-                                  left: "50%",
-                                  transform: "translateX(-50%)",
-                                  whiteSpace: "nowrap",
-                                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                                }}
+                                                                 className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
+                                   it.status === "Needs Attention"
+                                     ? "bg-red-500 text-white border-2 border-red-600"
+                                     : it.status === "Warning"
+                                     ? "bg-yellow-500 text-white border-2 border-yellow-600"
+                                     : it.status === "Unconfigured"
+                                     ? "bg-gray-500 text-white border-2 border-gray-600"
+                                     : "bg-green-500 text-white border-2 border-green-600"
+                                 }`}
+                                   style={{
+                                   bottom: `${h + 12}px`,
+                                   left: "50%",
+                                   transform: "translateX(-50%)",
+                                   whiteSpace: "nowrap",
+                                   boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                                   animation: (it.status === "Needs Attention" || it.status === "Warning") ? "customBounce 2s infinite" : "none",
+                                 }}
                               >
                                 {label}
                                 <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
@@ -679,12 +687,14 @@ export default function Dashboard() {
                                 }`}
                                 style={{
                                   height: `${Math.max(h, 8)}px`,
-                                  background:
-                                    it.status === "Needs Attention"
-                                      ? "linear-gradient(to top, #dc2626, #ef4444)"
-                                      : it.status === "Warning"
-                                      ? "linear-gradient(to top, #d97706, #f59e0b)"
-                                      : "linear-gradient(to top, #059669, #10b981)",
+                                                                     background:
+                                     it.status === "Needs Attention"
+                                       ? "linear-gradient(to top, #dc2626, #ef4444)"
+                                       : it.status === "Warning"
+                                       ? "linear-gradient(to top, #fef08a, #fef3c7)"
+                                       : it.status === "Unconfigured"
+                                       ? "linear-gradient(to top, #6b7280, #9ca3af)"
+                                       : "linear-gradient(to top, #bbf7d0, #dcfce7)",
                                   boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
                                 }}
                                 title={`${it.name}: ${label} (${it.status})`}
@@ -708,17 +718,19 @@ export default function Dashboard() {
                   {chartItems.map((it, i) => (
                     <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
                       <p className="text-sm font-bold truncate group-hover:text-blue-600 transition-colors">{it.name}</p>
-                      <p
-                        className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
-                          it.status === "Needs Attention"
-                            ? "bg-red-100 text-red-700"
-                            : it.status === "Warning"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : "bg-green-100 text-green-700"
-                        }`}
-                      >
-                        {it.status}
-                      </p>
+                                                                      <p
+                           className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
+                             it.status === "Needs Attention"
+                               ? "bg-red-100 text-red-700 animate-bounce"
+                               : it.status === "Warning"
+                               ? "bg-yellow-200 text-yellow-800"
+                               : it.status === "Unconfigured"
+                               ? "bg-gray-100 text-gray-700"
+                               : "bg-green-200 text-green-800"
+                           }`}
+                         >
+                         {it.status}
+                       </p>
                       <p className="text-xs text-gray-500 mt-1">{it.kind}</p>
                     </div>
                   ))}
@@ -749,18 +761,22 @@ export default function Dashboard() {
             </div>
 
             {/* Legend */}
-            <div className="flex justify-center mt-4 space-x-6 text-xs">
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
-                <span>Normal (Good)</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-yellow-500 rounded mr-2"></div>
-                <span>Warning</span>
-              </div>
+                         <div className="flex justify-center mt-4 space-x-6 text-xs">
+               <div className="flex items-center">
+                 <div className="w-3 h-3 bg-green-200 rounded mr-2"></div>
+                 <span>Normal (Good)</span>
+               </div>
+               <div className="flex items-center">
+                 <div className="w-3 h-3 bg-yellow-200 rounded mr-2"></div>
+                 <span>Warning</span>
+               </div>
               <div className="flex items-center">
                 <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
                 <span>Critical (Needs Attention)</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-gray-500 rounded mr-2"></div>
+                <span>Unconfigured</span>
               </div>
             </div>
 
@@ -783,29 +799,31 @@ export default function Dashboard() {
                       <tr key={i} className={`border-b ${darkMode ? "border-gray-700" : "border-gray-100"}`}>
                         <td className="py-2 font-medium">{it.name}</td>
                         <td className="py-2 capitalize">{it.kind}</td>
+                                                 <td className="py-2">
+                           <span
+                             className={`font-bold ${
+                               it.status === "Needs Attention" ? "text-red-500" : it.status === "Warning" ? "text-yellow-500" : it.status === "Unconfigured" ? "text-gray-500" : "text-green-500"
+                             }`}
+                           >
+                             {it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue}
+                           </span>
+                         </td>
                         <td className="py-2">
-                          <span
-                            className={`font-bold ${
-                              it.status === "Needs Attention" ? "text-red-500" : it.status === "Warning" ? "text-yellow-500" : "text-green-500"
-                            }`}
-                          >
-                            {it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue}
-                          </span>
-                        </td>
-                        <td className="py-2">
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              it.status === "Needs Attention"
-                                ? "bg-red-100 text-red-800"
-                                : it.status === "Warning"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-green-100 text-green-800"
-                            } ${darkMode ? "bg-gray-700 text-white" : ""}`}
-                          >
+                                                     <span
+                             className={`px-2 py-1 rounded-full text-xs font-medium ${
+                               it.status === "Needs Attention"
+                                 ? "bg-red-100 text-red-800"
+                                 : it.status === "Warning"
+                                 ? "bg-yellow-200 text-yellow-800"
+                                 : it.status === "Unconfigured"
+                                 ? "bg-gray-100 text-gray-800"
+                                 : "bg-green-200 text-green-800"
+                             } ${darkMode ? "bg-gray-700 text-white" : ""}`}
+                           >
                             {it.status}
                           </span>
                         </td>
-                        <td className="py-2">{fmtDate(it.lastUpdated, prefs.tz, true)}</td>
+                                                 <td className="py-2">{it.approx_time ? fmtDate(it.approx_time, prefs.tz, true) : fmtDate(it.lastUpdated, prefs.tz, true)}</td>
                       </tr>
                     ))}
                   </tbody>
