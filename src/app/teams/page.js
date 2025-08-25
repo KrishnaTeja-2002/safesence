@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
-import { LogOut } from 'lucide-react';
 
 // Supabase configuration
 const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
@@ -34,6 +33,7 @@ export default function Team() {
   const [showPopup, setShowPopup] = useState(false);
   const [rejectedName, setRejectedName] = useState('');
   const [error, setError] = useState('');
+  const [username, setUsername] = useState('User');
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -49,17 +49,29 @@ export default function Team() {
       : 'NA';
   };
 
-  // Check user session
+  // Check user session and set username
   useEffect(() => {
     const checkSession = async () => {
       try {
+        console.log('Checking session...');
         const { data: sessionData, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (!sessionData.session) {
+          console.log('No session found, redirecting to login');
           router.push('/login');
+        } else {
+          const user = sessionData.session.user;
+          const displayName = user?.user_metadata?.username || user?.email?.split('@')[0] || 'User';
+          console.log('Session found, user:', displayName);
+          setUsername(displayName);
         }
       } catch (err) {
-        setError('Failed to verify session: ' + err.message);
+        console.error('Session check error:', err.message);
+        setError(
+          err.message === 'Failed to fetch'
+            ? 'Unable to connect to authentication server. Please check your network or contact support.'
+            : 'Failed to verify session: ' + err.message
+        );
         router.push('/login');
       }
     };
@@ -108,38 +120,95 @@ export default function Team() {
       const handleAccept = async () => {
         try {
           console.log('Processing acceptance for:', { name, role, token });
+          
+          // Validate token and check if already processed
           const { data: invitation, error } = await supabase
             .from('team_invitations')
-            .select('status')
+            .select('status, email')
             .eq('token', token)
             .single();
           
           if (error || !invitation) {
             throw new Error(error?.message || 'Invalid token');
           }
+          
+          if (invitation.status === 'accepted') {
+            alert('This invitation has already been accepted.');
+            window.history.replaceState({}, document.title, '/team');
+            return;
+          }
+          
           if (invitation.status !== 'pending') {
-            throw new Error('Invitation already processed');
+            throw new Error('Invitation is no longer valid');
           }
 
           const decodedName = decodeURIComponent(name);
           const decodedRole = decodeURIComponent(role);
-          const newMember = { name: decodedName, role: decodedRole };
 
-          // Check if member already exists
-          const memberExists = members.some(member => member.name === newMember.name);
-          if (!memberExists) {
-            console.log('Adding new member:', newMember);
-            setMembers(prevMembers => [...prevMembers, newMember]);
-            const { error: insertError } = await supabase
-              .from('team_members')
-              .insert([{ name: decodedName, role: decodedRole, status: 'accepted' }]);
-            
-            if (insertError) throw insertError;
-          } else {
-            console.log('Member already exists:', decodedName);
+          // Check if member already exists in the database
+          const { data: existingMember, error: checkError } = await supabase
+            .from('team_members')
+            .select('name')
+            .eq('name', decodedName)
+            .eq('status', 'accepted')
+            .single();
+
+          if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = no rows found
+            throw checkError;
           }
 
-          alert(`${decodedName} has been added to the team!`);
+          if (existingMember) {
+            console.log('Member already exists:', decodedName);
+            alert(`${decodedName} is already a team member.`);
+            
+            // Update invitation status to accepted since member exists
+            await supabase
+              .from('team_invitations')
+              .update({ status: 'accepted' })
+              .eq('token', token);
+              
+            window.history.replaceState({}, document.title, '/team');
+            return;
+          }
+
+          // Add member to database first
+          const { error: insertError } = await supabase
+            .from('team_members')
+            .insert([{ name: decodedName, role: decodedRole, status: 'accepted' }]);
+          
+          if (insertError) {
+            // Check if it's a duplicate key error
+            if (insertError.code === '23505') {
+              console.log('Member already exists in database:', decodedName);
+              alert(`${decodedName} is already a team member.`);
+            } else {
+              throw insertError;
+            }
+          } else {
+            console.log('New member added to database:', decodedName);
+            // Only add to UI state if database insert was successful
+            const newMember = { name: decodedName, role: decodedRole };
+            setMembers(prevMembers => {
+              // Double-check for duplicates in state
+              const memberExists = prevMembers.some(member => member.name === newMember.name);
+              if (memberExists) {
+                return prevMembers;
+              }
+              return [...prevMembers, newMember];
+            });
+            alert(`${decodedName} has been successfully added to the team!`);
+          }
+
+          // Update invitation status to accepted
+          const { error: updateError } = await supabase
+            .from('team_invitations')
+            .update({ status: 'accepted' })
+            .eq('token', token);
+
+          if (updateError) {
+            console.error('Failed to update invitation status:', updateError);
+          }
+
           window.history.replaceState({}, document.title, '/team');
         } catch (err) {
           console.error('Acceptance error:', err);
@@ -160,8 +229,25 @@ export default function Team() {
           if (error || !invitation) {
             throw new Error(error?.message || 'Invalid token');
           }
+          
+          if (invitation.status === 'rejected') {
+            alert('This invitation has already been rejected.');
+            window.history.replaceState({}, document.title, '/team');
+            return;
+          }
+          
           if (invitation.status !== 'pending') {
-            throw new Error('Invitation already processed');
+            throw new Error('Invitation is no longer valid');
+          }
+
+          // Update invitation status to rejected
+          const { error: updateError } = await supabase
+            .from('team_invitations')
+            .update({ status: 'rejected' })
+            .eq('token', token);
+
+          if (updateError) {
+            throw updateError;
           }
 
           setRejectedName(decodeURIComponent(name));
@@ -174,7 +260,7 @@ export default function Team() {
       };
       handleReject();
     }
-  }, [searchParams, members]);
+  }, [searchParams]);
 
   // Handle sending invitation
   const handleSendInvite = async () => {
@@ -184,7 +270,41 @@ export default function Team() {
     }
 
     try {
-      const token = Math.random().toString(36).substring(2, 15);
+      // Check if user is already a team member
+      const { data: existingMember, error: checkError } = await supabase
+        .from('team_members')
+        .select('name')
+        .eq('name', inviteEmail.split('@')[0])
+        .eq('status', 'accepted')
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        throw checkError;
+      }
+
+      if (existingMember) {
+        alert(`${inviteEmail} is already a team member.`);
+        return;
+      }
+
+      // Check for pending invitations
+      const { data: pendingInvite, error: pendingError } = await supabase
+        .from('team_invitations')
+        .select('token')
+        .eq('email', inviteEmail)
+        .eq('status', 'pending')
+        .single();
+
+      if (pendingError && pendingError.code !== 'PGRST116') {
+        throw pendingError;
+      }
+
+      if (pendingInvite) {
+        alert(`There's already a pending invitation for ${inviteEmail}.`);
+        return;
+      }
+
+      const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       const inviteLink = `http://localhost:3000/api/sendInvite?token=${token}`;
 
       console.log('Sending invite:', { email: inviteEmail, role: inviteRole, token });
@@ -207,7 +327,20 @@ export default function Team() {
         body: JSON.stringify({ email: inviteEmail, role: inviteRole, token })
       });
       
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (jsonError) {
+        if (response.ok) {
+          console.log('Invite sent successfully to:', inviteEmail);
+          alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
+          setInviteEmail('');
+          return;
+        } else {
+          throw new Error('Server returned invalid response');
+        }
+      }
+      
       if (result.success) {
         console.log('Invite sent successfully to:', inviteEmail);
         alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
@@ -246,18 +379,21 @@ export default function Team() {
         <main className="flex-1 p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-3xl font-bold">Team</h2>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
               <button
                 onClick={handleSignOut}
-                className={`px-4 py-2 rounded flex items-center space-x-2 ${
-                  darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'
+                className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${
+                  darkMode ? 'bg-red-600 hover:bg-red-700' : ''
                 }`}
               >
-                <LogOut size={16} />
-                <span>Log out</span>
+                Log out
               </button>
-              <div className={`w-10 h-10 ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} rounded-full flex items-center justify-center text-white text-sm font-bold`}>
-                {getInitials('Francis Anino')}
+              <div
+                className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${
+                  darkMode ? 'bg-amber-700' : ''
+                }`}
+              >
+                {getInitials(username)}
               </div>
             </div>
           </div>
@@ -311,7 +447,7 @@ export default function Team() {
                 Members List:
               </p>
               {members.map((member, idx) => (
-                <div key={idx} className={`flex justify-between items-center py-2 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <div key={`${member.name}-${idx}`} className={`flex justify-between items-center py-2 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
                   <div className="flex items-center">
                     <div className={`w-10 h-10 rounded-full ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} mr-3 flex items-center justify-center text-white text-sm font-bold`}>
                       {getInitials(member.name)}
