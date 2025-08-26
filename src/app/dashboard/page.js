@@ -1,433 +1,469 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
-import Sidebar from '../../components/Sidebar';
-import { useDarkMode } from '../DarkModeContext';
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+import Sidebar from "../../components/Sidebar";
+import { useDarkMode } from "../DarkModeContext";
 
-// Supabase configuration
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
+/* ===== Supabase client ===== */
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://kwaylmatpkcajsctujor.supabase.co",
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M"
+);
 
-// Initialize Supabase client
-let supabase;
-try {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
-  console.log('Supabase client initialized');
-} catch (err) {
-  console.error('Failed to initialize Supabase client:', err.message);
-}
-
-// Temperature thresholds for different sensor types
-const TEMPERATURE_THRESHOLDS = {
-  fridge: { min: 35, max: 45, ideal: 40 }, // Fridge should be around 35-45°F
-  freezer: { min: -5, max: 5, ideal: 0 }, // Freezer should be around -5 to 5°F
-  default: { min: 20, max: 60, ideal: 40 }
+/* ===== Thresholds & helpers ===== */
+const fToC = (v) => (v == null ? null : (v - 32) * 5 / 9);
+const cToF = (v) => (v == null ? null : v * 9 / 5 + 32);
+const convertVal = (v, fromUnit, toUnit) => {
+  if (v == null || fromUnit === toUnit) return v;
+  return fromUnit === "C" ? cToF(v) : fToC(v);
 };
 
-const computeStatus = (temp, type = 'default') => {
-  if (temp == null) return 'Good';
+// Compute status based on sensor limits from database
+const computeStatusGeneric = (value, thresholds) => {
+  if (value == null) return "Unconfigured";
+  if (!thresholds || !Number.isFinite(thresholds.min) || !Number.isFinite(thresholds.max) || Number(thresholds.min) >= Number(thresholds.max)) {
+    return "Unconfigured";
+  }
   
-  const threshold = TEMPERATURE_THRESHOLDS[type] || TEMPERATURE_THRESHOLDS.default;
-  const { min, max } = threshold;
+  const span = Number(thresholds.max) - Number(thresholds.min);
+  const margin = Math.max(0, Math.min(Number(thresholds.warning ?? 0), span / 2)); // clamp to half-range
   
-  if (temp < min || temp > max) return 'Needs Attention';
-  if (temp <= min + 3 || temp >= max - 3) return 'Warning';
-  return 'Good';
+  if (value < Number(thresholds.min) || value > Number(thresholds.max)) return "Needs Attention";
+  if (value < Number(thresholds.min) + margin || value > Number(thresholds.max) - margin) return "Warning";
+  return "Good";
 };
 
-const toF = (val, unit) => (val == null ? null : unit === 'C' ? (val * 9 / 5 + 32) : val);
+// Axis configs
+const axisConfigTemp = (unit) =>
+  unit === "F"
+    ? { min: 0, max: 100, step: 10, title: "🌡️ Temperature (0–100°F)", tickFmt: (n) => `${n}°F` }
+    : { min: -20, max: 40, step: 10, title: "🌡️ Temperature (-20–40°C)", tickFmt: (n) => `${n}°C` };
+const axisConfigHum = () => ({ min: 0, max: 100, step: 10, title: "💧 Humidity (0–100% RH)", tickFmt: (n) => `${n}%` });
 
-// Determine sensor type based on name or ID
-const getSensorType = (name, sensorId) => {
-  const nameStr = (name || sensorId || '').toLowerCase();
-  if (nameStr.includes('freezer') || nameStr.includes('freeze') || nameStr === 'temp1') {
-    return 'freezer';
+const fmtDate = (d, tz, withTime = true) => {
+  const opts = withTime
+    ? { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: tz }
+    : { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz };
+  try {
+    return new Intl.DateTimeFormat("en-US", opts).format(new Date(d));
+  } catch {
+    return new Date(d).toLocaleString();
   }
-  if (nameStr.includes('fridge') || nameStr.includes('refrigerator')) {
-    return 'fridge';
-  }
-  if (nameStr.includes('humidity') || nameStr.includes('humid')) {
-    return 'fridge'; // Humidity sensors are usually in fridge
-  }
-  return 'fridge'; // Default to fridge
 };
+
+// Respect user prefs when filtering what to show
+const visibleItems = (items, selectedType, prefs) =>
+  items.filter((i) => {
+    if (selectedType === "temperature") return prefs.showTemp && i.kind === "temperature";
+    if (selectedType === "humidity") return prefs.showHumidity && i.kind === "humidity";
+    // ALL
+    if (i.kind === "temperature" && !prefs.showTemp) return false;
+    if (i.kind === "humidity" && !prefs.showHumidity) return false;
+    return true;
+  });
 
 export default function Dashboard() {
+  const router = useRouter();
+  const { darkMode, toggleDarkMode } = useDarkMode();
+
+  const [username, setUsername] = useState("User");
+  const [error, setError] = useState("");
+
+  // Preferences (from user_preferences)
+  const [prefs, setPrefs] = useState({
+    unit: "F", // 'F' | 'C' (temperature display)
+    tz: "America/Anchorage",
+    showTemp: true,
+    showHumidity: true,
+    showSensors: true,
+    showUsers: true,
+    showAlerts: true,
+  });
+
+  // Data
   const [data, setData] = useState({
     notifications: 0,
-    sensors: {
-      total: 0,
-      error: 0,
-      warning: 0,
-      success: 0,
-      disconnected: 0,
-    },
-    users: 6,
-    temperatures: [],
+    users: 0,
+    items: [], // unified (temperature + humidity)
+    sensors: { total: 0, error: 0, warning: 0, success: 0, disconnected: 0 },
     notificationsList: [],
   });
+
+  // Sensor thresholds from database
+  const [thresholds, setThresholds] = useState({}); // sensor_id -> {min, max, warning}
+
+  // Filter: 'all' | 'temperature' | 'humidity'
+  const [selectedType, setSelectedType] = useState("all");
+
+  // Notifications popup
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [username, setUsername] = useState('User');
-  const [error, setError] = useState('');
   const popupRef = useRef(null);
   const notificationCardRef = useRef(null);
-  const { darkMode } = useDarkMode();
-  const router = useRouter();
 
-  // Fetch user session and set username
+  /* ===== Session + preferences ===== */
   useEffect(() => {
-    const checkSession = async () => {
+    (async () => {
       try {
-        console.log('Checking session...');
-        const { data: sessionData, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (!sessionData.session) {
-          console.log('No session found, redirecting to login');
-          router.push('/login');
-        } else {
-          const user = sessionData.session.user;
-          const displayName = user?.user_metadata?.username || user?.email?.split('@')[0] || 'User';
-          console.log('Session found, user:', displayName);
-          setUsername(displayName);
+        const { data: s, error: e } = await supabase.auth.getSession();
+        if (e) throw e;
+        const session = s?.session;
+        if (!session) return router.push("/login");
+
+        const user = session.user;
+        setUsername(user?.user_metadata?.username || user?.email?.split("@")[0] || "User");
+
+        const { data: row } = await supabase
+          .from("user_preferences")
+          .select("*")
+          .eq("user_id", user.id)
+          .single();
+
+        if (row) {
+          const next = {
+            unit: row.temp_scale || "F",
+            tz: row.time_zone || "America/Anchorage",
+            showTemp: !!row.show_temp,
+            showHumidity: !!row.show_humidity,
+            showSensors: !!row.show_sensors,
+            showUsers: !!row.show_users,
+            showAlerts: !!row.show_alerts || !!row.show_notifications,
+          };
+          setPrefs(next);
+          if (!!row.dark_mode !== darkMode) toggleDarkMode();
         }
       } catch (err) {
-        console.error('Session check error:', err.message);
-        setError(
-          err.message === 'Failed to fetch'
-            ? 'Unable to connect to authentication server. Please check your network or contact support.'
-            : 'Failed to verify session: ' + err.message
-        );
-        router.push('/login');
+        setError("Failed to verify session: " + (err?.message || String(err)));
+        router.push("/login");
       }
-    };
-    checkSession();
-  }, [router]);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Process temperature data and generate notifications
-  const processTemperatureData = (temperatures) => {
-    const notificationsList = [];
-    let notificationId = 1;
-
-    temperatures.forEach(temp => {
-      if (temp.status === 'Needs Attention' || temp.status === 'Warning') {
-        notificationsList.push({
-          id: notificationId++,
-          title: `${temp.status} (${temp.name})`,
-          description: `Temperature: ${temp.displayValue} - ${temp.status === 'Needs Attention' ? 'Critical' : 'Warning'} level`,
-          date: new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
-          type: temp.status === 'Needs Attention' ? 'error' : 'warning',
-          sensorId: temp.sensor_id,
-          temperature: temp.displayValue
+  const buildNotifications = (items, tz) => {
+    const list = [];
+    let id = 1;
+    items.forEach((it) => {
+      if (it.status === "Needs Attention" || it.status === "Warning") {
+        list.push({
+          id: id++,
+          title: `${it.status} (${it.name})`,
+          description: it.kind === "humidity" ? `Humidity: ${it.displayValue}` : `Temperature: ${it.displayValue}`,
+          date: fmtDate(Date.now(), tz, false),
+          type: it.status === "Needs Attention" ? "error" : "warning",
+          sensorId: it.sensor_id,
         });
       }
     });
-
-    return notificationsList;
+    return list;
   };
 
-  // Fetch sensors from Supabase
+  /* ===== Fetch sensors + latest readings ===== */
   useEffect(() => {
-    const fetchSensors = async () => {
+    (async () => {
       try {
         const { data: sensorRows, error: sErr } = await supabase
-          .from('sensors')
-          .select('sensor_id, sensor_name, metric, latest_temp, approx_time, last_fetched_time, updated_at');
-
+          .from("sensors")
+          .select("sensor_id, sensor_name, metric, sensor_type, latest_temp, approx_time, last_fetched_time, updated_at, min_limit, max_limit, warning_limit");
         if (sErr) throw sErr;
 
-        // Fallback latest from raw_readings_v2
-        const ids = (sensorRows || []).map(r => r.sensor_id).filter(Boolean);
+        // Store thresholds for each sensor
+        const thresholdsMap = {};
+        (sensorRows || []).forEach((r) => {
+          if (r.sensor_id) {
+            thresholdsMap[r.sensor_id] = {
+              min: r.min_limit,
+              max: r.max_limit,
+              warning: r.warning_limit,
+            };
+          }
+        });
+        setThresholds(thresholdsMap);
+
+        const ids = (sensorRows || []).map((r) => r.sensor_id).filter(Boolean);
         let latestMap = new Map();
         if (ids.length) {
           const { data: latest, error: lErr } = await supabase
-            .from('raw_readings_v2')
-            .select('sensor_id, reading_value, timestamp, approx_time')
-            .in('sensor_id', ids)
-            .order('timestamp', { ascending: false });
+            .from("raw_readings_v2")
+            .select("sensor_id, reading_value, timestamp, approx_time")
+            .in("sensor_id", ids)
+            .order("timestamp", { ascending: false });
           if (lErr) throw lErr;
-          for (const row of latest) {
-            if (!latestMap.has(row.sensor_id)) latestMap.set(row.sensor_id, row);
-          }
+          for (const row of latest) if (!latestMap.has(row.sensor_id)) latestMap.set(row.sensor_id, row);
         }
 
-        const temperatures = (sensorRows || []).map(r => {
-          const unit = (r.metric || 'F').toUpperCase() === 'C' ? 'C' : 'F';
-          const lr = latestMap.get(r.sensor_id);
-          const raw = r.latest_temp ?? (lr ? Number(lr.reading_value) : null);
-          const value = raw != null ? toF(raw, unit) : null;
-          const name = r.sensor_name || r.sensor_id;
-          const type = getSensorType(name, r.sensor_id);
-          const status = computeStatus(value, type);
-          const color = status === 'Needs Attention' ? 'bg-red-500' : status === 'Warning' ? 'bg-yellow-500' : 'bg-green-500';
-          const displayValue = value != null ? `${Math.round(value)}°F` : '--°F';
+        const items = (sensorRows || [])
+          .map((r) => {
+            const sType = r.sensor_type || "sensor"; // 'sensor'|'temperature'|'humidity'
+            const kind = sType === "humidity" ? "humidity" : "temperature";
+            const name = r.sensor_name || r.sensor_id;
 
-          return {
-            sensor_id: r.sensor_id,
-            unit,
-            name,
-            value,
-            displayValue,
-            color,
-            type,
-            status,
-            lastUpdated: r.updated_at || lr?.timestamp || new Date().toISOString()
-          };
-        }).sort((a, b) => a.name.localeCompare(b.name));
+            const lr = latestMap.get(r.sensor_id);
+            const raw = r.latest_temp ?? (lr ? Number(lr.reading_value) : null);
 
-        // Generate notifications based on sensor status
-        const notificationsList = processTemperatureData(temperatures);
+            let value = null;
+            let displayValue = "--";
+            let status = "Good";
+            let color = "bg-green-500";
+            let unit = prefs.unit;
 
-        // Calculate sensor stats
-        const sensors = {
-          total: temperatures.length,
-          error: temperatures.filter(t => t.status === 'Needs Attention').length,
-          warning: temperatures.filter(t => t.status === 'Warning').length,
-          success: temperatures.filter(t => t.status === 'Good').length,
-          disconnected: temperatures.filter(t => t.value === null).length,
+                         if (kind === "temperature") {
+               const sensorUnit = (r.metric || "F").toUpperCase() === "C" ? "C" : "F";
+               // Normalize to °F for status calculation
+               const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
+               
+               // Get thresholds for this sensor (already in °F)
+               const sensorThresholds = thresholdsMap[r.sensor_id];
+               // Calculate status using °F values
+               status = computeStatusGeneric(valueInF, sensorThresholds);
+               
+               // Convert to user's preferred unit for display only
+               value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
+               displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
+               
+               // Store sensor unit for realtime updates
+               unit = sensorUnit;
+                          } else {
+               unit = "%";
+               // Humidity values are already in the correct unit (%)
+               value = raw != null ? Number(raw) : null;
+               // Get thresholds for this sensor
+               const sensorThresholds = thresholdsMap[r.sensor_id];
+               status = computeStatusGeneric(value, sensorThresholds);
+               displayValue = value != null ? `${Math.round(value)}%` : "--%";
+             }
+
+                         // Update color based on status
+             if (status === "Needs Attention") color = "bg-red-500";
+             else if (status === "Warning") color = "bg-[#FF9866]";
+             else if (status === "Unconfigured") color = "bg-gray-500";
+             else color = "bg-[#98CC37]";
+
+                         return {
+               sensor_id: r.sensor_id,
+               sensor_type: sType,
+               kind, // 'temperature' | 'humidity'
+               name,
+               unit,
+               value,
+               displayValue,
+               status,
+               color,
+               approx_time: r.approx_time,
+               lastUpdated: r.updated_at || lr?.timestamp || new Date().toISOString(),
+             };
+          })
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        // Apply visibility for the selected type and prefs
+        const filtered = visibleItems(items, selectedType, prefs);
+
+        const sensorsKPI = {
+          total: filtered.length,
+          error: filtered.filter((t) => t.status === "Needs Attention").length,
+          warning: filtered.filter((t) => t.status === "Warning").length,
+          success: filtered.filter((t) => t.status === "Good").length,
+          unconfigured: filtered.filter((t) => t.status === "Unconfigured").length,
+          disconnected: filtered.filter((t) => t.value == null).length,
         };
+
+        let usersCount = 0;
+        if (prefs.showUsers) {
+          const { count } = await supabase.from("team_members").select("id", { count: "exact", head: true });
+          if (typeof count === "number") usersCount = count;
+        }
+
+        const notificationsList = buildNotifications(filtered, prefs.tz);
 
         setData({
           notifications: notificationsList.length,
-          sensors,
-          users: 6,
-          temperatures,
+          users: usersCount,
+          items, // keep full set; we filter at render time too
+          sensors: sensorsKPI,
           notificationsList,
         });
-        setNotifications(notificationsList);
-        console.log('Sensors fetched successfully:', temperatures);
       } catch (err) {
-        console.error('Sensor fetch error:', err.message);
-        setError('Failed to fetch sensor data: ' + err.message);
-        
-        // Enhanced fallback data with realistic values
-        const fallbackTemperatures = [
-          { 
-            sensor_id: '284C4F41000000FF', 
-            unit: 'F', 
-            name: '284C4F41000000FF', 
-            value: 76, 
-            displayValue: '76°F', 
-            color: 'bg-red-500', 
-            type: 'fridge',
-            status: 'Needs Attention',
-            lastUpdated: new Date().toISOString()
-          },
-          { 
-            sensor_id: 'DHT22_Temp', 
-            unit: 'F', 
-            name: 'DHT22_Temp', 
-            value: 77, 
-            displayValue: '77°F', 
-            color: 'bg-red-500', 
-            type: 'fridge',
-            status: 'Needs Attention',
-            lastUpdated: new Date().toISOString()
-          },
-          { 
-            sensor_id: 'Humidity_Sensor', 
-            unit: 'F', 
-            name: 'Humidity Sensor', 
-            value: 67, 
-            displayValue: '67°F', 
-            color: 'bg-red-500', 
-            type: 'fridge',
-            status: 'Needs Attention',
-            lastUpdated: new Date().toISOString()
-          },
-        ];
-        
-        const fallbackNotifications = processTemperatureData(fallbackTemperatures);
-        
-        setData({
-          notifications: fallbackNotifications.length,
-          sensors: { 
-            total: 3, 
-            error: fallbackTemperatures.filter(t => t.status === 'Needs Attention').length,
-            warning: fallbackTemperatures.filter(t => t.status === 'Warning').length,
-            success: fallbackTemperatures.filter(t => t.status === 'Good').length,
-            disconnected: 0 
-          },
-          users: 6,
-          temperatures: fallbackTemperatures,
-          notificationsList: fallbackNotifications,
-        });
-        setNotifications(fallbackNotifications);
+        setError("Failed to fetch sensor data: " + (err?.message || String(err)));
       }
-    };
-    fetchSensors();
-  }, []);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
 
-  // Realtime updates with proper notification handling
+  /* ===== Realtime updates ===== */
   useEffect(() => {
-    if (!supabase) return;
-
-    const onInsert = (payload) => {
-      const r = payload.new || {};
-      if (!r.sensor_id || r.reading_value == null) return;
-
-      setData((prev) => {
-        const prevTemps = prev.temperatures;
-        const idx = prevTemps.findIndex((p) => p.sensor_id === r.sensor_id);
-        if (idx === -1) return prev;
-
-        const unit = prevTemps[idx].unit;
-        const value = toF(Number(r.reading_value), unit);
-        const type = prevTemps[idx].type;
-        const status = computeStatus(value, type);
-        const color = status === 'Needs Attention' ? 'bg-red-500' : status === 'Warning' ? 'bg-yellow-500' : 'bg-green-500';
-        const displayValue = `${Math.round(value)}°F`;
-
-        const nextTemps = [...prevTemps];
-        nextTemps[idx] = { 
-          ...nextTemps[idx], 
-          value, 
-          displayValue, 
-          color, 
-          status,
-          lastUpdated: r.timestamp || new Date().toISOString()
-        };
-
-        const newNotif = processTemperatureData(nextTemps);
-
-        const newSensors = {
-          total: nextTemps.length,
-          error: nextTemps.filter((t) => t.status === 'Needs Attention').length,
-          warning: nextTemps.filter((t) => t.status === 'Warning').length,
-          success: nextTemps.filter((t) => t.status === 'Good').length,
-          disconnected: nextTemps.filter((t) => t.value === null).length,
-        };
-
-        setNotifications(newNotif);
-
-        return {
-          ...prev,
-          temperatures: nextTemps,
-          notifications: newNotif.length,
-          sensors: newSensors,
-          notificationsList: newNotif,
-        };
-      });
-    };
-
     const ch = supabase
-      .channel('raw-readings-v2-all')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'raw_readings_v2' }, onInsert)
-      .subscribe((status) => {
-        console.log('Subscription status:', status);
-      });
+      .channel("raw-readings-v2-all")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "raw_readings_v2" }, (payload) => {
+        const r = payload.new || {};
+        if (!r.sensor_id || r.reading_value == null) return;
 
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, []);
+        setData((prev) => {
+          const items = [...prev.items];
+          const idx = items.findIndex((p) => p.sensor_id === r.sensor_id);
+          if (idx < 0) return prev;
 
-  // Handle click outside to close notifications
+          const item = items[idx];
+          if (item.kind === "temperature") {
+            // Normalize to °F for status calculation
+            const valueInF = Number(r.reading_value);
+            // Get thresholds for this sensor (already in °F)
+            const sensorThresholds = thresholds[r.sensor_id];
+            // Calculate status using °F values
+            const status = computeStatusGeneric(valueInF, sensorThresholds);
+            
+            // Convert to user's preferred unit for display only
+            const value = prefs.unit === "C" ? fToC(valueInF) : valueInF;
+            
+            let color = "bg-[#98CC37]";
+            if (status === "Needs Attention") color = "bg-red-500";
+            else if (status === "Warning") color = "bg-[#FF9866]";
+            else if (status === "Unconfigured") color = "bg-gray-500";
+            
+            items[idx] = {
+              ...item,
+              value,
+              displayValue: `${Math.round(value)}°${prefs.unit}`,
+              status,
+              color,
+              lastUpdated: r.timestamp || new Date().toISOString(),
+            };
+          } else {
+            const value = Number(r.reading_value);
+            // Get thresholds for this sensor
+            const sensorThresholds = thresholds[r.sensor_id];
+            const status = computeStatusGeneric(value, sensorThresholds);
+            let color = "bg-[#98CC37]";
+            if (status === "Needs Attention") color = "bg-red-500";
+            else if (status === "Warning") color = "bg-[#FF9866]";
+            else if (status === "Unconfigured") color = "bg-gray-500";
+            
+            items[idx] = {
+              ...item,
+              value,
+              displayValue: `${Math.round(value)}%`,
+              status,
+              color,
+              lastUpdated: r.timestamp || new Date().toISOString(),
+            };
+          }
+
+          // Recompute KPIs/notifications with visibility
+          const filtered = visibleItems(items, selectedType, prefs);
+          const sensorsKPI = {
+            total: filtered.length,
+            error: filtered.filter((t) => t.status === "Needs Attention").length,
+            warning: filtered.filter((t) => t.status === "Warning").length,
+            success: filtered.filter((t) => t.status === "Good").length,
+            unconfigured: filtered.filter((t) => t.status === "Unconfigured").length,
+            disconnected: filtered.filter((t) => t.value == null).length,
+          };
+          const notificationsList = buildNotifications(filtered, prefs.tz);
+
+          return { ...prev, items, sensors: sensorsKPI, notifications: notificationsList.length, notificationsList };
+        });
+      })
+      .subscribe();
+
+    return () => supabase.removeChannel(ch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
+
+  /* ===== UI helpers ===== */
   useEffect(() => {
-    const handleClickOutside = (event) => {
+    const handler = (e) => {
       if (
         popupRef.current &&
-        !popupRef.current.contains(event.target) &&
+        !popupRef.current.contains(e.target) &&
         notificationCardRef.current &&
-        !notificationCardRef.current.contains(event.target)
+        !notificationCardRef.current.contains(e.target)
       ) {
         setShowNotifications(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Handle sign-out
-  const handleSignOut = async () => {
-    try {
-      console.log('Attempting sign-out...');
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      console.log('Sign-out successful');
-      router.push('/login');
-    } catch (err) {
-      console.error('Sign-out error:', err.message);
-      setError('Failed to sign out: ' + err.message);
-    }
+  const getInitials = (name) => name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
+
+  // Axes
+  const axisTemp = axisConfigTemp(prefs.unit);
+  const axisHum = axisConfigHum();
+
+  // Which items are visible given filter + prefs
+  const itemsVisible = visibleItems(data.items, selectedType, prefs);
+
+  // In "all", decide which axes to show based on what's visible
+  const hasVisibleTemp = selectedType === "all" && itemsVisible.some((i) => i.kind === "temperature");
+  const hasVisibleHum = selectedType === "all" && itemsVisible.some((i) => i.kind === "humidity");
+
+  const leftAxis =
+    selectedType === "all"
+      ? hasVisibleTemp
+        ? axisTemp
+        : axisHum
+      : selectedType === "humidity"
+      ? axisHum
+      : axisTemp;
+
+  const rightAxis =
+    selectedType === "all" && hasVisibleTemp && hasVisibleHum
+      ? leftAxis === axisTemp
+        ? axisHum
+        : axisTemp
+      : null;
+
+  const H = 320;
+  const ticks = (ax) => {
+    const arr = [];
+    for (let v = ax.max; v >= ax.min; v -= ax.step) arr.push(ax.tickFmt(v));
+    return arr;
+  };
+  const toHeight = (item) => {
+    if (item.value == null) return 0;
+    const ax = item.kind === "humidity" ? axisHum : axisTemp;
+    const clamped = Math.max(ax.min, Math.min(item.value, ax.max));
+    return ((clamped - ax.min) / (ax.max - ax.min)) * H;
   };
 
-  // Close individual notification
-  const closeNotification = (id) => {
-    const updatedNotifications = notifications.filter((notification) => notification.id !== id);
-    setNotifications(updatedNotifications);
-    setData(prev => ({ 
-      ...prev, 
-      notifications: updatedNotifications.length,
-      notificationsList: updatedNotifications
-    }));
-  };
 
-  // Clear all notifications
-  const clearAllNotifications = () => {
-    setNotifications([]);
-    setShowNotifications(false);
-    setData(prev => ({ 
-      ...prev, 
-      notifications: 0,
-      notificationsList: []
-    }));
-  };
 
-  // Calculate bar height for temperature graph with proper scaling (0-100°F)
-  const getBarHeight = (temp) => {
-    const actualChartHeight = 320; // Increased height for better precision
-    if (temp.value === null) {
-      return 0;
-    }
-    
-    // Universal scale 0-100°F for all sensors
-    const minTemp = 0;
-    const maxTemp = 100;
-    const range = maxTemp - minTemp;
-    const normalizedValue = Math.max(minTemp, Math.min(temp.value, maxTemp));
-    return ((normalizedValue - minTemp) / range) * actualChartHeight;
-  };
+  // Items to plot (respect prefs in ALL)
+  const chartItems = itemsVisible;
 
-  // Get initials for avatar
-  const getInitials = (name) => {
-    return name
-      .split(' ')
-      .map(word => word[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
-  return (
-    <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'}`}>
-      <Sidebar />
-      <main className="flex-1 p-6">
+     return (
+     <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}>
+               <style jsx>{`
+          @keyframes customBounce {
+            0%, 50%, 100% {
+              transform: translateX(-50%) translateY(0);
+            }
+            25%, 75% {
+              transform: translateX(-50%) translateY(-8px);
+            }
+          }
+        `}</style>
+       <Sidebar />
+       <main className="flex-1 p-6">
+        {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
             <h2 className="text-3xl font-bold">Dashboard</h2>
-            <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-              Hi {username}
-            </p>
+            <p className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Hi {username}</p>
           </div>
           <div className="flex items-center space-x-3">
             <button
-              onClick={handleSignOut}
-              className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${
-                darkMode ? 'bg-red-600 hover:bg-red-700' : ''
-              }`}
+              onClick={async () => {
+                await supabase.auth.signOut();
+                router.push("/login");
+              }}
+              className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? "bg-red-600 hover:bg-red-700" : ""}`}
             >
               Log out
             </button>
-            <div
-              className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${
-                darkMode ? 'bg-amber-700' : ''
-              }`}
-            >
+            <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? "bg-amber-700" : ""}`}>
               {getInitials(username)}
             </div>
           </div>
@@ -435,437 +471,359 @@ export default function Dashboard() {
 
         {error && <p className="text-red-500 text-center mb-4">{error}</p>}
 
+        {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-          <div
-            className={`rounded-lg p-6 shadow text-center relative ${
-              darkMode ? 'bg-gray-800 text-white' : 'bg-white'
-            }`}
-          >
-            <div
-              className="cursor-pointer"
-              onClick={() => setShowNotifications(!showNotifications)}
-              ref={notificationCardRef}
-            >
-              <div
-                className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
-                  darkMode ? 'bg-green-900' : ''
-                }`}
-              >
-                <span className="text-2xl">🔔</span>
-              </div>
-              <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Notifications</p>
-              <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
-                {data.notifications}
-              </p>
-              <div className="flex items-center justify-center">
-                <div className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? 'bg-red-400' : ''}`}></div>
-                <span className={`text-red-500 text-sm ${darkMode ? 'text-red-400' : ''}`}>
-                  {data.notifications > 0 ? 'Unread' : 'All Clear'}
-                </span>
-              </div>
-            </div>
-            {showNotifications && (
-              <div
-                ref={popupRef}
-                className={`absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-80 bg-white rounded-lg shadow-lg z-20 border border-gray-200 ${
-                  darkMode ? 'bg-gray-800 border-gray-700 text-white' : ''
-                }`}
-              >
-                <div className="p-4">
-                  <h4 className={`font-semibold text-gray-800 mb-3 ${darkMode ? 'text-white' : ''}`}>
-                    Notifications
-                  </h4>
-                  {notifications.length > 0 ? (
-                    notifications.map((notification) => (
-                      <div
-                        key={notification.id}
-                        className={`flex items-start justify-between p-3 mb-2 bg-gray-50 rounded-md ${
-                          darkMode ? 'bg-gray-700 text-white' : ''
-                        } ${notification.type === 'error' ? 'border-l-4 border-red-500' : 'border-l-4 border-yellow-500'}`}
-                      >
-                        <div className="flex-1">
-                          <p className={`text-gray-700 text-sm font-medium ${darkMode ? 'text-white' : ''}`}>
-                            {notification.title}
-                          </p>
-                          {notification.description && (
-                            <p className={`text-gray-600 text-xs ${darkMode ? 'text-gray-300' : ''}`}>
-                              {notification.description}
-                            </p>
-                          )}
-                          <p className={`text-gray-500 text-xs ${darkMode ? 'text-gray-400' : ''}`}>
-                            {notification.date}
-                          </p>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            closeNotification(notification.id);
-                          }}
-                          className={`text-gray-400 hover:text-gray-600 ml-3 ${
-                            darkMode ? 'text-gray-300 hover:text-gray-200' : ''
-                          }`}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))
-                  ) : (
-                    <p className={`text-gray-500 text-sm text-center ${darkMode ? 'text-gray-300' : ''}`}>
-                      No new notifications.
-                    </p>
-                  )}
-                  {notifications.length > 0 && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        clearAllNotifications();
-                      }}
-                      className={`mt-4 w-full bg-blue-500 text-white py-2 rounded-md text-sm font-medium hover:bg-blue-600 ${
-                        darkMode ? 'bg-blue-600 hover:bg-blue-700' : ''
-                      }`}
-                    >
-                      Clear All
-                    </button>
-                  )}
+          {prefs.showAlerts && (
+            <div className={`rounded-lg p-6 shadow text-center relative ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
+              <div className="cursor-pointer" onClick={() => setShowNotifications(!showNotifications)} ref={notificationCardRef}>
+                                 <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
+                   <span className="text-2xl">🔔</span>
+                 </div>
+                <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Notifications</p>
+                <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{data.notifications}</p>
+                <div className="flex items-center justify-center">
+                  <div className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? "bg-red-400" : ""}`}></div>
+                  <span className={`text-red-500 text-sm ${darkMode ? "text-red-400" : ""}`}>{data.notifications > 0 ? "Unread" : "All Clear"}</span>
                 </div>
               </div>
-            )}
-          </div>
-          
-          <div className={`rounded-lg p-6 shadow text-center ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
-            <div
-              className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
-                darkMode ? 'bg-green-900' : ''
-              }`}
-            >
-              <span className="text-2xl">📶</span>
+                             {showNotifications && (
+                 <div ref={popupRef} className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-white rounded-lg shadow-lg z-50 border border-gray-200 ${darkMode ? "bg-gray-800 border-gray-700 text-white" : ""}`}>
+                  <div className="p-4">
+                    <h4 className={`font-semibold text-gray-800 mb-3 ${darkMode ? "text-white" : ""}`}>Notifications</h4>
+                    {data.notificationsList.length ? (
+                      data.notificationsList.map((n) => (
+                        <div key={n.id} className={`flex items-start justify-between p-3 mb-2 bg-gray-50 rounded-md ${darkMode ? "bg-gray-700 text-white" : ""} ${n.type === "error" ? "border-l-4 border-red-500" : "border-l-4 border-yellow-500"}`}>
+                          <div className="flex-1">
+                            <p className={`text-gray-700 text-sm font-medium ${darkMode ? "text-white" : ""}`}>{n.title}</p>
+                            {n.description && <p className={`text-gray-600 text-xs ${darkMode ? "text-gray-300" : ""}`}>{n.description}</p>}
+                            <p className={`text-gray-500 text-xs ${darkMode ? "text-gray-400" : ""}`}>{n.date}</p>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rest = data.notificationsList.filter((x) => x.id !== n.id);
+                              setData((prev) => ({ ...prev, notificationsList: rest, notifications: rest.length }));
+                            }}
+                            className={`text-gray-400 hover:text-gray-600 ml-3 ${darkMode ? "text-gray-300 hover:text-gray-200" : ""}`}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className={`text-gray-500 text-sm text-center ${darkMode ? "text-gray-300" : ""}`}>No new notifications.</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Sensors</p>
-            <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
-              {data.sensors.total}
-            </p>
-            <div className="flex items-center justify-center space-x-3 text-sm">
-              <div className="flex items-center">
-                <div className={`w-2 h-2 bg-red-500 rounded-full mr-1 ${darkMode ? 'bg-red-400' : ''}`}></div>
-                <span className={`text-red-500 font-medium ${darkMode ? 'text-red-400' : ''}`}>
-                  {data.sensors.error}
-                </span>
-              </div>
-              <div className="flex items-center">
-                <div className={`w-2 h-2 bg-yellow-500 rounded-full mr-1 ${darkMode ? 'bg-yellow-400' : ''}`}></div>
-                <span className={`text-yellow-500 font-medium ${darkMode ? 'text-yellow-400' : ''}`}>
-                  {data.sensors.warning}
-                </span>
-              </div>
-              <div className="flex items-center">
-                <div className={`w-2 h-2 bg-green-500 rounded-full mr-1 ${darkMode ? 'bg-green-400' : ''}`}></div>
-                <span className={`text-green-500 font-medium ${darkMode ? 'text-green-400' : ''}`}>
-                  {data.sensors.success}
-                </span>
-              </div>
-              <div className="flex items-center">
-                <span className={`mr-1 text-xs ${darkMode ? 'text-gray-300' : 'text-gray-500'}`}>✖</span>
-                <span className={`text-gray-500 font-medium ${darkMode ? 'text-gray-300' : ''}`}>
-                  {data.sensors.disconnected}
-                </span>
-              </div>
+          )}
+
+          {prefs.showSensors && (
+            <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
+                             <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
+                 <span className="text-2xl">📶</span>
+               </div>
+              <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Sensors</p>
+              {(() => {
+                const kpiItems = itemsVisible;
+                return (
+                  <>
+                    <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{kpiItems.length}</p>
+                    <div className="flex items-center justify-center space-x-3 text-sm">
+                      <div className="flex items-center">
+                        <div className={`w-2 h-2 bg-red-500 rounded-full mr-1 ${darkMode ? "bg-red-400" : ""}`}></div>
+                        <span className={`text-red-500 font-medium ${darkMode ? "text-red-400" : ""}`}>
+                          {kpiItems.filter((t) => t.status === "Needs Attention").length}
+                        </span>
+                      </div>
+                      <div className="flex items-center">
+                        <div className={`w-2 h-2 bg-yellow-500 rounded-full mr-1 ${darkMode ? "bg-yellow-400" : ""}`}></div>
+                        <span className={`text-yellow-500 font-medium ${darkMode ? "text-yellow-400" : ""}`}>
+                          {kpiItems.filter((t) => t.status === "Warning").length}
+                        </span>
+                      </div>
+                      <div className="flex items-center">
+                        <div className={`w-2 h-2 bg-green-500 rounded-full mr-1 ${darkMode ? "bg-green-400" : ""}`}></div>
+                        <span className={`text-green-500 font-medium ${darkMode ? "text-green-400" : ""}`}>
+                          {kpiItems.filter((t) => t.status === "Good").length}
+                        </span>
+                      </div>
+                      <div className="flex items-center">
+                        <div className={`w-2 h-2 bg-gray-500 rounded-full mr-1 ${darkMode ? "bg-gray-400" : ""}`}></div>
+                        <span className={`text-gray-500 font-medium ${darkMode ? "text-gray-400" : ""}`}>
+                          {kpiItems.filter((t) => t.status === "Unconfigured").length}
+                        </span>
+                      </div>
+                      <div className="flex items-center">
+                        <span className={`mr-1 text-xs ${darkMode ? "text-gray-300" : "text-gray-500"}`}>✖</span>
+                        <span className={`${darkMode ? "text-gray-300" : "text-gray-500"}`}>
+                          {kpiItems.filter((t) => t.value == null).length}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
-          </div>
-          
-          <div className={`rounded-lg p-6 shadow text-center ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
-            <div
-              className={`flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4 mx-auto ${
-                darkMode ? 'bg-green-900' : ''
-              }`}
-            >
-              <span className="text-2xl">👥</span>
+          )}
+
+          {prefs.showUsers && (
+            <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
+                             <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
+                 <span className="text-2xl">👥</span>
+               </div>
+              <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Users</p>
+              <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{data.users}</p>
             </div>
-            <p className={`text-gray-600 text-sm mb-1 ${darkMode ? 'text-gray-300' : ''}`}>Users</p>
-            <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? 'text-white' : ''}`}>
-              {data.users}
-            </p>
-            <div className="flex justify-center -space-x-1">
-              <div
-                className={`w-6 h-6 bg-orange-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
-              ></div>
-              <div
-                className={`w-6 h-6 bg-blue-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
-              ></div>
-              <div
-                className={`w-6 h-6 bg-green-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
-              ></div>
-              <div
-                className={`w-6 h-6 bg-purple-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
-              ></div>
-              <div
-                className={`w-6 h-6 bg-pink-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
-              ></div>
-              <div
-                className={`w-6 h-6 bg-red-500 rounded-full border-2 border-white ${darkMode ? 'border-gray-700' : ''}`}
-              ></div>
-            </div>
-          </div>
+          )}
         </div>
 
-        <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
+        {/* Chart + Table card */}
+        <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
           <div className="flex justify-between items-center mb-6">
-            <h3 className={`text-lg font-semibold text-gray-900 ${darkMode ? 'text-white' : ''}`}>
-              Temperature Monitoring System
+            <h3 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>
+              {selectedType === "all"
+                ? "All Sensors (respects Preferences)"
+                : selectedType === "humidity"
+                ? axisHum.title
+                : axisTemp.title}
             </h3>
-            <div className="text-sm text-gray-500">
-              Last updated: {new Date().toLocaleString()}
+            <div className="flex items-center gap-3">
+              <div className="text-sm text-gray-500">Last updated: {fmtDate(Date.now(), prefs.tz, true)}</div>
+              <div className="flex items-center gap-2">
+                <label className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Filter:</label>
+                <select
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value)}
+                  className={`border rounded px-2 py-1 ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"}`}
+                >
+                  <option value="all">All</option>
+                  {prefs.showTemp && <option value="temperature">Temperature</option>}
+                  {prefs.showHumidity && <option value="humidity">Humidity</option>}
+                </select>
+              </div>
             </div>
           </div>
+
+          {/* Chart area (grid/axes always render) */}
           <div className="relative">
             <div className="flex items-start">
-              {/* Left Y-axis for Temperature Scale (0-100°F) */}
+              {/* Left Y-axis */}
               <div className="flex flex-col w-16 mr-3">
-                <div className="h-6"></div> {/* Spacer for title */}
+                <div className="h-6"></div>
                 <div className="relative h-80">
                   <div className="absolute inset-0 flex flex-col justify-between text-xs text-gray-600 items-end pr-3 font-medium">
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">100°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">90°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">80°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">70°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">60°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">50°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">40°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">30°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">20°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">10°F</span>
-                    <span className="transform -translate-y-1/2 bg-white px-1 rounded">0°F</span>
+                    {ticks(leftAxis).map((t, i) => (
+                      <span key={i} className="transform -translate-y-1/2 bg-white px-1 rounded">
+                        {t}
+                      </span>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              {/* Main chart area */}
+              {/* Main plot */}
               <div className="flex-1 relative">
-                <div className="absolute -top-6 left-0 right-0 flex justify-between z-10">
-                  <span className={`text-green-600 font-semibold text-sm ${darkMode ? 'text-green-400' : ''}`}>
-                    🌡️ Temperature Monitoring (0-100°F Scale)
-                  </span>
-                  <div className="text-xs text-gray-500">
-                    Ideal: Fridge 35-45°F | Freezer -5 to 5°F
-                  </div>
-                </div>
-
-                {/* Enhanced Grid lines */}
+                {/* Grid */}
                 <div className="absolute inset-0 h-80">
                   <div className="h-full flex flex-col justify-between">
                     {[...Array(11)].map((_, i) => (
-                      <div key={i} className={`border-t w-full ${
-                        i === 0 || i === 10 ? 'border-gray-400 border-t-2' : 
-                        i === 5 ? 'border-gray-300 border-t-2' : 
-                        'border-gray-200'
-                      } ${darkMode ? 'border-gray-600' : ''}`}></div>
+                      <div
+                        key={i}
+                        className={`border-t w-full ${
+                          i === 0 || i === 10 ? "border-gray-400 border-t-2" : i === 5 ? "border-gray-300 border-t-2" : "border-gray-200"
+                        } ${darkMode ? "border-gray-600" : ""}`}
+                      />
                     ))}
                   </div>
                   <div className="absolute inset-0">
-                    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? 'bg-gray-500' : ''}`}></div>
-                    <div className={`absolute right-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? 'bg-gray-500' : ''}`}></div>
-                  </div>
-                </div>
-                
-                {/* Temperature ideal range indicators */}
-                <div className="absolute inset-0 h-80 pointer-events-none">
-                  {/* Fridge ideal range (35-45°F) */}
-                  <div 
-                    className="absolute left-0 bg-green-100 bg-opacity-50 border-t-2 border-b-2 border-green-500"
-                    style={{
-                      bottom: `${(35/100) * 320}px`,
-                      height: `${((45-35)/100) * 320}px`,
-                      width: '100%',
-                      borderStyle: 'dashed'
-                    }}
-                  >
-                    <div className="absolute left-2 top-1/2 transform -translate-y-1/2 text-xs font-bold text-green-700 bg-green-200 px-2 py-1 rounded">
-                      Fridge Ideal Zone
-                    </div>
-                  </div>
-                  
-                  {/* Critical temperature zones */}
-                  <div 
-                    className="absolute left-0 bg-red-100 bg-opacity-30 border-t border-red-400"
-                    style={{
-                      bottom: `${(80/100) * 320}px`,
-                      height: `${((100-80)/100) * 320}px`,
-                      width: '100%'
-                    }}
-                  >
-                    <div className="absolute left-2 top-2 text-xs font-bold text-red-700 bg-red-200 px-2 py-1 rounded">
-                      Danger Zone
-                    </div>
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? "bg-gray-500" : ""}`}></div>
+                    <div className={`absolute right-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? "bg-gray-500" : ""}`}></div>
                   </div>
                 </div>
 
-                {/* Temperature bars with enhanced styling */}
+                
+
+                {/* Bars (or empty) */}
                 <div className="relative h-80">
                   <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full px-6">
-                    {data.temperatures.map((temp, i) => {
-                      const barHeight = getBarHeight(temp);
-                      return (
-                        <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: '30%', maxWidth: '100px' }}>
-                          {/* Temperature value label */}
-                          {temp.value !== null && (
-                            <div
-                              className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
-                                temp.status === 'Needs Attention' 
-                                  ? 'bg-red-500 text-white border-2 border-red-600 animate-bounce' 
-                                  : temp.status === 'Warning'
-                                  ? 'bg-yellow-500 text-white border-2 border-yellow-600'
-                                  : 'bg-green-500 text-white border-2 border-green-600'
-                              }`}
-                              style={{
-                                bottom: `${barHeight + 12}px`,
-                                left: '50%',
-                                transform: 'translateX(-50%)',
-                                whiteSpace: 'nowrap',
-                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
-                              }}
-                            >
-                              {temp.displayValue}
-                              <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
-                            </div>
-                          )}
-                          
-                          {/* Temperature bar */}
-                          {temp.value !== null && (
-                            <div
-                              className={`relative w-16 rounded-t-lg shadow-xl transition-all duration-500 group-hover:w-20 ${temp.color} ${
-                                temp.status === 'Needs Attention' ? 'animate-pulse' : ''
-                              }`}
-                              style={{ 
-                                height: `${Math.max(barHeight, 8)}px`,
-                                background: temp.status === 'Needs Attention' 
-                                  ? 'linear-gradient(to top, #dc2626, #ef4444)' 
-                                  : temp.status === 'Warning'
-                                  ? 'linear-gradient(to top, #d97706, #f59e0b)'
-                                  : 'linear-gradient(to top, #059669, #10b981)',
-                                boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
-                              }}
-                              title={`${temp.name}: ${temp.displayValue} (${temp.status})`}
-                            >
-                              {/* Bar pattern for visual appeal */}
-                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 rounded-t-lg"></div>
-                            </div>
-                          )}
-                          
-                          {/* No data indicator */}
-                          {temp.value === null && (
-                            <div
-                              className="bg-gray-400 w-16 rounded-t-lg opacity-50"
-                              style={{ height: '8px' }}
-                              title={`${temp.name}: No data available`}
-                            >
-                              <div className="text-xs text-center text-gray-600 mt-1">No Data</div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {chartItems.length === 0 ? (
+                      <div className="text-center w-full text-sm text-gray-500 mt-20 opacity-75">No sensors to display.</div>
+                    ) : (
+                      chartItems.map((it, i) => {
+                        const h = toHeight(it);
+                        const label = it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue;
+                        return (
+                          <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
+                            {it.value != null && (
+                              <div
+                                                                 className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
+                                   it.status === "Needs Attention"
+                                     ? "bg-red-500 text-white border-2 border-red-600"
+                                     : it.status === "Warning"
+                                     ? "bg-yellow-500 text-white border-2 border-yellow-600"
+                                     : it.status === "Unconfigured"
+                                     ? "bg-gray-500 text-white border-2 border-gray-600"
+                                     : "bg-green-500 text-white border-2 border-green-600"
+                                 }`}
+                                   style={{
+                                   bottom: `${h + 12}px`,
+                                   left: "50%",
+                                   transform: "translateX(-50%)",
+                                   whiteSpace: "nowrap",
+                                   boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                                   animation: (it.status === "Needs Attention" || it.status === "Warning") ? "customBounce 2s infinite" : "none",
+                                 }}
+                              >
+                                {label}
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
+                              </div>
+                            )}
+                            {it.value != null ? (
+                              <div
+                                className={`relative w-16 rounded-t-lg shadow-xl transition-all duration-500 group-hover:w-20 ${it.color} ${
+                                  it.status === "Needs Attention" ? "animate-pulse" : ""
+                                }`}
+                                style={{
+                                  height: `${Math.max(h, 8)}px`,
+                                                                     background:
+                                     it.status === "Needs Attention"
+                                       ? "linear-gradient(to top, #dc2626, #ef4444)"
+                                       : it.status === "Warning"
+                                       ? "linear-gradient(to top, #fef08a, #fef3c7)"
+                                       : it.status === "Unconfigured"
+                                       ? "linear-gradient(to top, #6b7280, #9ca3af)"
+                                       : "linear-gradient(to top, #bbf7d0, #dcfce7)",
+                                  boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                                }}
+                                title={`${it.name}: ${label} (${it.status})`}
+                              >
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 rounded-t-lg"></div>
+                              </div>
+                            ) : (
+                              <div className="bg-gray-400 w-16 rounded-t-lg opacity-50" style={{ height: "8px" }} title={`${it.name}: No data`}>
+                                <div className="text-xs text-center text-gray-600 mt-1">No Data</div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
 
-                {/* Enhanced sensor labels */}
-                <div className={`flex justify-around mt-4 pt-3 px-6 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {data.temperatures.map((temp, i) => (
-                    <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: '30%', maxWidth: '100px' }}>
-                      <p className="text-sm font-bold truncate group-hover:text-blue-600 transition-colors">{temp.name}</p>
-                      <p className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
-                        temp.status === 'Needs Attention' ? 'bg-red-100 text-red-700' :
-                        temp.status === 'Warning' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
-                      }`}>
-                        {temp.status}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1 capitalize">{temp.type} sensor</p>
+                {/* Labels below bars */}
+                <div className={`flex justify-around mt-4 pt-3 px-6 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+                  {chartItems.map((it, i) => (
+                    <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
+                      <p className="text-sm font-bold truncate group-hover:text-blue-600 transition-colors">{it.name}</p>
+                                                                      <p
+                           className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
+                             it.status === "Needs Attention"
+                               ? "bg-red-100 text-red-700 animate-bounce"
+                               : it.status === "Warning"
+                               ? "bg-yellow-200 text-yellow-800"
+                               : it.status === "Unconfigured"
+                               ? "bg-gray-100 text-gray-700"
+                               : "bg-green-200 text-green-800"
+                           }`}
+                         >
+                         {it.status}
+                       </p>
+                      <p className="text-xs text-gray-500 mt-1">{it.kind}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Right side reference */}
+              {/* Right Y-axis: humidity ticks when visible alongside temp */}
               <div className="flex flex-col w-16 ml-3">
                 <div className="h-6"></div>
                 <div className="relative h-80">
                   <div className="absolute inset-0 flex flex-col justify-between text-xs text-gray-500 items-start pl-3">
-                    <span className="bg-red-100 px-1 rounded text-red-700">Critical</span>
-                    <span className="bg-yellow-100 px-1 rounded text-yellow-700">Hot</span>
-                    <span className="bg-orange-100 px-1 rounded text-orange-700">Warm</span>
-                    <span className="bg-blue-100 px-1 rounded text-blue-700">Room</span>
-                    <span className="bg-green-100 px-1 rounded text-green-700">Cool</span>
-                    <span className="bg-green-200 px-1 rounded text-green-800">Ideal</span>
-                    <span className="bg-cyan-100 px-1 rounded text-cyan-700">Cold</span>
-                    <span className="bg-blue-200 px-1 rounded text-blue-800">Very Cold</span>
-                    <span className="bg-purple-100 px-1 rounded text-purple-700">Freezing</span>
-                    <span className="bg-indigo-100 px-1 rounded text-indigo-700">Ice</span>
-                    <span className="bg-gray-100 px-1 rounded text-gray-700">Frozen</span>
+                    {rightAxis
+                      ? ticks(rightAxis).map((t, i) => (
+                          <span key={i} className="bg-white px-1 rounded">
+                            {t}
+                          </span>
+                        ))
+                      : ["Critical", "Hot", "Warm", "Room", "Cool", "Ideal", "Cold", "Very Cold", "Freezing", "Ice", "Frozen"].map(
+                          (t, i) => (
+                            <span key={i} className="bg-gray-100 px-1 rounded text-gray-700">
+                              {t}
+                            </span>
+                          )
+                        )}
                   </div>
                 </div>
               </div>
             </div>
-            <div className="text-center mt-4">
-              <span className={`text-sm text-gray-600 font-medium ${darkMode ? 'text-gray-300' : ''}`}>Sensors</span>
-            </div>
-            
-            {/* Temperature status legend */}
-            <div className="flex justify-center mt-4 space-x-6 text-xs">
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
-                <span>Normal (Good)</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-yellow-500 rounded mr-2"></div>
-                <span>Warning</span>
-              </div>
+
+            {/* Legend */}
+                         <div className="flex justify-center mt-4 space-x-6 text-xs">
+               <div className="flex items-center">
+                 <div className="w-3 h-3 bg-green-200 rounded mr-2"></div>
+                 <span>Normal (Good)</span>
+               </div>
+               <div className="flex items-center">
+                 <div className="w-3 h-3 bg-yellow-200 rounded mr-2"></div>
+                 <span>Warning</span>
+               </div>
               <div className="flex items-center">
                 <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
                 <span>Critical (Needs Attention)</span>
               </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-gray-500 rounded mr-2"></div>
+                <span>Unconfigured</span>
+              </div>
             </div>
 
-            {/* Sensor details table */}
+            {/* Table */}
             <div className="mt-6">
-              <h4 className={`text-md font-semibold mb-3 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                Sensor Details
-              </h4>
+              <h4 className={`text-md font-semibold mb-3 ${darkMode ? "text-white" : "text-gray-900"}`}>Sensor Details</h4>
               <div className="overflow-x-auto">
-                <table className={`w-full text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <table className={`w-full text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
                   <thead>
-                    <tr className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                    <tr className={`border-b ${darkMode ? "border-gray-700" : "border-gray-200"}`}>
                       <th className="text-left py-2">Sensor</th>
-                      <th className="text-left py-2">Temperature</th>
-                      <th className="text-left py-2">Status</th>
                       <th className="text-left py-2">Type</th>
+                      <th className="text-left py-2">Reading</th>
+                      <th className="text-left py-2">Status</th>
                       <th className="text-left py-2">Last Updated</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.temperatures.map((temp, i) => (
-                      <tr key={i} className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-100'}`}>
-                        <td className="py-2 font-medium">{temp.name}</td>
+                    {itemsVisible.map((it, i) => (
+                      <tr key={i} className={`border-b ${darkMode ? "border-gray-700" : "border-gray-100"}`}>
+                        <td className="py-2 font-medium">{it.name}</td>
+                        <td className="py-2 capitalize">{it.kind}</td>
+                                                 <td className="py-2">
+                           <span
+                             className={`font-bold ${
+                               it.status === "Needs Attention" ? "text-red-500" : it.status === "Warning" ? "text-yellow-500" : it.status === "Unconfigured" ? "text-gray-500" : "text-green-500"
+                             }`}
+                           >
+                             {it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue}
+                           </span>
+                         </td>
                         <td className="py-2">
-                          <span className={`font-bold ${
-                            temp.status === 'Needs Attention' ? 'text-red-500' :
-                            temp.status === 'Warning' ? 'text-yellow-500' : 'text-green-500'
-                          }`}>
-                            {temp.displayValue}
+                                                     <span
+                             className={`px-2 py-1 rounded-full text-xs font-medium ${
+                               it.status === "Needs Attention"
+                                 ? "bg-red-100 text-red-800"
+                                 : it.status === "Warning"
+                                 ? "bg-yellow-200 text-yellow-800"
+                                 : it.status === "Unconfigured"
+                                 ? "bg-gray-100 text-gray-800"
+                                 : "bg-green-200 text-green-800"
+                             } ${darkMode ? "bg-gray-700 text-white" : ""}`}
+                           >
+                            {it.status}
                           </span>
                         </td>
-                        <td className="py-2">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            temp.status === 'Needs Attention' 
-                              ? 'bg-red-100 text-red-800' 
-                              : temp.status === 'Warning'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-green-100 text-green-800'
-                          } ${darkMode ? 'bg-gray-700 text-white' : ''}`}>
-                            {temp.status}
-                          </span>
-                        </td>
-                        <td className="py-2 capitalize">{temp.type}</td>
-                        <td className="py-2">
-                          {temp.lastUpdated ? new Date(temp.lastUpdated).toLocaleTimeString() : 'Never'}
-                        </td>
+                                                 <td className="py-2">{it.approx_time ? fmtDate(it.approx_time, prefs.tz, true) : fmtDate(it.lastUpdated, prefs.tz, true)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -874,8 +832,8 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-        
-        <footer className={`text-center mt-8 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+
+        <footer className={`text-center mt-8 text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
           © 2025 Safe Sense. All rights reserved.
         </footer>
       </main>
