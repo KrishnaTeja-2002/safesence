@@ -43,9 +43,10 @@ export default function Sensors() {
   const [selectedSensor, setSelectedSensor] = useState(null);
   const [step, setStep] = useState(1);
   const [sensorName, setSensorName] = useState('');
-  const [sensorFunction, setSensorFunction] = useState('');
+  const [sensorType, setSensorType] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState('Newest');
+  const [selectedSensorType, setSelectedSensorType] = useState('All');
   const [connectedDevice, setConnectedDevice] = useState(null);
   const [deviceId, setDeviceId] = useState(null);
   const [username, setUsername] = useState('User');
@@ -88,44 +89,27 @@ export default function Sensors() {
       try {
         const { data: sensorData, error } = await supabase.from('sensors').select('*');
         if (error) throw error;
+        console.log('Raw sensor data from Supabase:', sensorData); // Debug log
         if (sensorData && sensorData.length > 0) {
-          setSensors(
-            sensorData.map(sensor => ({
-              id: sensor.id,
-              name: sensor.name,
-              function: sensor.function,
-              alert: sensor.alert || 'On',
-              date: sensor.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-              status: sensor.status || 'Active',
-            }))
-          );
+          const formattedSensors = sensorData.map(sensor => ({
+            id: sensor.id,
+            name: sensor.sensor_name,
+            sensor_type: sensor.sensor_type.charAt(0).toUpperCase() + sensor.sensor_type.slice(1).toLowerCase(), // Normalize to title case
+            date: sensor.updated_at || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+            status: sensor.status || 'Active',
+          }));
+          console.log('Formatted sensors:', formattedSensors); // Debug log
+          setSensors(formattedSensors);
+          setCurrentView('list');
         } else {
-          // Fallback to hardcoded data if Supabase returns no data
-          setSensors([
-            { id: 1, name: 'Walk-In Fridge', function: 'Air Temp', alert: 'On', date: 'June 28 2025', status: 'Active' },
-            { id: 2, name: 'Freezer 1', function: 'Air Temp', alert: 'On', date: 'May 25 2025', status: 'Inactive' },
-            { id: 3, name: 'Drive Thru Fridge', function: 'Air and Surface Temp', alert: 'On', date: 'May 6 2025', status: 'Inactive' },
-            { id: 4, name: 'FC Fridge', function: 'Surface Temp', alert: 'On', date: 'April 4 2025', status: 'Active' },
-            { id: 5, name: 'Freezer 2', function: 'Air and Surface Temp', alert: 'On', date: 'Jan 2025', status: 'Active' },
-            { id: 6, name: 'Meat Freezer', function: 'Air and Surface Temp', alert: 'On', date: 'Dec 25 2024', status: 'Active' },
-            { id: 7, name: 'Fry Products', function: 'Air and Surface Temp', alert: 'On', date: 'Oct 18 2024', status: 'Active' },
-            { id: 8, name: 'Beverage Fridge', function: 'Air Temp', alert: 'Off', date: 'Sep 18 2024', status: 'Inactive' },
-          ]);
+          setSensors([]);
+          setCurrentView('empty');
         }
       } catch (err) {
         console.error('Sensor fetch error:', err.message);
         setError('Failed to fetch sensor data: ' + err.message);
-        // Fallback to hardcoded data
-        setSensors([
-          { id: 1, name: 'Walk-In Fridge', function: 'Air Temp', alert: 'On', date: 'June 28 2025', status: 'Active' },
-          { id: 2, name: 'Freezer 1', function: 'Air Temp', alert: 'On', date: 'May 25 2025', status: 'Inactive' },
-          { id: 3, name: 'Drive Thru Fridge', function: 'Air and Surface Temp', alert: 'On', date: 'May 6 2025', status: 'Inactive' },
-          { id: 4, name: 'FC Fridge', function: 'Surface Temp', alert: 'On', date: 'April 4 2025', status: 'Active' },
-          { id: 5, name: 'Freezer 2', function: 'Air and Surface Temp', alert: 'On', date: 'Jan 2025', status: 'Active' },
-          { id: 6, name: 'Meat Freezer', function: 'Air and Surface Temp', alert: 'On', date: 'Dec 25 2024', status: 'Active' },
-          { id: 7, name: 'Fry Products', function: 'Air and Surface Temp', alert: 'On', date: 'Oct 18 2024', status: 'Active' },
-          { id: 8, name: 'Beverage Fridge', function: 'Air Temp', alert: 'Off', date: 'Sep 18 2024', status: 'Inactive' },
-        ]);
+        setSensors([]);
+        setCurrentView('empty');
       }
     };
     fetchSensors();
@@ -159,40 +143,37 @@ export default function Sensors() {
   const handleEditSensor = (sensor) => {
     setSelectedSensor(sensor);
     setSensorName(sensor.name);
-    setSensorFunction(sensor.function);
+    setSensorType(sensor.sensor_type);
     setCurrentView('edit');
+    setError('');
   };
 
   // Handle save edited sensor
   const handleSaveEditSensor = async () => {
-    if (sensorName && sensorFunction && selectedSensor) {
+    if (sensorName && sensorType && selectedSensor) {
       try {
-        // Update in Supabase
         const { error } = await supabase
           .from('sensors')
           .update({
-            name: sensorName,
-            function: sensorFunction,
-            date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+            sensor_name: sensorName,
+            sensor_type: sensorType,
           })
           .eq('id', selectedSensor.id);
         if (error) throw error;
 
-        // Update local state
         setSensors(
           sensors.map(sensor =>
             sensor.id === selectedSensor.id
               ? {
                   ...sensor,
                   name: sensorName,
-                  function: sensorFunction,
-                  date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                  sensor_type: sensorType,
                 }
               : sensor
           )
         );
         setSensorName('');
-        setSensorFunction('');
+        setSensorType('');
         setSelectedSensor(null);
         setCurrentView('list');
         console.log('Sensor updated successfully:', selectedSensor.id);
@@ -200,6 +181,8 @@ export default function Sensors() {
         console.error('Sensor update error:', err.message);
         setError('Failed to update sensor: ' + err.message);
       }
+    } else {
+      setError('Sensor name and type are required.');
     }
   };
 
@@ -207,13 +190,14 @@ export default function Sensors() {
   const handleDeleteSensor = async (sensorId) => {
     if (window.confirm('Are you sure you want to delete this sensor?')) {
       try {
-        // Delete from Supabase
         const { error } = await supabase.from('sensors').delete().eq('id', sensorId);
         if (error) throw error;
 
-        // Update local state
         setSensors(sensors.filter(sensor => sensor.id !== sensorId));
         console.log('Sensor deleted successfully:', sensorId);
+        if (sensors.length === 1) {
+          setCurrentView('empty');
+        }
       } catch (err) {
         console.error('Sensor delete error:', err.message);
         setError('Failed to delete sensor: ' + err.message);
@@ -227,10 +211,10 @@ export default function Sensors() {
     setConnectedDevice(null);
     setDeviceId(null);
     setSensorName('');
-    setSensorFunction('');
+    setSensorType('');
+    setError('');
   };
 
-  // Updated handleNextStep function
   const handleNextStep = () => {
     if (currentView === 'connect') {
       setCurrentView('settings');
@@ -238,25 +222,26 @@ export default function Sensors() {
     }
   };
 
-  // Updated handleFinishAddSensor function
   const handleFinishAddSensor = async () => {
-    if (sensorName && sensorFunction) {
+    if (sensorName && sensorType) {
       try {
-        // Insert into Supabase
         const newSensor = {
-          name: sensorName,
-          function: sensorFunction,
-          alert: 'On',
-          date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+          sensor_name: sensorName,
+          sensor_type: sensorType,
           status: 'Active',
         };
         const { data: insertedSensor, error } = await supabase.from('sensors').insert([newSensor]).select();
         if (error) throw error;
 
-        // Update local state
-        setSensors([...sensors, { id: insertedSensor[0].id, ...newSensor }]);
+        setSensors([...sensors, {
+          id: insertedSensor[0].id,
+          name: sensorName,
+          sensor_type: sensorType,
+          date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+          status: 'Active',
+        }]);
         setSensorName('');
-        setSensorFunction('');
+        setSensorType('');
         setConnectedDevice(null);
         setDeviceId(null);
         setCurrentView('success');
@@ -266,6 +251,8 @@ export default function Sensors() {
         console.error('Sensor add error:', err.message);
         setError('Failed to add sensor: ' + err.message);
       }
+    } else {
+      setError('Sensor name and type are required.');
     }
   };
 
@@ -273,18 +260,23 @@ export default function Sensors() {
     setCurrentView('list');
     setStep(1);
     setSelectedSensor(null);
+    setError('');
   };
 
   const handleSensorClick = (sensor) => {
     setSelectedSensor(sensor);
     setCurrentView('details');
+    setError('');
   };
 
   const sensorsPerPage = 8;
-  const totalPages = Math.ceil(sensors.length / sensorsPerPage);
+  const filteredSensors = selectedSensorType === 'All'
+    ? sensors
+    : sensors.filter(sensor => sensor.sensor_type.toLowerCase() === selectedSensorType.toLowerCase());
+  const totalPages = Math.ceil(filteredSensors.length / sensorsPerPage);
   const startIndex = (currentPage - 1) * sensorsPerPage;
   const endIndex = startIndex + sensorsPerPage;
-  const currentSensors = sensors.slice(startIndex, endIndex);
+  const currentSensors = filteredSensors.slice(startIndex, endIndex);
 
   const renderEmptyState = () => (
     <div className="flex-1 flex items-center justify-center">
@@ -293,7 +285,7 @@ export default function Sensors() {
           <div className={`w-20 h-20 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'} rounded-full flex items-center justify-center mx-auto mb-6`}>
             <AlertTriangle className={`w-10 h-10 ${darkMode ? 'text-gray-400' : 'text-gray-400'}`} />
           </div>
-          <p className={`text-lg mb-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No Sensor connected with this<br />Server.</p>
+          <p className={`text-lg mb-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No sensors right now.<br />Please add a sensor.</p>
         </div>
         <button
           onClick={handleAddSensor}
@@ -312,7 +304,7 @@ export default function Sensors() {
         return;
       }
       const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
+        filters: [{ namePrefix: 'SafeSense' }],
         optionalServices: ['battery_service'],
       });
       console.log('Connected to device:', device.name);
@@ -323,9 +315,8 @@ export default function Sensors() {
       if (error.message.includes('User cancelled')) {
         setConnectedDevice(null);
         setDeviceId(null);
-        alert('Connection cancelled. Please try again or select a device.');
       } else {
-        alert(`Bluetooth connection failed: ${error.message}. Ensure your phone is discoverable. For iPhone, use the Bluefy app.`);
+        setError(`Bluetooth connection failed: ${error.message}. Ensure your SafeSense sensor is discoverable.`);
       }
     }
   };
@@ -336,158 +327,171 @@ export default function Sensors() {
     console.log('Disconnected from device');
   };
 
-  const renderSensorsList = () => (
-    <div className="space-y-6">
-      <div className={`rounded-lg shadow-sm overflow-hidden ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <div>
-              <h3 className="text-xl font-semibold">Sensors</h3>
-              <p className={`cursor-pointer text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>Paired Sensors</p>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="relative">
-                <select className={`border rounded-lg px-4 py-2 text-sm ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-300' : 'bg-white border-gray-300 text-gray-800'}`}>
-                  <option>Sensors</option>
-                </select>
-                <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 ${darkMode ? 'text-gray-400' : 'text-gray-400'} pointer-events-none`} />
+  const renderSensorsList = () => {
+    console.log('Filtered sensors:', filteredSensors); // Debug log
+    return (
+      <div className="space-y-6">
+        <div className={`rounded-lg shadow-sm overflow-hidden ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
+          <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-semibold">Sensors</h3>
+                <p className={`cursor-pointer text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>Paired Sensors</p>
               </div>
-              <div className="flex items-center space-x-2">
-                <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Sort by:</span>
+              <div className="flex items-center space-x-4">
                 <div className="relative">
                   <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
+                    value={selectedSensorType}
+                    onChange={(e) => {
+                      setSelectedSensorType(e.target.value);
+                      setCurrentPage(1); // Reset to first page when filter changes
+                    }}
                     className={`border rounded-lg px-4 py-2 text-sm appearance-none pr-8 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-300' : 'bg-white border-gray-300 text-gray-800'}`}
                   >
-                    <option>Newest</option>
-                    <option>Oldest</option>
-                    <option>Name</option>
+                    <option value="All">All Sensors</option>
+                    <option value="Temperature">Temperature</option>
+                    <option value="Humidity">Humidity</option>
                   </select>
                   <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 ${darkMode ? 'text-gray-400' : 'text-gray-400'} pointer-events-none`} />
                 </div>
+                <div className="flex items-center space-x-2">
+                  <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Sort by:</span>
+                  <div className="relative">
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value)}
+                      className={`border rounded-lg px-4 py-2 text-sm appearance-none pr-8 ${darkMode ? 'bg-gray-700 border-gray-600 text-gray-300' : 'bg-white border-gray-300 text-gray-800'}`}
+                    >
+                      <option>Newest</option>
+                      <option>Oldest</option>
+                      <option>Name</option>
+                    </select>
+                    <ChevronDown className={`absolute right-2 top-1/2 transform -translate-y-1/2 w-4 h-4 ${darkMode ? 'text-gray-400' : 'text-gray-400'} pointer-events-none`} />
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <table className="w-full">
-            <thead>
-              <tr className={`border-b ${darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-200 text-gray-600'}`}>
-                <th className="pb-3 font-medium text-sm text-left">Sensor Name</th>
-                <th className="pb-3 font-medium text-sm text-left">Function</th>
-                <th className="pb-3 font-medium text-sm text-left">Tools</th>
-                <th className="pb-3 font-medium text-sm text-left">Date</th>
-                <th className="pb-3 font-medium text-sm text-left">Status</th>
-                <th className="pb-3 font-medium text-sm text-left">Alert</th>
-              </tr>
-            </thead>
-            <tbody>
-              {currentSensors.map((sensor) => (
-                <tr key={sensor.id} className={`border-b ${darkMode ? 'border-gray-700 hover:bg-gray-700' : 'border-gray-100 hover:bg-gray-50'}`}>
-                  <td className="py-4">
-                    <button
-                      className={`font-medium text-sm ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-700'}`}
-                      onClick={() => handleSensorClick(sensor)}
-                    >
-                      {sensor.name}
-                    </button>
-                  </td>
-                  <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.function}</td>
-                  <td className="py-4">
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={() => handleEditSensor(sensor)}
-                        className={`${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-700'}`}
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button className={`${darkMode ? 'text-orange-400 hover:text-orange-300' : 'text-orange-500 hover:text-orange-700'}`}>
-                        <AlertTriangle className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteSensor(sensor.id)}
-                        className={`${darkMode ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-700'}`}
-                      >
-                        <Trash className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.date}</td>
-                  <td className="py-4">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        sensor.status === 'Active'
-                          ? darkMode
-                            ? 'bg-green-900 text-green-300'
-                            : 'bg-green-100 text-green-800'
-                          : darkMode
-                          ? 'bg-red-900 text-red-300'
-                          : 'bg-red-100 text-red-800'
-                      }`}
-                    >
-                      {sensor.status}
-                    </span>
-                  </td>
-                  <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.alert}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            {filteredSensors.length === 0 && selectedSensorType !== 'All' ? (
+              <div className={`text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                No {selectedSensorType} sensors found. Please check your database or add a new sensor.
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr className={`border-b ${darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-200 text-gray-600'}`}>
+                    <th className="pb-3 font-medium text-sm text-left">Sensor Name</th>
+                    <th className="pb-3 font-medium text-sm text-left">Type</th>
+                    <th className="pb-3 font-medium text-sm text-left">Tools</th>
+                    <th className="pb-3 font-medium text-sm text-left">Date</th>
+                    <th className="pb-3 font-medium text-sm text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentSensors.map((sensor) => (
+                    <tr key={sensor.id} className={`border-b ${darkMode ? 'border-gray-700 hover:bg-gray-700' : 'border-gray-100 hover:bg-gray-50'}`}>
+                      <td className="py-4">
+                        <button
+                          className={`font-medium text-sm ${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-700'}`}
+                          onClick={() => handleSensorClick(sensor)}
+                        >
+                          {sensor.name}
+                        </button>
+                      </td>
+                      <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.sensor_type}</td>
+                      <td className="py-4">
+                        <div className="flex items-center space-x-3">
+                          <button
+                            onClick={() => handleEditSensor(sensor)}
+                            className={`${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-500 hover:text-blue-700'}`}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSensor(sensor.id)}
+                            className={`${darkMode ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-700'}`}
+                          >
+                            <Trash className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                      <td className={`py-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-700'}`}>{sensor.date}</td>
+                      <td className="py-4">
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            sensor.status === 'Active'
+                              ? darkMode
+                                ? 'bg-green-900 text-green-300'
+                                : 'bg-green-100 text-green-800'
+                              : darkMode
+                              ? 'bg-red-900 text-red-300'
+                              : 'bg-red-100 text-red-800'
+                          }`}
+                        >
+                          {sensor.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
 
-          <div className={`flex justify-between items-center mt-6 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-            <span>Showing Sensors 1 to {Math.min(endIndex, sensors.length)} of {sensors.length}</span>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                className={`px-3 py-1 border rounded ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`}
-                disabled={currentPage === 1}
-              >
-                &lt;
-              </button>
-              <button
-                onClick={() => setCurrentPage(1)}
-                className={`px-3 py-1 border rounded ${
-                  currentPage === 1
-                    ? `${darkMode ? 'bg-orange-700 text-white border-orange-700' : 'bg-orange-500 text-white border-orange-500'}`
-                    : `${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`
-                }`}
-              >
-                1
-              </button>
-              {totalPages > 1 && (
+            <div className={`flex justify-between items-center mt-6 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              <span>Showing Sensors 1 to {Math.min(endIndex, filteredSensors.length)} of {filteredSensors.length}</span>
+              <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => setCurrentPage(2)}
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  className={`px-3 py-1 border rounded ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`}
+                  disabled={currentPage === 1}
+                >
+                  &lt;
+                </button>
+                <button
+                  onClick={() => setCurrentPage(1)}
                   className={`px-3 py-1 border rounded ${
-                    currentPage === 2
+                    currentPage === 1
                       ? `${darkMode ? 'bg-orange-700 text-white border-orange-700' : 'bg-orange-500 text-white border-orange-500'}`
                       : `${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`
                   }`}
                 >
-                  2
+                  1
                 </button>
-              )}
-              <button
-                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                className={`px-3 py-1 border rounded ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`}
-                disabled={currentPage === totalPages}
-              >
-                &gt;
-              </button>
+                {totalPages > 1 && (
+                  <button
+                    onClick={() => setCurrentPage(2)}
+                    className={`px-3 py-1 border rounded ${
+                      currentPage === 2
+                        ? `${darkMode ? 'bg-orange-700 text-white border-orange-700' : 'bg-orange-500 text-white border-orange-500'}`
+                        : `${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`
+                    }`}
+                  >
+                    2
+                  </button>
+                )}
+                <button
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                  className={`px-3 py-1 border rounded ${darkMode ? 'border-gray-600 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-50'}`}
+                  disabled={currentPage === totalPages}
+                >
+                  &gt;
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="flex justify-end">
-        <button
-          onClick={handleAddSensor}
-          className={`px-8 py-3 rounded-lg font-medium text-white border ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
-        >
-          Add Sensor
-        </button>
+        <div className="flex justify-end">
+          <button
+            onClick={handleAddSensor}
+            className={`px-8 py-3 rounded-lg font-medium text-white border ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
+          >
+            Add Sensor
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderConnectStep = () => (
     <div className="flex-1 flex items-center justify-center">
@@ -522,8 +526,8 @@ export default function Sensors() {
           >
             <Bluetooth className={`w-10 h-10 ${darkMode ? 'text-blue-400' : 'text-blue-500'}`} />
           </div>
-          <h3 className="text-xl font-semibold mb-4">Automatic Device Detection</h3>
-          <p className={`mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Pair with your phone (e.g., Android or Bluefy on iPhone)</p>
+          <h3 className="text-xl font-semibold mb-4">Automatic Sensor Detection</h3>
+          <p className={`mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Pair with your SafeSense sensor device</p>
           <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-500'}`}>Device: <span className={`${darkMode ? 'text-gray-400' : 'text-gray-400'}`}>{connectedDevice || 'Not connected'}</span></p>
         </div>
 
@@ -537,7 +541,10 @@ export default function Sensors() {
             </button>
           )}
           <button
-            onClick={() => setCurrentView('list')}
+            onClick={() => {
+              setCurrentView('list');
+              setError('');
+            }}
             className={`flex-1 px-6 py-3 rounded-lg font-medium border ${darkMode ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
           >
             Cancel
@@ -601,22 +608,21 @@ export default function Sensors() {
           </div>
 
           <div>
-            <h3 className="text-lg font-semibold mb-2">Function</h3>
+            <h3 className="text-lg font-semibold mb-2">Type</h3>
             <p className={`mb-6 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>What is this sensor monitoring?</p>
             <div className="relative">
               <select
-                value={sensorFunction}
-                onChange={(e) => setSensorFunction(e.target.value)}
+                value={sensorType}
+                onChange={(e) => setSensorType(e.target.value)}
                 className={`w-full p-3 border rounded-lg outline-none appearance-none ${
                   darkMode 
                     ? 'bg-gray-700 text-gray-300 border-gray-600 focus:ring-2 focus:ring-orange-700 focus:border-orange-700' 
                     : 'bg-white text-gray-900 border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500'
                 }`}
               >
-                <option value="">Select function</option>
-                <option value="Air Temp">Air Temp</option>
-                <option value="Surface Temp">Surface Temp</option>
-                <option value="Air and Surface Temp">Air and Surface Temp</option>
+                <option value="">Select type</option>
+                <option value="Temperature">Temperature</option>
+                <option value="Humidity">Humidity</option>
               </select>
               <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 pointer-events-none ${darkMode ? 'text-gray-400' : 'text-gray-400'}`} />
             </div>
@@ -624,7 +630,10 @@ export default function Sensors() {
 
           <div className="flex space-x-4 pt-4">
             <button
-              onClick={() => setCurrentView(isEdit ? 'list' : 'connect')}
+              onClick={() => {
+                setCurrentView(isEdit ? 'list' : 'connect');
+                setError('');
+              }}
               className={`flex-1 px-6 py-3 rounded-lg font-medium border ${
                 darkMode 
                   ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' 
@@ -635,9 +644,9 @@ export default function Sensors() {
             </button>
             <button
               onClick={isEdit ? handleSaveEditSensor : handleFinishAddSensor}
-              disabled={!sensorName || !sensorFunction}
+              disabled={!sensorName || !sensorType}
               className={`flex-1 px-6 py-3 rounded-lg font-medium text-white border ${
-                (!sensorName || !sensorFunction)
+                (!sensorName || !sensorType)
                   ? 'bg-gray-300 cursor-not-allowed border-gray-300'
                   : darkMode 
                     ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' 
@@ -694,7 +703,7 @@ export default function Sensors() {
               onClick={handleDone}
               className={`w-48 px-4 py-3 rounded-lg font-medium text-white border mx-auto block ${darkMode ? 'bg-orange-700 hover:bg-orange-800 border-orange-700' : 'bg-orange-500 hover:bg-orange-600 border-orange-500'}`}
             >
-              Apply Alert
+              Done
             </button>
             <button
               onClick={handleDone}
@@ -726,7 +735,10 @@ export default function Sensors() {
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">{selectedSensor?.name}</h2>
         <button
-          onClick={() => setCurrentView('list')}
+          onClick={() => {
+            setCurrentView('list');
+            setError('');
+          }}
           className={`px-6 py-2 rounded-lg font-medium border ${
             darkMode 
               ? 'bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600' 
@@ -747,11 +759,7 @@ export default function Sensors() {
             </div>
             <div className="flex justify-between items-center">
               <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Broadcast Method</span>
-              <span>LoRa</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Frequency</span>
-              <span>US915</span>
+              <span>Bluetooth</span>
             </div>
             <div className="flex justify-between items-center">
               <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Model</span>
@@ -765,13 +773,16 @@ export default function Sensors() {
         </div>
 
         <div className={`rounded-lg shadow-sm p-6 ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-800'}`}>
-          <h3 className="text-lg font-semibold mb-6">Sensor Alerts</h3>
+          <h3 className="text-lg font-semibold mb-6">Sensor Details</h3>
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Alert Added</span>
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Type</span>
+              <span>{selectedSensor?.sensor_type || 'N/A'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Added</span>
               <span>{selectedSensor?.date || 'N/A'}</span>
             </div>
-            <div className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>{`(${selectedSensor?.function || 'N/A'})`}</div>
           </div>
         </div>
 
@@ -784,11 +795,7 @@ export default function Sensors() {
             </div>
             <div className="flex justify-between items-center">
               <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sensor Paired</span>
-              <span>Dec 18, 2023</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Sensor Added</span>
-              <span>May 10, 2023</span>
+              <span>{selectedSensor?.date || 'N/A'}</span>
             </div>
           </div>
         </div>

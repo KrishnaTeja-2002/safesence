@@ -25,8 +25,8 @@ export async function POST(request) {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: 'krishnatejarangavajjala@gmail.com',
-        pass: 'dquf iexf izmw pszu',
+        user: 'safesencewinwinlabs@gmail.com',
+        pass: 'tprw plda fxec pzqt',
       },
       secure: false,
       port: 587,
@@ -37,7 +37,7 @@ export async function POST(request) {
     const mailOptions = {
       from: {
         name: 'SafeSense Team',
-        address: 'krishnatejarangavajjala@gmail.com'
+        address: 'safesencewinwinlabs@gmail.com'
       },
       replyTo: 'safesense@winwinlabs.org',
       to: email,
