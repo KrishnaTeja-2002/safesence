@@ -47,13 +47,13 @@ const convertForDisplay = (tempF, userScale) =>
 const convertFromDisplay = (displayTemp, userScale) =>
   displayTemp == null ? null : userScale === 'C' ? cToF(displayTemp) : tempF;
 
-const toLocalFromReading = (r) => {
+const toLocalFromReading = (r, timeZone) => {
   try {
-    if (r?.last_fetched_time) return new Date(r.last_fetched_time).toLocaleString();
+    if (r?.last_fetched_time) return new Date(r.last_fetched_time).toLocaleString('en-US', { timeZone });
     if (r?.timestamp != null) {
       const n = Number(r.timestamp);
       const ms = n > 1e12 ? n : n * 1000;
-      return new Date(ms).toLocaleString();
+      return new Date(ms).toLocaleString('en-US', { timeZone });
     }
   } catch {}
   return '—';
@@ -189,6 +189,7 @@ function ThresholdChart({
   editable,
   userTempScale = 'F',
   sensorType = 'temperature',
+  timeZone = 'UTC',
 }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -702,7 +703,7 @@ function ThresholdChart({
           // Create time labels every 10 minutes
           for (let time = thirtyMinAgo; time <= now; time += 10 * 60 * 1000) {
             const xPos = x(time);
-            const label = new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const label = new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone });
             timeLabels.push({ x: xPos, label, time });
           }
           
@@ -710,7 +711,7 @@ function ThresholdChart({
             <g key={time}>
               <line x1={xPos} x2={xPos} y1={padT + chartH} y2={padT + chartH + 6} stroke={strokeAxis} />
               <text x={xPos} y={padT + chartH + 20} textAnchor="middle" fontSize="10" fill={tickText}>
-                {label}
+                {new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone })}
               </text>
             </g>
           ));
@@ -915,7 +916,8 @@ function ThresholdChart({
                 const timeStr = new Date(closestData.timestamp).toLocaleTimeString([], { 
                   hour: '2-digit', 
                   minute: '2-digit',
-                  second: '2-digit'
+                  second: '2-digit',
+                  timeZone
                 });
                 
                 e.currentTarget.title = `${displayValue} at ${timeStr}`;
@@ -1060,6 +1062,7 @@ export default function Alerts() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [username, setUsername] = useState('User');
 
   const [currentView, setCurrentView] = useState('alerts'); // alerts | alertDetail
   const [selectedId, setSelectedId] = useState(null);
@@ -1148,14 +1151,27 @@ export default function Alerts() {
         if (!sessionData.session) return router.push('/login');
 
         const userId = sessionData.session.user.id;
+        const sessionUser = sessionData.session.user;
+        setUsername(sessionUser?.user_metadata?.username || sessionUser?.email?.split('@')[0] || 'User');
         const { data: pref } = await supabase
           .from('user_preferences')
-          .select('temp_scale, time_zone')
+          .select('temp_scale, time_zone, username')
           .eq('user_id', userId)
           .maybeSingle();
 
         if (pref?.temp_scale) setUserTempScale(pref.temp_scale === 'C' ? 'C' : 'F');
         if (pref?.time_zone) setUserTimeZone(pref.time_zone);
+
+        // Ensure username stored in user_preferences by default (email prefix)
+        try {
+          const emailUsername = (sessionUser?.email || '').split('@')[0] || null;
+          if (emailUsername && (!pref || !pref.username)) {
+            await supabase
+              .from('user_preferences')
+              .update({ username: emailUsername })
+              .eq('user_id', userId);
+          }
+        } catch {}
       } catch (e) {
         console.error(e);
         setError(e?.message || 'Failed to verify session');
@@ -1200,7 +1216,7 @@ export default function Alerts() {
             name: r.sensor_name || r.sensor_id,
             temp: valF,
             status: status,
-            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }) : '—',
+            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
             lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
             sensor_id: r.sensor_id,
             unit,
@@ -1288,7 +1304,7 @@ export default function Alerts() {
             ...prev[idx],
             temp: valF,
             status: newStatus,
-            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }) : '—',
+            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
             lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
           };
           console.log(`Updated sensor ${r.sensor_id} status from ${prev[idx].status} to ${newStatus}`);
@@ -1468,9 +1484,11 @@ export default function Alerts() {
 
   const AlertCard = ({ sensor }) => {
     const { value } = getStatusStyles(sensor.status, darkMode);
-    const display = sensor.sensor_type === 'humidity'
-      ? (sensor.temp != null ? `${sensor.temp.toFixed(1)}%` : '—')
-      : (sensor.temp != null ? `${convertForDisplay(sensor.temp, userTempScale).toFixed(1)}°${userTempScale}` : '—');
+    const display = sensor.status === 'Unconfigured'
+      ? 'NA'
+      : (sensor.sensor_type === 'humidity'
+        ? (sensor.temp != null ? `${sensor.temp.toFixed(1)}%` : '—')
+        : (sensor.temp != null ? `${convertForDisplay(sensor.temp, userTempScale).toFixed(1)}°${userTempScale}` : '—'));
     
     // Get the reason for unconfigured sensors
     const unconfiguredReason = getUnconfiguredReason(sensor);
@@ -1533,12 +1551,12 @@ export default function Alerts() {
                 setError('Failed to sign out: ' + err.message);
               }
             }}
-            className={`px-4 py-2 rounded ${darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'}`}
+            className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
           >
             Log out
           </button>
-          <div className={`w-10 h-10 ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} rounded-full flex items-center justify-center text-white text-sm font-bold`}>
-            FA
+          <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? 'bg-amber-700' : ''}`}>
+            {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
           </div>
         </div>
       </div>
@@ -1626,12 +1644,12 @@ export default function Alerts() {
                   setError('Failed to sign out: ' + err.message);
                 }
               }}
-              className={`px-4 py-2 rounded ${darkMode ? 'bg-red-700 text-white hover:bg-red-800' : 'bg-red-500 text-white hover:bg-red-600'}`}
+              className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
             >
               Log out
             </button>
-            <div className={`w-10 h-10 ${darkMode ? 'bg-amber-700' : 'bg-amber-600'} rounded-full flex items-center justify-center text-white text-sm font-bold`}>
-              FA
+            <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? 'bg-amber-700' : ''}`}>
+              {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
             </div>
           </div>
         </div>
@@ -1660,9 +1678,11 @@ export default function Alerts() {
             </div>
               <div className="flex items-center gap-3">
                 <div className={`${getStatusStyles(selected.status, darkMode).value} text-xl mb-1 font-bold`}>
-                  {selected.sensor_type === 'humidity'
-                    ? `💧 ${selected.temp != null ? selected.temp.toFixed(1) : '—'}%`
-                    : `🌡️ ${selected.temp != null ? convertForDisplay(selected.temp, userTempScale).toFixed(1) : '—'}°${userTempScale}`}
+                  {selected.status === 'Unconfigured'
+                    ? 'NA'
+                    : (selected.sensor_type === 'humidity'
+                      ? `💧 ${selected.temp != null ? selected.temp.toFixed(1) : '—'}%`
+                      : `🌡️ ${selected.temp != null ? convertForDisplay(selected.temp, userTempScale).toFixed(1) : '—'}°${userTempScale}`)}
                 </div>
                 <button
                   onClick={() => { 
@@ -1718,6 +1738,7 @@ export default function Alerts() {
                 editable
                 userTempScale={userTempScale}
                 sensorType={selected.sensor_type}
+                timeZone={userTimeZone}
               />
             </div>
             
@@ -1772,11 +1793,13 @@ export default function Alerts() {
               <div className="flex justify-between">
                 <span>{selected.sensor_type === 'humidity' ? 'Humidity' : 'Air Temperature'}</span>
                 <span className="font-medium">
-                  {selected.temp != null
-                    ? (selected.sensor_type === 'humidity'
-                      ? `${selected.temp.toFixed(1)}%`
-                      : `${convertForDisplay(selected.temp, userTempScale).toFixed(1)}°${userTempScale}`)
-                    : '—'}
+                  {selected.status === 'Unconfigured'
+                    ? 'NA'
+                    : (selected.temp != null
+                      ? (selected.sensor_type === 'humidity'
+                        ? `${selected.temp.toFixed(1)}%`
+                        : `${convertForDisplay(selected.temp, userTempScale).toFixed(1)}°${userTempScale}`)
+                      : '—')}
                 </span>
               </div>
               <div className="flex justify-between">

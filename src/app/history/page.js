@@ -118,6 +118,7 @@ export default function History() {
 
   const [loading, setLoading] = useState(true);
   const [errMsg, setErrMsg] = useState("");
+  const [username, setUsername] = useState("User");
 
   // User prefs
   const [tempScale, setTempScale] = useState("F"); // 'F'|'C'
@@ -161,9 +162,10 @@ export default function History() {
         if (!data?.session?.user?.id) return router.push("/login");
 
         const uid = data.session.user.id;
+        const sessionUser = data.session.user;
         const { data: prefs, error: pErr } = await supabase
           .from("user_preferences")
-          .select("temp_scale, time_zone, show_temp, show_humidity")
+          .select("temp_scale, time_zone, show_temp, show_humidity, username")
           .eq("user_id", uid)
           .maybeSingle();
 
@@ -173,6 +175,8 @@ export default function History() {
         setTimeZone(prefs?.time_zone || "UTC");
         setShowTemp(prefs?.show_temp ?? true);
         setShowHumidity(prefs?.show_humidity ?? true);
+        const name = prefs?.username || (sessionUser?.email ? sessionUser.email.split("@")[0] : "User");
+        setUsername(name);
       } catch (e) {
         setErrMsg("Failed to load session or preferences: " + (e?.message || String(e)));
       }
@@ -238,10 +242,10 @@ export default function History() {
 
         const { data, error } = await supabase
           .from("raw_readings_v2")
-          .select("reading_value, approx_time, timestamp")
+          .select("reading_value, fetched_at, approx_time, timestamp")
           .eq("sensor_id", activeSensor.sensor_id)
-          .gte("approx_time", fromIso)
-          .order("approx_time", { ascending: true })
+          .gte("fetched_at", fromIso)
+          .order("fetched_at", { ascending: true })
           .limit(20_000);
 
         if (error) throw error;
@@ -257,7 +261,7 @@ export default function History() {
         };
 
         const cleaned = (data || []).map(r => ({
-          tsISO: r.approx_time || epochToIso(r.timestamp),
+          tsISO: r.fetched_at || r.approx_time || epochToIso(r.timestamp),
           value: convert(r.reading_value),
         }));
 
@@ -288,7 +292,7 @@ export default function History() {
         const r = payload.new || {};
         if (r.sensor_id !== activeSensor.sensor_id) return;
         if (typeof r.reading_value === "undefined") return;
-        const tsISO = r.approx_time || epochToIso(r.timestamp);
+        const tsISO = r.fetched_at || r.approx_time || epochToIso(r.timestamp);
         setRows(prev => [...prev, { tsISO, value: convert(r.reading_value) }].slice(-20_000));
       })
       .subscribe();
@@ -515,18 +519,7 @@ export default function History() {
       </button>
     </div>
   );
-useEffect(() => {
-  if (!activeSensor) return;
-  const isHumidity = (activeSensor.sensor_type || "").toLowerCase() === "humidity";
-
-  if (isHumidity) {
-    setMetric("humidity");
-    setUnit("%");                 // never tied to tempScale
-  } else {
-    setMetric("temperature");
-    setUnit(tempScale === "C" ? "°C" : "°F");
-  }
-}, [activeSensor, tempScale]);
+  const getInitials = (name) => name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 
   const SensorButtons = () => (
     <div className="flex flex-wrap gap-2">
@@ -585,11 +578,11 @@ useEffect(() => {
                   try { const { error } = await supabase.auth.signOut(); if (error) throw error; router.push("/login"); }
                   catch (e) { setErrMsg("Failed to sign out: " + (e?.message || String(e))); }
                 }}
-                className={`px-4 py-2 rounded ${darkMode ? "bg-red-700 text-white hover:bg-red-800" : "bg-red-500 text-white hover:bg-red-600"}`}
+                className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? "bg-red-600 hover:bg-red-700" : ""}`}
               >
                 Log out
               </button>
-              <div className={`${darkMode ? "bg-amber-700" : "bg-amber-600"} w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold`}>FA</div>
+              <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? "bg-amber-700" : ""}`}>{getInitials(username)}</div>
             </div>
           </div>
 

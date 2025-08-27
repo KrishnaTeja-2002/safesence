@@ -40,11 +40,17 @@ export default function Account() {
     dashboard: ["Temperature Monitoring System", "Sensors", "Users", "Alerts", "Notifications"],
     timeZone: "AKDT",
     darkMode: false,
+    username: "",
   });
   const [savedPreferences, setSavedPreferences] = useState(null);
+  const [currentTzIana, setCurrentTzIana] = useState(null);
 
   // Session + load prefs
   useEffect(() => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) setCurrentTzIana(tz);
+    } catch {}
     (async () => {
       setLoading(true);
       setError("");
@@ -119,6 +125,7 @@ export default function Account() {
         ],
         timeZone: tzIanaToLabel[row.time_zone] ?? "AKDT",
         darkMode: !!row.dark_mode,
+        username: row.username || (session.user?.email ? session.user.email.split("@")[0] : ""),
       };
       setPreferences(ui);
 
@@ -160,6 +167,7 @@ export default function Account() {
         show_notifications: preferences.dashboard.includes("Notifications"),
         time_zone: tzLabelToIana[preferences.timeZone] ?? "America/Anchorage",
         dark_mode: !!preferences.darkMode,
+        username: (preferences.username || "").trim() || null,
       };
 
       const { error: upErr } = await supabase.from("user_preferences").upsert(row, { onConflict: "user_id" });
@@ -254,6 +262,18 @@ export default function Account() {
             <div className="py-10 text-center opacity-80">Loading…</div>
           ) : (
             <div className="space-y-6">
+              {/* Username */}
+              <div>
+                <label className="block text-sm font-medium mb-2">User name</label>
+                <input
+                  type="text"
+                  name="username"
+                  value={preferences.username}
+                  onChange={handleChange}
+                  placeholder="Enter a display name"
+                  className={`border rounded px-3 py-2 w-full ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"}`}
+                />
+              </div>
               {/* Temp Scale */}
               <div>
                 <label className="block text-sm font-medium mb-2">Temp Scale</label>
@@ -304,7 +324,7 @@ export default function Account() {
                 >
                   {TZ_OPTIONS.map((t) => (
                     <option key={t.label} value={t.label}>
-                      {t.label}
+                      {t.label}{currentTzIana && currentTzIana === t.iana ? " (current)" : ""}
                     </option>
                   ))}
                 </select>

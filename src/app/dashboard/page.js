@@ -127,6 +127,12 @@ export default function Dashboard() {
   const [username, setUsername] = useState("User");
   const [error, setError] = useState("");
 
+  // Mounted timestamp for hydration-safe "Last updated" display
+  const [nowTs, setNowTs] = useState(null);
+  useEffect(() => {
+    setNowTs(Date.now());
+  }, []);
+
   // Preferences (from user_preferences)
   const [prefs, setPrefs] = useState({
     unit: "F", // 'F' | 'C' (temperature display)
@@ -188,6 +194,9 @@ export default function Dashboard() {
           };
           setPrefs(next);
           if (!!row.dark_mode !== darkMode) toggleDarkMode();
+          if (row.username) {
+            setUsername(String(row.username));
+          }
         }
       } catch (err) {
         setError("Failed to verify session: " + (err?.message || String(err)));
@@ -206,7 +215,7 @@ export default function Dashboard() {
           id: id++,
           title: `${it.status} (${it.name})`,
           description: it.kind === "humidity" ? `Humidity: ${it.displayValue}` : `Temperature: ${it.displayValue}`,
-          date: fmtDate(Date.now(), tz, false),
+          date: fmtDate(nowTs || Date.now(), tz, false),
           type: it.status === "Needs Attention" ? "error" : "warning",
           sensorId: it.sensor_id,
         });
@@ -639,7 +648,7 @@ export default function Dashboard() {
                 : axisTemp.title}
             </h3>
             <div className="flex items-center gap-3">
-              <div className="text-sm text-gray-500">Last updated: {fmtDate(Date.now(), prefs.tz, true)}</div>
+              <div className="text-sm text-gray-500">Last updated: <span suppressHydrationWarning>{nowTs ? fmtDate(nowTs, prefs.tz, true) : "—"}</span></div>
               <div className="flex items-center gap-2">
                 <label className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Filter:</label>
                 <select
