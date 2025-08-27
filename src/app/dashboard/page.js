@@ -21,6 +21,61 @@ const convertVal = (v, fromUnit, toUnit) => {
   return fromUnit === "C" ? cToF(v) : fToC(v);
 };
 
+// Offline-aware status: mark Unconfigured if last_fetched_time is 30+ minutes old
+const computeStatus = (value, { min, max, warning } = {}, lastFetchedTime) => {
+  try {
+    if (lastFetchedTime) {
+      const sensorTime = new Date(lastFetchedTime);
+      const now = new Date();
+      const diffMinutes = Math.abs(now.getTime() - sensorTime.getTime()) / (1000 * 60);
+      if (diffMinutes >= 30) return "Unconfigured";
+    } else {
+      return "Unconfigured";
+    }
+  } catch {}
+
+  if (value == null) return "Unconfigured";
+  if (!Number.isFinite(min) || !Number.isFinite(max) || Number(min) >= Number(max)) return "Unconfigured";
+
+  const span = Number(max) - Number(min);
+  const margin = Math.max(0, Math.min(Number(warning ?? 0), span / 2));
+  if (value < Number(min) || value > Number(max)) return "Needs Attention";
+  if (value < Number(min) + margin || value > Number(max) - margin) return "Warning";
+  return "Good";
+};
+
+const formatTimeDifference = (minutes) => {
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} hr`;
+  if (minutes < 10080) {
+    const days = minutes / 1440;
+    return `${Math.round(days)} day${Math.round(days) !== 1 ? 's' : ''}`;
+  }
+  if (minutes < 43200) {
+    const weeks = minutes / 10080;
+    return `${Math.round(weeks)} week${Math.round(weeks) !== 1 ? 's' : ''}`;
+  }
+  if (minutes < 525600) {
+    const months = minutes / 43200;
+    return `${Math.round(months)} month${Math.round(months) !== 1 ? 's' : ''}`;
+  }
+  const years = minutes / 525600;
+  return `${Math.round(years)} year${Math.round(years) !== 1 ? 's' : ''}`;
+};
+
+const getUnconfiguredReason = (item) => {
+  if (!item) return null;
+  if (item.lastFetchedTime) {
+    try {
+      const sensorTime = new Date(item.lastFetchedTime);
+      const now = new Date();
+      const diffMinutes = Math.abs(now.getTime() - sensorTime.getTime()) / (1000 * 60);
+      if (diffMinutes >= 30) return `Sensor Offline (${formatTimeDifference(diffMinutes)})`;
+    } catch {}
+  }
+  return "Unconfigured";
+};
+
 // Compute status based on sensor limits from database
 const computeStatusGeneric = (value, thresholds) => {
   if (value == null) return "Unconfigured";
@@ -182,17 +237,7 @@ export default function Dashboard() {
         });
         setThresholds(thresholdsMap);
 
-        const ids = (sensorRows || []).map((r) => r.sensor_id).filter(Boolean);
-        let latestMap = new Map();
-        if (ids.length) {
-          const { data: latest, error: lErr } = await supabase
-            .from("raw_readings_v2")
-            .select("sensor_id, reading_value, timestamp, approx_time")
-            .in("sensor_id", ids)
-            .order("timestamp", { ascending: false });
-          if (lErr) throw lErr;
-          for (const row of latest) if (!latestMap.has(row.sensor_id)) latestMap.set(row.sensor_id, row);
-        }
+        // Use sensors.latest_temp directly; no additional latest lookup required
 
         const items = (sensorRows || [])
           .map((r) => {
@@ -200,8 +245,7 @@ export default function Dashboard() {
             const kind = sType === "humidity" ? "humidity" : "temperature";
             const name = r.sensor_name || r.sensor_id;
 
-            const lr = latestMap.get(r.sensor_id);
-            const raw = r.latest_temp ?? (lr ? Number(lr.reading_value) : null);
+            const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
 
             let value = null;
             let displayValue = "--";
@@ -217,7 +261,7 @@ export default function Dashboard() {
                // Get thresholds for this sensor (already in °F)
                const sensorThresholds = thresholdsMap[r.sensor_id];
                // Calculate status using °F values
-               status = computeStatusGeneric(valueInF, sensorThresholds);
+               status = computeStatus(valueInF, sensorThresholds, r.last_fetched_time);
                
                // Convert to user's preferred unit for display only
                value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
@@ -231,7 +275,7 @@ export default function Dashboard() {
                value = raw != null ? Number(raw) : null;
                // Get thresholds for this sensor
                const sensorThresholds = thresholdsMap[r.sensor_id];
-               status = computeStatusGeneric(value, sensorThresholds);
+               status = computeStatus(value, sensorThresholds, r.last_fetched_time);
                displayValue = value != null ? `${Math.round(value)}%` : "--%";
              }
 
@@ -252,7 +296,9 @@ export default function Dashboard() {
                status,
                color,
                approx_time: r.approx_time,
-               lastUpdated: r.updated_at || lr?.timestamp || new Date().toISOString(),
+               lastFetchedTime: r.last_fetched_time,
+               lastUpdated: r.updated_at || new Date().toISOString(),
+               thresholds: thresholdsMap[r.sensor_id],
              };
           })
           .sort((a, b) => a.name.localeCompare(b.name));
@@ -291,13 +337,22 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
 
-  /* ===== Realtime updates ===== */
+  /* ===== Realtime updates: sensors table ===== */
   useEffect(() => {
     const ch = supabase
-      .channel("raw-readings-v2-all")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "raw_readings_v2" }, (payload) => {
+      .channel("sensors-updates")
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sensors" }, (payload) => {
         const r = payload.new || {};
-        if (!r.sensor_id || r.reading_value == null) return;
+        if (!r.sensor_id) return;
+
+        setThresholds((prev) => ({
+          ...prev,
+          [r.sensor_id]: {
+            min: r.min_limit ?? prev[r.sensor_id]?.min,
+            max: r.max_limit ?? prev[r.sensor_id]?.max,
+            warning: r.warning_limit ?? prev[r.sensor_id]?.warning,
+          },
+        }));
 
         setData((prev) => {
           const items = [...prev.items];
@@ -305,51 +360,46 @@ export default function Dashboard() {
           if (idx < 0) return prev;
 
           const item = items[idx];
+          const t = {
+            min: r.min_limit ?? thresholds[r.sensor_id]?.min,
+            max: r.max_limit ?? thresholds[r.sensor_id]?.max,
+            warning: r.warning_limit ?? thresholds[r.sensor_id]?.warning,
+          };
+
+          let value = null;
+          let status = "Good";
+          let displayValue = item.displayValue;
+
           if (item.kind === "temperature") {
-            // Normalize to °F for status calculation
-            const valueInF = Number(r.reading_value);
-            // Get thresholds for this sensor (already in °F)
-            const sensorThresholds = thresholds[r.sensor_id];
-            // Calculate status using °F values
-            const status = computeStatusGeneric(valueInF, sensorThresholds);
-            
-            // Convert to user's preferred unit for display only
-            const value = prefs.unit === "C" ? fToC(valueInF) : valueInF;
-            
-            let color = "bg-[#98CC37]";
-            if (status === "Needs Attention") color = "bg-red-500";
-            else if (status === "Warning") color = "bg-[#FF9866]";
-            else if (status === "Unconfigured") color = "bg-gray-500";
-            
-            items[idx] = {
-              ...item,
-              value,
-              displayValue: `${Math.round(value)}°${prefs.unit}`,
-              status,
-              color,
-              lastUpdated: r.timestamp || new Date().toISOString(),
-            };
+            const sensorUnit = (r.metric || item.unit || "F").toUpperCase() === "C" ? "C" : "F";
+            const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
+            const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
+            status = computeStatus(valueInF, t, r.last_fetched_time);
+            value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
+            displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
           } else {
-            const value = Number(r.reading_value);
-            // Get thresholds for this sensor
-            const sensorThresholds = thresholds[r.sensor_id];
-            const status = computeStatusGeneric(value, sensorThresholds);
-            let color = "bg-[#98CC37]";
-            if (status === "Needs Attention") color = "bg-red-500";
-            else if (status === "Warning") color = "bg-[#FF9866]";
-            else if (status === "Unconfigured") color = "bg-gray-500";
-            
-            items[idx] = {
-              ...item,
-              value,
-              displayValue: `${Math.round(value)}%`,
-              status,
-              color,
-              lastUpdated: r.timestamp || new Date().toISOString(),
-            };
+            const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
+            value = raw != null ? raw : null;
+            status = computeStatus(value, t, r.last_fetched_time);
+            displayValue = value != null ? `${Math.round(value)}%` : "--%";
           }
 
-          // Recompute KPIs/notifications with visibility
+          let color = "bg-[#98CC37]";
+          if (status === "Needs Attention") color = "bg-red-500";
+          else if (status === "Warning") color = "bg-[#FF9866]";
+          else if (status === "Unconfigured") color = "bg-gray-500";
+
+          items[idx] = {
+            ...item,
+            value,
+            displayValue,
+            status,
+            color,
+            lastFetchedTime: r.last_fetched_time ?? item.lastFetchedTime,
+            lastUpdated: r.updated_at || item.lastUpdated || new Date().toISOString(),
+            thresholds: t,
+          };
+
           const filtered = visibleItems(items, selectedType, prefs);
           const sensorsKPI = {
             total: filtered.length,
@@ -360,7 +410,6 @@ export default function Dashboard() {
             disconnected: filtered.filter((t) => t.value == null).length,
           };
           const notificationsList = buildNotifications(filtered, prefs.tz);
-
           return { ...prev, items, sensors: sensorsKPI, notifications: notificationsList.length, notificationsList };
         });
       })
@@ -368,7 +417,7 @@ export default function Dashboard() {
 
     return () => supabase.removeChannel(ch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
+  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, thresholds]);
 
   /* ===== UI helpers ===== */
   useEffect(() => {
@@ -653,28 +702,30 @@ export default function Dashboard() {
                     ) : (
                       chartItems.map((it, i) => {
                         const h = toHeight(it);
-                        const label = it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue;
+                        const label = it.status === "Unconfigured"
+                          ? "NA"
+                          : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue);
                         return (
                           <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                            {it.value != null && (
+                            {(it.status === "Unconfigured" || it.value != null) && (
                               <div
-                                                                 className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
-                                   it.status === "Needs Attention"
-                                     ? "bg-red-500 text-white border-2 border-red-600"
-                                     : it.status === "Warning"
-                                     ? "bg-yellow-500 text-white border-2 border-yellow-600"
-                                     : it.status === "Unconfigured"
-                                     ? "bg-gray-500 text-white border-2 border-gray-600"
-                                     : "bg-green-500 text-white border-2 border-green-600"
-                                 }`}
-                                   style={{
-                                   bottom: `${h + 12}px`,
-                                   left: "50%",
-                                   transform: "translateX(-50%)",
-                                   whiteSpace: "nowrap",
-                                   boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                                   animation: (it.status === "Needs Attention" || it.status === "Warning") ? "customBounce 2s infinite" : "none",
-                                 }}
+                                className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
+                                  it.status === "Needs Attention"
+                                    ? "bg-red-500 text-white border-2 border-red-600"
+                                    : it.status === "Warning"
+                                    ? "bg-yellow-500 text-white border-2 border-yellow-600"
+                                    : it.status === "Unconfigured"
+                                    ? "bg-gray-500 text-white border-2 border-gray-600"
+                                    : "bg-green-500 text-white border-2 border-green-600"
+                                }`}
+                                style={{
+                                  bottom: `${h + 12}px`,
+                                  left: "50%",
+                                  transform: "translateX(-50%)",
+                                  whiteSpace: "nowrap",
+                                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                                  animation: (it.status === "Needs Attention" || it.status === "Warning") ? "customBounce 2s infinite" : "none",
+                                }}
                               >
                                 {label}
                                 <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
@@ -805,7 +856,7 @@ export default function Dashboard() {
                                it.status === "Needs Attention" ? "text-red-500" : it.status === "Warning" ? "text-yellow-500" : it.status === "Unconfigured" ? "text-gray-500" : "text-green-500"
                              }`}
                            >
-                             {it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue}
+                             {it.status === "Unconfigured" ? "NA" : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue)}
                            </span>
                          </td>
                         <td className="py-2">
@@ -823,7 +874,15 @@ export default function Dashboard() {
                             {it.status}
                           </span>
                         </td>
-                                                 <td className="py-2">{it.approx_time ? fmtDate(it.approx_time, prefs.tz, true) : fmtDate(it.lastUpdated, prefs.tz, true)}</td>
+                                                 <td className="py-2">{
+                           it.status === "Unconfigured" && getUnconfiguredReason(it)
+                             ? getUnconfiguredReason(it)
+                             : it.lastFetchedTime
+                               ? fmtDate(it.lastFetchedTime, prefs.tz, true)
+                               : it.approx_time
+                                 ? fmtDate(it.approx_time, prefs.tz, true)
+                                 : fmtDate(it.lastUpdated, prefs.tz, true)
+                         }</td>
                       </tr>
                     ))}
                   </tbody>
