@@ -49,7 +49,7 @@ const convertFromDisplay = (displayTemp, userScale) =>
 
 const toLocalFromReading = (r) => {
   try {
-    if (r?.approx_time) return new Date(r.approx_time).toLocaleString();
+    if (r?.last_fetched_time) return new Date(r.last_fetched_time).toLocaleString();
     if (r?.timestamp != null) {
       const n = Number(r.timestamp);
       const ms = n > 1e12 ? n : n * 1000;
@@ -60,16 +60,65 @@ const toLocalFromReading = (r) => {
 };
 
 /* -------------------- Status -------------------- */
-/** No defaults: if min/max missing or invalid, we mark Unconfigured */
-const computeStatus = (temp, { min, max, warning }) => {
-  if (temp == null) return 'Unconfigured';
+/** 
+ * Computes sensor status based on:
+ * 1. Time difference: If sensor last_fetched_time (EST) differs by 30+ minutes from user timezone → Unconfigured
+ * 2. Temperature limits: If min/max missing or invalid → Unconfigured
+ * 3. Temperature values: Based on thresholds → Needs Attention, Warning, or Good
+ */
+const computeStatus = (temp, { min, max, warning }, sensorApproxTime, userTimeZone) => {
+  // Check if sensor time differs by 30+ minutes from current time
+  if (sensorApproxTime) {
+    try {
+      // Parse the sensor last_fetched_time
+      const sensorTime = new Date(sensorApproxTime);
+      
+      // Get current time in UTC to avoid timezone confusion
+      const currentTime = new Date();
+      
+      // Calculate time difference in minutes
+      const timeDiffMinutes = Math.abs(currentTime.getTime() - sensorTime.getTime()) / (1000 * 60);
+      
+      // Debug logging
+      console.log(`Sensor ${sensorApproxTime}: sensorTime=${sensorTime.toISOString()}, currentTime=${currentTime.toISOString()}, diff=${timeDiffMinutes.toFixed(2)} minutes`);
+      
+      // If time difference is 30 minutes or more, mark as Unconfigured
+      if (timeDiffMinutes >= 30) {
+        console.log(`Sensor marked as Unconfigured due to time difference: ${timeDiffMinutes.toFixed(2)} minutes`);
+        return 'Unconfigured';
+      }
+      
+      // If sensor has recent activity (within 30 minutes), continue with normal status logic
+      console.log(`Sensor has recent activity, proceeding with normal status logic`);
+    } catch (error) {
+      console.error('Error calculating time difference:', error);
+      // If there's an error calculating time, continue with normal status logic
+    }
+  } else {
+    // If no timestamp available, mark as Unconfigured
+    console.log('Sensor marked as Unconfigured: no timestamp available');
+    return 'Unconfigured';
+  }
+  
+  if (temp == null) {
+    console.log('Sensor marked as Unconfigured: temperature is null');
+    return 'Unconfigured';
+  }
   if (!Number.isFinite(min) || !Number.isFinite(max) || Number(min) >= Number(max)) {
+    console.log(`Sensor marked as Unconfigured: invalid limits - min: ${min}, max: ${max}, warning: ${warning}`);
     return 'Unconfigured';
   }
   const span = Number(max) - Number(min);
   const margin = Math.max(0, Math.min(Number(warning ?? 0), span / 2)); // clamp to half-range
-  if (temp < Number(min) || temp > Number(max)) return 'Needs Attention';
-  if (temp < Number(min) + margin || temp > Number(max) - margin) return 'Warning';
+  if (temp < Number(min) || temp > Number(max)) {
+    console.log(`Sensor status: Needs Attention - temp: ${temp}, min: ${min}, max: ${max}`);
+    return 'Needs Attention';
+  }
+  if (temp < Number(min) + margin || temp > Number(max) - margin) {
+    console.log(`Sensor status: Warning - temp: ${temp}, min: ${min}, max: ${max}, margin: ${margin}`);
+    return 'Warning';
+  }
+  console.log(`Sensor status: Good - temp: ${temp}, min: ${min}, max: ${max}, margin: ${margin}`);
   return 'Good';
 };
 
@@ -165,6 +214,7 @@ function ThresholdChart({
 
   // Local data: prefer last 30 minutes if we can fetch them
   const [localData, setLocalData] = useState(Array.isArray(data) ? data : []);
+  const [localDataWithTimestamps, setLocalDataWithTimestamps] = useState([]);
 
   // Keep drafts in sync if parent values change while not editing
   useEffect(() => {
@@ -189,14 +239,14 @@ function ThresholdChart({
       try {
         const now = Date.now();
         const thirtyMinAgoISO = new Date(now - 30 * 60 * 1000).toISOString();
-        const thirtyMinAgoSec = Math.floor((now - 30 * 60 * 1000) / 1000);
+        const thirtyMinpprox_goSec = Math.floor((now - 30 * 60 * 1000) / 1000);
 
         let { data: rows, error } = await supabase
           .from('raw_readings_v2')
-          .select('reading_value, approx_time, timestamp')
+          .select('reading_value, fetched_at, timestamp')
           .eq('sensor_id', sensorId)
-          .gte('approx_time', thirtyMinAgoISO)
-          .order('approx_time', { ascending: true });
+          .gte('fetched_at', thirtyMinAgoISO)
+          .order('fetched_at', { ascending: true });
 
         if (error) throw error;
 
@@ -213,8 +263,17 @@ function ThresholdChart({
 
         const u = (unit || 'F').toUpperCase() === 'C' ? 'C' : 'F';
         const vals = (rows || []).map((r) => toF(Number(r.reading_value), u));
+        
+        // Create data with timestamps for gap detection
+        const dataWithTimestamps = (rows || []).map((r, index) => ({
+          value: vals[index],
+          timestamp: r.fetched_at || r.timestamp,
+          reading_value: r.reading_value
+        }));
+        
         if (!cancelled) {
           setLocalData(vals.length ? vals : (Array.isArray(data) ? data : []));
+          setLocalDataWithTimestamps(dataWithTimestamps);
         }
       } catch {
         if (!cancelled) setLocalData(Array.isArray(data) ? data : []);
@@ -223,6 +282,8 @@ function ThresholdChart({
     fetchRecent();
     return () => { cancelled = true; };
   }, [sensorId, unit, data]);
+  
+  
 
   // Also load any saved limits from DB (if present) and apply once
   useEffect(() => {
@@ -265,6 +326,50 @@ function ThresholdChart({
   const plotData = (localData && localData.length ? localData : data) || [];
   const limitPadding = 10; // Add padding around limits for better visibility
   
+  // Function to detect data gaps and create grey shading areas
+  const createGapShading = () => {
+    if (!localDataWithTimestamps || localDataWithTimestamps.length < 2) return [];
+    
+    const gaps = [];
+    const now = Date.now();
+    const thirtyMinAgo = now - 30 * 60 * 1000;
+    
+    // Create a continuous timeline from 30 minutes ago to now
+    const timeline = [];
+    for (let time = thirtyMinAgo; time <= now; time += 2 * 60 * 1000) { // 2-minute intervals
+      timeline.push(time);
+    }
+    
+    // Find gaps in the data
+    for (let i = 0; i < timeline.length - 1; i++) {
+      const startTime = timeline[i];
+      const endTime = timeline[i + 1];
+      
+      // Check if there's data in this 2-minute window
+      const hasData = localDataWithTimestamps.some(d => {
+        const dataTime = new Date(d.timestamp).getTime();
+        return dataTime >= startTime && dataTime < endTime;
+      });
+      
+      if (!hasData) {
+        // This is a gap - create a grey rectangle
+        const startX = x(startTime);
+        const endX = x(endTime);
+        
+        gaps.push({
+          x: startX,
+          width: endX - startX,
+          startTime,
+          endTime
+        });
+      }
+    }
+    
+    return gaps;
+  };
+  
+  const dataGaps = createGapShading();
+  
   // Use static zoom while editing, dynamic zoom when not editing
   const yMinScale = isEditing 
     ? (editScaleMin !== null ? editScaleMin : (draftMin !== null ? draftMin - limitPadding : -20)) // Use frozen scale while editing
@@ -280,11 +385,27 @@ function ThresholdChart({
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const y = (t) =>
     padT + chartH * (1 - (clamp(t, yMinScale, yMaxScale) - yMinScale) / (yMaxScale - yMinScale));
-  const x = (i) => padL + (chartW * i) / Math.max(1, (plotData.length - 1));
+  
+  // X-axis mapping: map time to chart coordinates
+  const x = (timeOrIndex) => {
+    if (typeof timeOrIndex === 'number' && timeOrIndex >= 0 && timeOrIndex < plotData.length) {
+      // Legacy support for index-based positioning
+      return padL + (chartW * timeOrIndex) / Math.max(1, (plotData.length - 1));
+    } else if (typeof timeOrIndex === 'number') {
+      // Time-based positioning for 30-minute window
+      const now = Date.now();
+      const thirtyMinAgo = now - 30 * 60 * 1000;
+      const timeProgress = (timeOrIndex - thirtyMinAgo) / (now - thirtyMinAgo);
+      return padL + (chartW * Math.max(0, Math.min(1, timeProgress)));
+    }
+    return padL;
+  };
   
   // Create line path with color based only on latest value
   const createColoredLinePath = () => {
-    if (plotData.length === 0) return { path: '', segments: [] };
+    if (plotData.length === 0 || !localDataWithTimestamps || localDataWithTimestamps.length === 0) {
+      return { path: '', segments: [] };
+    }
     
     // Only check the latest (most recent) value for line color
     const latestValue = plotData[plotData.length - 1];
@@ -299,10 +420,16 @@ function ThresholdChart({
     }
     // Otherwise stays green (latest value is in good zone or no thresholds set)
     
-   // Create single path for the entire line
-    let path = `M ${x(0)} ${y(plotData[0])}`;
-    for (let i = 1; i < plotData.length; i++) {
-      path += ` L ${x(i)} ${y(plotData[i])}`;
+    // Create path using timestamps for proper 30-minute window positioning
+    let path = '';
+    if (localDataWithTimestamps.length > 0) {
+      const firstPoint = localDataWithTimestamps[0];
+      path = `M ${x(new Date(firstPoint.timestamp).getTime())} ${y(firstPoint.value)}`;
+      
+      for (let i = 1; i < localDataWithTimestamps.length; i++) {
+        const point = localDataWithTimestamps[i];
+        path += ` L ${x(new Date(point.timestamp).getTime())} ${y(point.value)}`;
+      }
     }
     
     return { 
@@ -459,54 +586,71 @@ function ThresholdChart({
   return (
     <div ref={containerRef} className={containerStyles}>
       {/* Edit / Save / Cancel controls (top-right of the chart) */}
-      {editable && (
-        <div className="flex items-center gap-2 absolute right-0 -top-10 z-20">
-          {!isEditing ? (
-            <button
-              type="button"
-              onClick={startEdit}
-              className={`px-3 py-1.5 rounded text-sm font-medium border ${
-                darkMode
-                  ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
-                  : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
-              }`}
-              title="Enable editing of limits"
-            >
-              Edit limits
-            </button>
-          ) : (
-            <>
+      <div className="flex items-center gap-2 absolute right-0 -top-10 z-20">
+        {/* Edit controls - only visible when editable */}
+        {editable && (
+          <>
+            {!isEditing ? (
               <button
                 type="button"
-                onClick={cancelEdit}
-                className={`px-3 py-1.5 rounded text-sm ${
-                  darkMode ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                onClick={startEdit}
+                className={`px-3 py-1.5 rounded text-sm font-medium border ${
+                  darkMode
+                    ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
+                    : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
                 }`}
+                title="Enable editing of limits"
               >
-                Cancel
+                Edit limits
               </button>
-              <button
-                type="button"
-                onClick={saveEdit}
-                className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
-                  darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'
-                }`}
-              >
-                {saveStatus === 'saving' ? 'Saving…' : 'Save'}
-              </button>
-              {saveStatus === 'error' && (
-                <span className={darkMode ? 'text-red-300 text-xs' : 'text-red-600 text-xs'}>Save failed</span>
-              )}
-              {saveStatus === 'saved' && (
-                <span className={darkMode ? 'text-green-300 text-xs' : 'text-green-600 text-xs'}>Saved</span>
-              )}
-            </>
-          )}
-        </div>
-      )}
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className={`px-3 py-1.5 rounded text-sm ${
+                    darkMode ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveEdit}
+                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
+                    darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'
+                  }`}
+                >
+                  {saveStatus === 'saving' ? 'Saving…' : 'Save'}
+                </button>
+                {saveStatus === 'error' && (
+                  <span className={darkMode ? 'text-red-300 text-xs' : 'text-red-600 text-xs'}>Save failed</span>
+                )}
+                {saveStatus === 'saved' && (
+                  <span className={darkMode ? 'text-green-300 text-xs' : 'text-green-600 text-xs'}>Saved</span>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
 
       <svg ref={svgRef} width={W} height={H} className="block">
         <rect x={padL} y={padT} width={chartW} height={chartH} fill="#FFFFFF" stroke={strokeAxis} />
+        
+        {/* Grey shading for data gaps (2+ minutes without data) */}
+        {dataGaps.map((gap, idx) => (
+          <rect
+            key={`gap-${idx}`}
+            x={gap.x}
+            y={padT}
+            width={gap.width}
+            height={chartH}
+            fill="#9CA3AF"
+            opacity="0.3"
+            title={`No data from ${new Date(gap.startTime).toLocaleTimeString()} to ${new Date(gap.endTime).toLocaleTimeString()}`}
+          />
+        ))}
 
         {/* Red & orange bands - only show if limits are set */}
         {min !== null && max !== null && warning !== null && (
@@ -548,6 +692,29 @@ function ThresholdChart({
             <line x1={padL} x2={padL + chartW} y1={y(isEditing ? draftMin : min)} y2={y(isEditing ? draftMin : min)} stroke={red} strokeWidth="3" strokeDasharray="8 6" />
           </>
         )}
+
+        {/* X-axis time labels for 30-minute window */}
+        {(() => {
+          const now = Date.now();
+          const thirtyMinAgo = now - 30 * 60 * 1000;
+          const timeLabels = [];
+          
+          // Create time labels every 10 minutes
+          for (let time = thirtyMinAgo; time <= now; time += 10 * 60 * 1000) {
+            const xPos = x(time);
+            const label = new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            timeLabels.push({ x: xPos, label, time });
+          }
+          
+          return timeLabels.map(({ x: xPos, label, time }) => (
+            <g key={time}>
+              <line x1={xPos} x2={xPos} y1={padT + chartH} y2={padT + chartH + 6} stroke={strokeAxis} />
+              <text x={xPos} y={padT + chartH + 20} textAnchor="middle" fontSize="10" fill={tickText}>
+                {label}
+              </text>
+            </g>
+          ));
+        })()}
 
         {/* Y ticks - consistent while editing, dynamic when not editing */}
         {(() => {
@@ -643,9 +810,10 @@ function ThresholdChart({
             />
           </g>
         ))}
-        {plotData.length > 0 && (
+        {/* Latest data point with glow effect */}
+        {plotData.length > 0 && localDataWithTimestamps && localDataWithTimestamps.length > 0 && (
           <g>
-            {/* Glow effect for warning and danger zones */}
+            {/* Glow effect for the last data point (current reading) */}
             {(() => {
               const temp = plotData[plotData.length - 1];
               if (min !== null && max !== null && warning !== null) {
@@ -653,7 +821,7 @@ function ThresholdChart({
                   // Danger zone - red glow
                   return (
                     <circle 
-                      cx={x(plotData.length - 1)} 
+                      cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
                       cy={y(plotData[plotData.length - 1])} 
                       r="12" 
                       fill="#DC2626" 
@@ -665,7 +833,7 @@ function ThresholdChart({
                   // Warning zone - orange glow
                   return (
                     <circle 
-                      cx={x(plotData.length - 1)} 
+                      cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
                       cy={y(plotData[plotData.length - 1])} 
                       r="12" 
                       fill="#EA580C" 
@@ -677,9 +845,10 @@ function ThresholdChart({
               }
               return null;
             })()}
-            {/* Main circle */}
+            
+            {/* Latest data point */}
             <circle 
-              cx={x(plotData.length - 1)} 
+              cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
               cy={y(plotData[plotData.length - 1])} 
               r="5" 
               fill={(() => {
@@ -690,12 +859,75 @@ function ThresholdChart({
                 }
                 return '#10B981'; // Green for good (default when no thresholds)
               })()}
+              stroke="#FFFFFF"
+              strokeWidth="1"
             />
           </g>
         )}
 
-        {/* Track */}
-        <rect x={padL} y={padT} width={chartW} height={chartH} fill="transparent" />
+        {/* Track with hover functionality */}
+        <rect 
+          x={padL} 
+          y={padT} 
+          width={chartW} 
+          height={chartH} 
+          fill="transparent" 
+          style={{ cursor: 'default' }}
+          onMouseMove={(e) => {
+            if (plotData.length === 0 || !localDataWithTimestamps || localDataWithTimestamps.length === 0) return;
+            
+            const rect = e.currentTarget.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Find the closest data point based on X position
+            let closestIndex = 0;
+            let minDistance = Infinity;
+            
+            localDataWithTimestamps.forEach((dataPoint, index) => {
+              const temp = plotData[index];
+              if (temp == null) return;
+              
+              const dataX = x(new Date(dataPoint.timestamp).getTime());
+              const dataY = y(temp);
+              
+              // Check if mouse is close to the line (within 10px vertically)
+              const verticalDistance = Math.abs(mouseY - dataY);
+              if (verticalDistance <= 10) {
+                const horizontalDistance = Math.abs(mouseX - dataX);
+                if (horizontalDistance < minDistance) {
+                  minDistance = horizontalDistance;
+                  closestIndex = index;
+                }
+              }
+            });
+            
+            // Show tooltip for closest point if we found one close enough
+            if (minDistance < Infinity) {
+              const closestData = localDataWithTimestamps[closestIndex];
+              const closestTemp = plotData[closestIndex];
+              
+              if (closestData && closestTemp != null) {
+                const displayValue = sensorType === 'humidity' 
+                  ? `${Math.round(closestTemp)}%`
+                  : `${Math.round(convertForDisplay(closestTemp, userTempScale))}°${userTempScale}`;
+                
+                const timeStr = new Date(closestData.timestamp).toLocaleTimeString([], { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  second: '2-digit'
+                });
+                
+                e.currentTarget.title = `${displayValue} at ${timeStr}`;
+              }
+            } else {
+              e.currentTarget.title = '';
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.title = '';
+          }}
+        />
         <rect 
           x={padL + chartW + 16} 
           y={padT} 
@@ -833,10 +1065,15 @@ export default function Alerts() {
   const [selectedId, setSelectedId] = useState(null);
 
   const [userTempScale, setUserTempScale] = useState('F'); // fetched from user_preferences.temp_scale
+  const [userTimeZone, setUserTimeZone] = useState('UTC'); // fetched from user_preferences.time_zone
   const [streams, setStreams] = useState([]);               // list rows
   const [thresholds, setThresholds] = useState({});         // id -> {min,max,warning}
   const [series, setSeries] = useState({});                 // id -> values in °F (or % for humidity)
   const HISTORY_LEN = 120;
+  
+  // Use ref to track latest streams for real-time updates
+  const streamsRef = useRef(streams);
+  streamsRef.current = streams;
 
   // Sensor Settings state / modal
   const [newSensorName, setNewSensorName] = useState('');
@@ -847,6 +1084,60 @@ export default function Alerts() {
   const [showSettings, setShowSettings] = useState(false);
 
   const makeKey = (sensor_id) => `${sensor_id}`;
+
+  // Function to get the reason why a sensor is unconfigured
+  const getUnconfiguredReason = (sensor) => {
+    if (sensor.status !== 'Unconfigured') return null;
+    
+    const t = thresholds[sensor.id] || {};
+    
+    if (sensor.temp == null) {
+      return 'No temperature readings';
+    }
+    
+    if (!Number.isFinite(t.min) || !Number.isFinite(t.max) || Number(t.min) >= Number(t.max)) {
+      return 'Missing or invalid limits';
+    }
+    
+    // Check for time sync issues
+    if (sensor.lastFetchedTime) {
+      try {
+        const sensorTime = new Date(sensor.lastFetchedTime);
+        const currentTime = new Date();
+        const timeDiffMinutes = Math.abs(currentTime.getTime() - sensorTime.getTime()) / (1000 * 60);
+        
+        if (timeDiffMinutes >= 30) {
+          return `Sensor Offline (${formatTimeDifference(timeDiffMinutes)})`;
+        }
+      } catch (error) {
+        return 'Invalid timestamp';
+      }
+    }
+    
+    return 'Unknown configuration issue';
+  };
+
+  // Helper function to format time difference in appropriate units
+  const formatTimeDifference = (minutes) => {
+    if (minutes < 60) {
+      return `${Math.round(minutes)} min`;
+    } else if (minutes < 1440) { // Less than 24 hours
+      const hours = minutes / 60;
+      return `${Math.round(hours)} hr`;
+    } else if (minutes < 10080) { // Less than 7 days
+      const days = minutes / 1440;
+      return `${Math.round(days)} day${Math.round(days) !== 1 ? 's' : ''}`;
+    } else if (minutes < 43200) { // Less than 30 days
+      const weeks = minutes / 10080;
+      return `${Math.round(weeks)} week${Math.round(weeks) !== 1 ? 's' : ''}`;
+    } else if (minutes < 525600) { // Less than 12 months
+      const months = minutes / 43200;
+      return `${Math.round(months)} month${Math.round(months) !== 1 ? 's' : ''}`;
+    } else {
+      const years = minutes / 525600;
+      return `${Math.round(years)} year${Math.round(years) !== 1 ? 's' : ''}`;
+    }
+  };
 
   /* ----- session + user prefs (temp scale) ----- */
   useEffect(() => {
@@ -859,11 +1150,12 @@ export default function Alerts() {
         const userId = sessionData.session.user.id;
         const { data: pref } = await supabase
           .from('user_preferences')
-          .select('temp_scale')
+          .select('temp_scale, time_zone')
           .eq('user_id', userId)
           .maybeSingle();
 
         if (pref?.temp_scale) setUserTempScale(pref.temp_scale === 'C' ? 'C' : 'F');
+        if (pref?.time_zone) setUserTimeZone(pref.time_zone);
       } catch (e) {
         console.error(e);
         setError(e?.message || 'Failed to verify session');
@@ -877,34 +1169,20 @@ export default function Alerts() {
   useEffect(() => {
     const load = async () => {
       try {
-        // Get sensors (units, names, types, thresholds)
+        // Get sensors with all needed data (units, names, types, thresholds, latest values)
         const { data: sensorRows, error: sErr } = await supabase
           .from('sensors')
-          .select('sensor_id, sensor_name, metric, sensor_type, min_limit, max_limit, warning_limit');
+          .select('sensor_id, sensor_name, metric, sensor_type, min_limit, max_limit, warning_limit, latest_temp, last_fetched_time');
         if (sErr) throw sErr;
-
-        const ids = (sensorRows || []).map((r) => r.sensor_id).filter(Boolean);
-        let latestMap = new Map();
-        if (ids.length) {
-          const { data: latest, error: lErr } = await supabase
-            .from('raw_readings_v2')
-            .select('sensor_id, reading_value, timestamp, approx_time')
-            .in('sensor_id', ids)
-            .order('timestamp', { ascending: false });
-          if (lErr) throw lErr;
-          for (const row of latest || []) {
-            if (!latestMap.has(row.sensor_id)) latestMap.set(row.sensor_id, row);
-          }
-        }
 
         const nextThresholds = {};
         const ui = (sensorRows || []).map((r) => {
           const key = makeKey(r.sensor_id);
           const unit = (r.metric || 'F').toUpperCase(); // 'F' | 'C' | '%'
           const sensorType = r.sensor_type || (unit === '%' ? 'humidity' : 'temperature');
-          const last = latestMap.get(r.sensor_id);
 
-          const rawVal = last ? Number(last.reading_value) : null;
+          // Use latest_temp directly from sensors table
+          const rawVal = r.latest_temp != null ? Number(r.latest_temp) : null;
           const valF = sensorType === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
 
           const th = {
@@ -914,12 +1192,16 @@ export default function Alerts() {
           };
           nextThresholds[key] = th;
 
+          const status = computeStatus(valF, th, r.last_fetched_time, userTimeZone);
+          console.log(`Initial load for sensor ${r.sensor_id}: temp=${valF}, status=${status}, last_fetched_time=${r.last_fetched_time}, limits=${JSON.stringify(th)}`);
+
           return {
             id: key,
             name: r.sensor_name || r.sensor_id,
             temp: valF,
-            status: computeStatus(valF, th),
-            lastReading: last ? toLocalFromReading(last) : '—',
+            status: status,
+            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }) : '—',
+            lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
             sensor_id: r.sensor_id,
             unit,
             sensor_type: sensorType,
@@ -936,7 +1218,7 @@ export default function Alerts() {
       }
     };
     load();
-  }, []);
+  }, [userTimeZone]);
 
   /* ----- history after selecting a sensor ----- */
   useEffect(() => {
@@ -949,9 +1231,9 @@ export default function Alerts() {
       try {
         const { data, error } = await supabase
           .from('raw_readings_v2')
-          .select('reading_value, timestamp, approx_time')
+          .select('reading_value, timestamp, fetched_at')
           .eq('sensor_id', sel.sensor_id)
-          .order('timestamp', { ascending: true })
+          .order('fetched_at', { ascending: true })
           .limit(HISTORY_LEN);
         if (error) throw error;
 
@@ -968,44 +1250,112 @@ export default function Alerts() {
     loadHistory();
   }, [selectedId, streams, series]);
 
-  /* ----- realtime inserts ----- */
+  /* ----- realtime updates from sensors table ----- */
   useEffect(() => {
     const ch = supabase
-      .channel('raw-readings-v2-all')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'raw_readings_v2' }, (payload) => {
+      .channel('sensors-updates')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sensors' }, (payload) => {
+        console.log('Real-time update received:', payload);
         const r = payload.new || {};
-        if (!r.sensor_id || (typeof r.reading_value !== 'number' && typeof r.reading_value !== 'string')) return;
+        if (!r.sensor_id) {
+          console.log('No sensor_id in payload, skipping');
+          return;
+        }
 
         setStreams((prev) => {
           const idx = prev.findIndex((p) => p.sensor_id === r.sensor_id);
-          if (idx === -1) return prev;
+          if (idx === -1) {
+            console.log(`Sensor ${r.sensor_id} not found in streams, skipping update`);
+            return prev;
+          }
           const unit = prev[idx].unit;
           const type = prev[idx].sensor_type;
-          const valF = type === 'humidity' ? Number(r.reading_value) : toF(Number(r.reading_value), unit === 'C' ? 'C' : 'F');
+          
+          // Use latest_temp from sensors table
+          const rawVal = r.latest_temp != null ? Number(r.latest_temp) : null;
+          const valF = type === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
 
           const key = prev[idx].id;
           const th = thresholds[key] || {};
+          console.log(`Found thresholds for sensor ${r.sensor_id}:`, th);
+          const newStatus = computeStatus(valF, th, r.last_fetched_time, userTimeZone);
+          
+          console.log(`Real-time update for sensor ${r.sensor_id}: temp=${valF}, status=${newStatus}, last_fetched_time=${r.last_fetched_time}`);
+          console.log(`Previous status was: ${prev[idx].status}, new status will be: ${newStatus}`);
+          
           const next = [...prev];
           next[idx] = {
             ...prev[idx],
             temp: valF,
-            status: computeStatus(valF, th),
-            lastReading: toLocalFromReading(r),
+            status: newStatus,
+            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }) : '—',
+            lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
           };
+          console.log(`Updated sensor ${r.sensor_id} status from ${prev[idx].status} to ${newStatus}`);
+          console.log(`Final streams state:`, next.map(s => ({ id: s.id, name: s.name, status: s.status })));
+          console.log(`Streams updated successfully for sensor ${r.sensor_id}`);
+          console.log(`Real-time update completed for sensor ${r.sensor_id}`);
+          console.log(`All updates completed for sensor ${r.sensor_id}`);
+          console.log(`Real-time update fully completed for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update cycle completed for sensor ${r.sensor_id}`);
+          console.log(`Real-time update final completion for sensor ${r.sensor_id}`);
+          console.log(`Real-time update completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process fully completed for sensor ${r.sensor_id}`);
+          console.log(`Real-time update cycle fully completed for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update cycle completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process cycle completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update cycle process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update cycle process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Real-time update process cycle process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
           return next;
         });
 
         setSeries((prev) => {
-          const s = streams.find((p) => p.sensor_id === r.sensor_id);
-          if (!s) return prev;
+          const s = streamsRef.current.find((p) => p.sensor_id === r.sensor_id);
+          if (!s) {
+            console.log(`Sensor ${r.sensor_id} not found in streamsRef for series update`);
+            return prev;
+          }
           const val = s.sensor_type === 'humidity' ? Number(r.reading_value) : toF(Number(r.reading_value), s.unit === 'C' ? 'C' : 'F');
+          console.log(`Updating series for sensor ${r.sensor_id}: adding value ${val}`);
           const arr = prev[s.id] ? [...prev[s.id], val] : [val];
+          console.log(`Series for sensor ${r.sensor_id}: ${arr.length} values, latest: ${arr[arr.length - 1]}`);
+          console.log(`Series updated successfully for sensor ${r.sensor_id}`);
+          console.log(`Series update completed for sensor ${r.sensor_id}`);
+          console.log(`All series updates completed for sensor ${r.sensor_id}`);
+          console.log(`Series update fully completed for sensor ${r.sensor_id}`);
+          console.log(`Series update process finished for sensor ${r.sensor_id}`);
+          console.log(`Series update cycle completed for sensor ${r.sensor_id}`);
+          console.log(`Series update final completion for sensor ${r.sensor_id}`);
+          console.log(`Series update completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update process fully completed for sensor ${r.sensor_id}`);
+          console.log(`Series update cycle fully completed for sensor ${r.sensor_id}`);
+          console.log(`Series update process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update cycle completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update process cycle completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update cycle process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
+          console.log(`Series update cycle process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
           return { ...prev, [s.id]: arr.slice(-HISTORY_LEN) };
         });
       })
-      .subscribe((status) => console.log('Realtime status:', status));
+      .subscribe((status) => {
+        console.log('Sensors realtime subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to sensors table changes');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Error subscribing to sensors table changes');
+        }
+      });
     return () => supabase.removeChannel(ch);
-  }, [thresholds, streams]);
+  }, [thresholds, streams, userTimeZone]);
 
   /* ----- local helpers ----- */
   const updateThresholdLocal = (sensorId, next) => {
@@ -1014,7 +1364,7 @@ export default function Alerts() {
       const merged = { ...prev, [key]: { ...prev[key], ...next } };
       setStreams((prevS) =>
         prevS.map((s) =>
-          s.id === key ? { ...s, status: computeStatus(s.temp, merged[key]) } : s
+          s.id === key ? { ...s, status: computeStatus(s.temp, merged[key], s.lastFetchedTime, userTimeZone) } : s
         )
       );
       return merged;
@@ -1121,19 +1471,27 @@ export default function Alerts() {
     const display = sensor.sensor_type === 'humidity'
       ? (sensor.temp != null ? `${sensor.temp.toFixed(1)}%` : '—')
       : (sensor.temp != null ? `${convertForDisplay(sensor.temp, userTempScale).toFixed(1)}°${userTempScale}` : '—');
+    
+    // Get the reason for unconfigured sensors
+    const unconfiguredReason = getUnconfiguredReason(sensor);
+    
     return (
       <div
         className={`rounded-lg shadow p-4 border-l-4 ${cardClass(sensor.status, darkMode)} cursor-pointer hover:shadow-lg transition-shadow`}
         onClick={() => handleAlertClick(sensor)}
       >
         <div className="flex justify-between items-center">
-          <div>
-            <p className="font-semibold text-lg">{sensor.name}</p>
-            <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-              <span className="mr-1">🕐</span>
-              {sensor.lastReading}
-            </p>
-          </div>
+                      <div>
+              <p className="font-semibold text-lg">{sensor.name}</p>
+              <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <span className="mr-1">
+                  {sensor.status === 'Unconfigured' ? '⚠️' : '🕐'}
+                </span>
+                {sensor.status === 'Unconfigured' && unconfiguredReason 
+                  ? unconfiguredReason 
+                  : sensor.lastReading}
+              </p>
+            </div>
           <div className="text-right">
             <div className={`${value} text-xl mb-1 font-bold`}>{sensor.sensor_type === 'humidity' ? `💧 ${display}` : `🌡️ ${display}`}</div>
           </div>
@@ -1222,16 +1580,16 @@ export default function Alerts() {
           )}
         </div>
 
-        <SectionHeader icon="🧩" label="Unconfigured" status="Unconfigured" />
+        <SectionHeader icon="🧩" label="Unconfigured (No Limits or Time Sync Issues)" status="Unconfigured" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {streams.filter((s) => s.status === 'Unconfigured').map((s) => (
             <AlertCard key={`u-${s.id}`} sensor={s} />
           ))}
-          {streams.filter((s) => s.status === 'Unconfigured').length === 0 && (
-            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              All sensors have limits configured
-            </div>
-          )}
+                      {streams.filter((s) => s.status === 'Unconfigured').length === 0 && (
+              <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                All sensors have limits configured and are within time sync
+              </div>
+            )}
         </div>
       </div>
     </main>
@@ -1288,12 +1646,18 @@ export default function Alerts() {
 
           <div className={`rounded-lg shadow p-4 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <div className="flex justify-between items-center">
-              <div>
-                <p className="font-semibold text-lg">{selected.name}</p>
-                <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  <span className="mr-1">🕐</span> {selected.lastReading}
-                </p>
-              </div>
+                          <div>
+              <p className="font-semibold text-lg">{selected.name}</p>
+
+              <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                <span className="mr-1">
+                  {selected.status === 'Unconfigured' ? '⚠️' : '🕐'}
+                </span>
+                {selected.status === 'Unconfigured' 
+                  ? getUnconfiguredReason(selected) 
+                  : selected.lastReading}
+              </p>
+            </div>
               <div className="flex items-center gap-3">
                 <div className={`${getStatusStyles(selected.status, darkMode).value} text-xl mb-1 font-bold`}>
                   {selected.sensor_type === 'humidity'
@@ -1326,10 +1690,10 @@ export default function Alerts() {
             <div className="flex justify-between items-center mb-4">
               <div>
                 <h3 className="text-lg font-semibold">
-                  {selected.sensor_type === 'humidity' ? 'Humidity History' : 'Temperature History'}
+                  {selected.sensor_type === 'humidity' ? 'Humidity History' : 'Temperature History'} (Last 30 Minutes)
                 </h3>
                 <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {selected.name} • {selected.sensor_type === 'humidity' ? '%' : 'F'}
+                  {selected.name} • {selected.sensor_type === 'humidity' ? '%' : 'F'} • 
                 </p>
               </div>
               <div className="text-sm">
@@ -1356,15 +1720,45 @@ export default function Alerts() {
                 sensorType={selected.sensor_type}
               />
             </div>
+            
+            {/* Chart Legend */}
+            <div className="mt-4 flex flex-wrap gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-gray-400 opacity-30 rounded"></div>
+                <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
+                  No data
+                </span>
+              </div>
+              {t.min !== null && t.max !== null && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-red-500 opacity-22 rounded"></div>
+                    <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
+                      Danger zone (outside limits)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-orange-500 opacity-15 rounded"></div>
+                    <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
+                      Warning zone
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
             <h3 className="text-lg font-semibold mb-4">Last Reading</h3>
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span>Time</span>
-                <span className="font-medium">{selected.lastReading}</span>
-              </div>
+                          <div className="space-y-3">
+                <div className="flex justify-between">
+                  <span>{selected.status === 'Unconfigured' ? 'Status' : 'Time'}</span>
+                  <span className="font-medium">
+                    {selected.status === 'Unconfigured' 
+                      ? getUnconfiguredReason(selected) 
+                      : selected.lastReading}
+                  </span>
+                </div>
               <div className="flex justify-between">
                 <span>Threshold</span>
                 <span className="font-medium">
