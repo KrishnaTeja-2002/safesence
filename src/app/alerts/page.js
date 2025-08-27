@@ -1111,6 +1111,8 @@ export default function Alerts() {
   const [thresholds, setThresholds] = useState({});         // id -> {min,max,warning}
   const [series, setSeries] = useState({});                 // id -> values in °F (or % for humidity)
   const HISTORY_LEN = 120;
+  // Local per-alert options (message + delivery channels)
+  const [alertOptions, setAlertOptions] = useState({});     // id -> { message, email, sms }
   
   // Use ref to track latest streams for real-time updates
   const streamsRef = useRef(streams);
@@ -1423,6 +1425,21 @@ export default function Alerts() {
       );
       return merged;
     });
+  };
+
+  // Update alert options locally by sensor id
+  const updateAlertOptionsLocal = (sensorId, next) => {
+    const key = makeKey(sensorId);
+    setAlertOptions((prev) => ({
+      ...prev,
+      [key]: {
+        message: '',
+        email: false,
+        sms: true,
+        ...(prev[key] || {}),
+        ...next,
+      },
+    }));
   };
 
   // Keep modal fields synced to selected sensor
@@ -1804,6 +1821,52 @@ export default function Alerts() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+
+          {/* Alert Message and Delivery Options */}
+          <div className={`${darkMode ? 'bg-gray-800 text-white' : 'bg-white'} rounded-lg shadow p-6`}>
+            <h3 className="text-lg font-semibold mb-4">Alert Message</h3>
+            <input
+              type="text"
+              value={(alertOptions[selected.id]?.message) ?? ''}
+              onChange={(e) => updateAlertOptionsLocal(selected.sensor_id, { message: e.target.value })}
+              placeholder="Ex: My (Sensor Name): Temperature above 50°F"
+              className={`border rounded px-3 py-3 w-full ${darkMode ? 'bg-gray-700 text-white border-gray-600 placeholder-gray-400 focus:border-orange-500' : 'bg-white border-gray-300 placeholder-gray-400 focus:border-orange-500'} focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+            />
+
+            <div className="mt-8 space-y-8">
+              {/* Email toggle */}
+              <div className="flex items-center gap-6">
+                <button
+                  type="button"
+                  onClick={() => updateAlertOptionsLocal(selected.sensor_id, { email: !(alertOptions[selected.id]?.email) })}
+                  className={`relative inline-flex items-center transition-colors rounded-full w-24 h-12 ${(alertOptions[selected.id]?.email) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-gray-600' : 'bg-gray-300')}`}
+                  aria-pressed={(alertOptions[selected.id]?.email) ? true : false}
+                >
+                  <span className={`inline-block w-8 h-8 bg-white rounded-full transform transition-transform ${(alertOptions[selected.id]?.email) ? 'translate-x-12' : 'translate-x-2'}`} />
+                </button>
+                <div>
+                  <div className="font-medium">Send email alert</div>
+                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Send an Email when this alert is triggered to selected contacts</div>
+                </div>
+              </div>
+
+              {/* SMS toggle */}
+              <div className="flex items-center gap-6">
+                <button
+                  type="button"
+                  onClick={() => updateAlertOptionsLocal(selected.sensor_id, { sms: !(((alertOptions[selected.id]?.sms) ?? true)) })}
+                  className={`relative inline-flex items-center transition-colors rounded-full w-24 h-12 ${(((alertOptions[selected.id]?.sms) ?? true)) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-gray-600' : 'bg-gray-300')}`}
+                  aria-pressed={(((alertOptions[selected.id]?.sms) ?? true)) ? true : false}
+                >
+                  <span className={`inline-block w-8 h-8 bg-white rounded-full transform transition-transform ${(((alertOptions[selected.id]?.sms) ?? true)) ? 'translate-x-12' : 'translate-x-2'}`} />
+                </button>
+                <div>
+                  <div className="font-medium">Send SMS alerts</div>
+                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Send an SMS when this alert is triggered to selected contacts</div>
+                </div>
+              </div>
             </div>
           </div>
 
