@@ -45,7 +45,7 @@ const toF = (val, unit) => (val == null ? null : unit === 'C' ? cToF(Number(val)
 const convertForDisplay = (tempF, userScale) =>
   tempF == null ? null : userScale === 'C' ? fToC(tempF) : tempF;
 const convertFromDisplay = (displayTemp, userScale) =>
-  displayTemp == null ? null : userScale === 'C' ? cToF(displayTemp) : tempF;
+  displayTemp == null ? null : userScale === 'C' ? cToF(Number(displayTemp)) : Number(displayTemp);
 
 const toLocalFromReading = (r, timeZone) => {
   try {
@@ -326,6 +326,10 @@ function ThresholdChart({
   // Dynamic zoom based on limits and data - only when not editing
   const plotData = (localData && localData.length ? localData : data) || [];
   const limitPadding = 10; // Add padding around limits for better visibility
+  // Use only finite numeric values for calculations to avoid NaN issues
+  const numericData = Array.isArray(plotData) ? plotData.filter((v) => Number.isFinite(v)) : [];
+  const observedMin = numericData.length > 0 ? Math.min(...numericData) : null;
+  const observedMax = numericData.length > 0 ? Math.max(...numericData) : null;
   
   // Function to detect data gaps and create grey shading areas
   const createGapShading = () => {
@@ -372,20 +376,36 @@ function ThresholdChart({
   const dataGaps = createGapShading();
   
   // Use static zoom while editing, dynamic zoom when not editing
-  const yMinScale = isEditing 
-    ? (editScaleMin !== null ? editScaleMin : (draftMin !== null ? draftMin - limitPadding : -20)) // Use frozen scale while editing
-    : plotData.length > 0 
-      ? (min !== null ? Math.min(min - limitPadding, Math.min(...plotData) - limitPadding) : Math.min(...plotData) - limitPadding)
-      : (min !== null ? min - limitPadding : -20);
-  const yMaxScale = isEditing 
-    ? (editScaleMax !== null ? editScaleMax : (draftMax !== null ? draftMax + limitPadding : 100)) // Use frozen scale while editing
-      : plotData.length > 0 
-        ? (max !== null ? Math.max(max + limitPadding, Math.max(...plotData) + limitPadding) : Math.max(...plotData) + limitPadding)
-        : (max !== null ? max + limitPadding : 100);
+  const fallbackMin = -20;
+  const fallbackMax = 100;
+  const baseMinWhenNotEditing = (min !== null && Number.isFinite(min))
+    ? min - limitPadding
+    : (observedMin !== null ? observedMin - limitPadding : fallbackMin);
+  const baseMaxWhenNotEditing = (max !== null && Number.isFinite(max))
+    ? max + limitPadding
+    : (observedMax !== null ? observedMax + limitPadding : fallbackMax);
+
+  const yMinScale = isEditing
+    ? (editScaleMin !== null
+        ? editScaleMin
+        : (Number.isFinite(draftMin) ? draftMin - limitPadding : baseMinWhenNotEditing))
+    : baseMinWhenNotEditing;
+  const yMaxScale = isEditing
+    ? (editScaleMax !== null
+        ? editScaleMax
+        : (Number.isFinite(draftMax) ? draftMax + limitPadding : baseMaxWhenNotEditing))
+    : baseMaxWhenNotEditing;
   
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const clamp = (v, lo, hi) => {
+    const num = Number(v);
+    if (!Number.isFinite(num)) return lo;
+    return Math.max(lo, Math.min(hi, num));
+  };
+  const yRange = Number.isFinite(yMaxScale - yMinScale) && (yMaxScale - yMinScale) !== 0
+    ? (yMaxScale - yMinScale)
+    : 1; // Prevent division by zero / NaN
   const y = (t) =>
-    padT + chartH * (1 - (clamp(t, yMinScale, yMaxScale) - yMinScale) / (yMaxScale - yMinScale));
+    padT + chartH * (1 - (clamp(t, yMinScale, yMaxScale) - yMinScale) / yRange);
   
   // X-axis mapping: map time to chart coordinates
   const x = (timeOrIndex) => {
@@ -518,13 +538,30 @@ function ThresholdChart({
     onChange && onChange({ min: origMin, max: origMax, warning: origWarning });
   };
 
+  // Validation for Save button (sensor-type aware)
+  const nMinDraft = Number(draftMin);
+  const nMaxDraft = Number(draftMax);
+  const nWarnDraft = Number(draftWarning);
+  const lowerBound = sensorType === 'humidity' ? 0 : -100; // °F for temperature
+  const upperBound = sensorType === 'humidity' ? 100 : 200; // °F for temperature
+  const isValidLimits = (
+    Number.isFinite(nMinDraft) &&
+    Number.isFinite(nMaxDraft) &&
+    Number.isFinite(nWarnDraft) &&
+    nMinDraft >= lowerBound &&
+    nMaxDraft <= upperBound &&
+    nMinDraft < nMaxDraft &&
+    nWarnDraft >= 0 && nWarnDraft <= 50 &&
+    (nMaxDraft - nWarnDraft) > (nMinDraft + nWarnDraft)
+  );
+
   const saveEdit = async () => {
     if (!sensorId || !supabase) {
       setIsEditing(false);
       return;
     }
-    const nMin = Number(draftMin), nMax = Number(draftMax);
-    if (!(Number.isFinite(nMin) && Number.isFinite(nMax) && nMin < nMax)) {
+    const nMin = Number(draftMin), nMax = Number(draftMax), nWarn = Number(draftWarning);
+    if (!isValidLimits) {
       setSaveStatus('error');
       return;
     }
@@ -537,17 +574,17 @@ function ThresholdChart({
         .update({
           min_limit: nMin,
           max_limit: nMax,
-          warning_limit: draftWarning,
+          warning_limit: nWarn,
           updated_at: new Date().toISOString(),
         })
         .eq('sensor_id', sensorId);
       if (error) throw error;
 
       // reflect in parent
-      onChange && onChange({ min: nMin, max: nMax, warning: draftWarning });
+      onChange && onChange({ min: nMin, max: nMax, warning: nWarn });
       setOrigMin(nMin);
       setOrigMax(nMax);
-      setOrigWarning(draftWarning);
+      setOrigWarning(nWarn);
       // Clear frozen scale
       setEditScaleMin(null);
       setEditScaleMax(null);
@@ -618,9 +655,10 @@ function ThresholdChart({
                 <button
                   type="button"
                   onClick={saveEdit}
+                  disabled={!isValidLimits}
                   className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
                     darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'
-                  }`}
+                  } ${!isValidLimits ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
                   {saveStatus === 'saving' ? 'Saving…' : 'Save'}
                 </button>
@@ -980,7 +1018,7 @@ function ThresholdChart({
             type="number"
             step="1"
             min={sensorType === 'humidity' ? yMinScale : convertForDisplay(yMinScale, userTempScale)}
-            max={sensorType === 'humidity' ? yMaxScale : convertForDisplay(yMaxScale, userTempScale)}
+            max={sensorType === 'humidity' ? yMaxScale : convertForDisplay(yMaxScale, userTempScale) ?? ''}
             value={isEditing 
               ? (sensorType === 'humidity' ? (draftMax ?? '') : convertForDisplay(draftMax, userTempScale) ?? '')
               : (sensorType === 'humidity' ? (max ?? '') : convertForDisplay(max, userTempScale) ?? '')
@@ -1009,7 +1047,7 @@ function ThresholdChart({
             type="number"
             step="1"
             min={sensorType === 'humidity' ? yMinScale : convertForDisplay(yMinScale, userTempScale)}
-            max={sensorType === 'humidity' ? yMaxScale : convertForDisplay(yMaxScale, userTempScale)}
+            max={sensorType === 'humidity' ? yMaxScale : convertForDisplay(yMaxScale, userTempScale) ?? ''}
             value={isEditing 
               ? (sensorType === 'humidity' ? (draftMin ?? '') : convertForDisplay(draftMin, userTempScale) ?? '')
               : (sensorType === 'humidity' ? (min ?? '') : convertForDisplay(min, userTempScale) ?? '')
@@ -1038,7 +1076,7 @@ function ThresholdChart({
             type="number"
             step="1"
             min="0"
-            max=""
+            max={Number.isFinite((isEditing ? draftMax : max) - (isEditing ? draftMin : min)) ? (isEditing ? draftMax : max) - (isEditing ? draftMin : min) : undefined}
             value={isEditing ? (draftWarning ?? '') : (warning ?? '')}
             disabled={!isEditing}
             onChange={(e) => {
