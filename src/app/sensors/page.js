@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Bluetooth, ChevronDown, Edit, Trash, AlertTriangle, X } from 'lucide-react';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
+import apiClient from '../lib/apiClient';
 
 // Supabase configuration
 const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
@@ -87,8 +88,7 @@ export default function Sensors() {
   useEffect(() => {
     const fetchSensors = async () => {
       try {
-        const { data: sensorData, error } = await supabase.from('sensors').select('*');
-        if (error) throw error;
+        const sensorData = await apiClient.getSensors();
         console.log('Raw sensor data from Supabase:', sensorData); // Debug log
         if (sensorData && sensorData.length > 0) {
           const formattedSensors = sensorData.map(sensor => ({

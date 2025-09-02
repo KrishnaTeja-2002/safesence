@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
+import apiClient from "../lib/apiClient";
 
 /* ===== Supabase (read-only) ===== */
 const supabase = createClient(
@@ -187,12 +188,7 @@ export default function History() {
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from("sensors")
-          .select("sensor_id, sensor_name, sensor_type, metric")
-          .order("sensor_name", { ascending: true });
-
-        if (error) throw error;
+        const data = await apiClient.getSensors();
 
         let list = (data || []).map(r => ({
           sensor_id: r.sensor_id,
@@ -240,15 +236,10 @@ export default function History() {
         const start = end - rangeHours * 3600 * 1000;
         const fromIso = new Date(start).toISOString();
 
-        const { data, error } = await supabase
-          .from("raw_readings_v2")
-          .select("reading_value, fetched_at, approx_time, timestamp")
-          .eq("sensor_id", activeSensor.sensor_id)
-          .gte("fetched_at", fromIso)
-          .order("fetched_at", { ascending: true })
-          .limit(20_000);
-
-        if (error) throw error;
+        const data = await apiClient.getSensorReadings(activeSensor.sensor_id, {
+          startTime: fromIso,
+          limit: 20000
+        });
 
         const deviceMetric = (activeSensor.metric || "F").toUpperCase();
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
+import apiClient from "../lib/apiClient";
 
 // Supabase client (env first, then project fallback)
 const supabase = createClient(
@@ -71,46 +72,8 @@ export default function Account() {
       const uid = session.user.id;
       setUserId(uid);
 
-      // fetch prefs row
-      const { data: row, error: rErr } = await supabase
-        .from("user_preferences")
-        .select("*")
-        .eq("user_id", uid)
-        .single();
-
-      // PGRST116 = row not found
-      if (rErr && rErr.code !== "PGRST116") {
-        setError(rErr.message || "Failed to load preferences.");
-        setLoading(false);
-        return;
-      }
-
-      if (!row) {
-        // create default row (safe with RLS)
-        const defaults = {
-          user_id: uid,
-          temp_scale: TEMP_UI_TO_DB["Fahrenheit"],
-          show_temp: true,
-          show_humidity: false,
-          show_sensors: true,
-          show_users: true,
-          show_alerts: true,
-          show_notifications: true,
-          time_zone: tzLabelToIana["AKDT"],
-          dark_mode: false,
-        };
-        await supabase.from("user_preferences").upsert(defaults, { onConflict: "user_id" });
-        // sync UI and theme
-        if (darkMode !== false) toggleDarkMode();
-        setPreferences({
-          tempScale: "Fahrenheit",
-          dashboard: ["Temperature Monitoring System", "Sensors", "Users", "Alerts", "Notifications"],
-          timeZone: "AKDT",
-          darkMode: false,
-        });
-        setLoading(false);
-        return;
-      }
+      // fetch prefs using API
+      const row = await apiClient.getUserPreferences();
 
       // map DB -> UI
       const ui = {
@@ -170,8 +133,7 @@ export default function Account() {
         username: (preferences.username || "").trim() || null,
       };
 
-      const { error: upErr } = await supabase.from("user_preferences").upsert(row, { onConflict: "user_id" });
-      if (upErr) throw upErr;
+      await apiClient.updateUserPreferences(row);
 
       // sync global theme
       if (preferences.darkMode !== darkMode) toggleDarkMode();

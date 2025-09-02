@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
+import apiClient from "../lib/apiClient";
+import { getStatusDisplay, isAlertStatus, isOfflineStatus } from "../lib/statusUtils";
 
 /* ===== Supabase client ===== */
 const supabase = createClient(
@@ -13,83 +15,9 @@ const supabase = createClient(
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M"
 );
 
-/* ===== Thresholds & helpers ===== */
+/* ===== Simple helpers ===== */
 const fToC = (v) => (v == null ? null : (v - 32) * 5 / 9);
 const cToF = (v) => (v == null ? null : v * 9 / 5 + 32);
-const convertVal = (v, fromUnit, toUnit) => {
-  if (v == null || fromUnit === toUnit) return v;
-  return fromUnit === "C" ? cToF(v) : fToC(v);
-};
-
-// Offline-aware status: mark Unconfigured if last_fetched_time is 30+ minutes old
-const computeStatus = (value, { min, max, warning } = {}, lastFetchedTime) => {
-  try {
-    if (lastFetchedTime) {
-      const sensorTime = new Date(lastFetchedTime);
-      const now = new Date();
-      const diffMinutes = Math.abs(now.getTime() - sensorTime.getTime()) / (1000 * 60);
-      if (diffMinutes >= 30) return "Unconfigured";
-    } else {
-      return "Unconfigured";
-    }
-  } catch {}
-
-  if (value == null) return "Unconfigured";
-  if (!Number.isFinite(min) || !Number.isFinite(max) || Number(min) >= Number(max)) return "Unconfigured";
-
-  const span = Number(max) - Number(min);
-  const margin = Math.max(0, Math.min(Number(warning ?? 0), span / 2));
-  if (value < Number(min) || value > Number(max)) return "Needs Attention";
-  if (value < Number(min) + margin || value > Number(max) - margin) return "Warning";
-  return "Good";
-};
-
-const formatTimeDifference = (minutes) => {
-  if (minutes < 60) return `${Math.round(minutes)} min`;
-  if (minutes < 1440) return `${Math.round(minutes / 60)} hr`;
-  if (minutes < 10080) {
-    const days = minutes / 1440;
-    return `${Math.round(days)} day${Math.round(days) !== 1 ? 's' : ''}`;
-  }
-  if (minutes < 43200) {
-    const weeks = minutes / 10080;
-    return `${Math.round(weeks)} week${Math.round(weeks) !== 1 ? 's' : ''}`;
-  }
-  if (minutes < 525600) {
-    const months = minutes / 43200;
-    return `${Math.round(months)} month${Math.round(months) !== 1 ? 's' : ''}`;
-  }
-  const years = minutes / 525600;
-  return `${Math.round(years)} year${Math.round(years) !== 1 ? 's' : ''}`;
-};
-
-const getUnconfiguredReason = (item) => {
-  if (!item) return null;
-  if (item.lastFetchedTime) {
-    try {
-      const sensorTime = new Date(item.lastFetchedTime);
-      const now = new Date();
-      const diffMinutes = Math.abs(now.getTime() - sensorTime.getTime()) / (1000 * 60);
-      if (diffMinutes >= 30) return `Sensor Offline (${formatTimeDifference(diffMinutes)})`;
-    } catch {}
-  }
-  return "Unconfigured";
-};
-
-// Compute status based on sensor limits from database
-const computeStatusGeneric = (value, thresholds) => {
-  if (value == null) return "Unconfigured";
-  if (!thresholds || !Number.isFinite(thresholds.min) || !Number.isFinite(thresholds.max) || Number(thresholds.min) >= Number(thresholds.max)) {
-    return "Unconfigured";
-  }
-  
-  const span = Number(thresholds.max) - Number(thresholds.min);
-  const margin = Math.max(0, Math.min(Number(thresholds.warning ?? 0), span / 2)); // clamp to half-range
-  
-  if (value < Number(thresholds.min) || value > Number(thresholds.max)) return "Needs Attention";
-  if (value < Number(thresholds.min) + margin || value > Number(thresholds.max) - margin) return "Warning";
-  return "Good";
-};
 
 // Axis configs
 const axisConfigTemp = (unit) =>
@@ -153,8 +81,7 @@ export default function Dashboard() {
     notificationsList: [],
   });
 
-  // Sensor thresholds from database
-  const [thresholds, setThresholds] = useState({}); // sensor_id -> {min, max, warning}
+  // No thresholds state needed - using database status directly
 
   // Filter: 'all' | 'temperature' | 'humidity'
   const [selectedType, setSelectedType] = useState("all");
@@ -210,13 +137,14 @@ export default function Dashboard() {
     const list = [];
     let id = 1;
     items.forEach((it) => {
-      if (it.status === "Needs Attention" || it.status === "Warning") {
+      if (isAlertStatus(it.status)) {
+        const statusDisplay = getStatusDisplay(it.status);
         list.push({
           id: id++,
-          title: `${it.status} (${it.name})`,
+          title: `${statusDisplay.label} (${it.name})`,
           description: it.kind === "humidity" ? `Humidity: ${it.displayValue}` : `Temperature: ${it.displayValue}`,
           date: fmtDate(nowTs || Date.now(), tz, false),
-          type: it.status === "Needs Attention" ? "error" : "warning",
+          type: it.status === "alert" ? "error" : "warning",
           sensorId: it.sensor_id,
         });
       }
@@ -228,23 +156,9 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const { data: sensorRows, error: sErr } = await supabase
-          .from("sensors")
-          .select("sensor_id, sensor_name, metric, sensor_type, latest_temp, approx_time, last_fetched_time, updated_at, min_limit, max_limit, warning_limit");
-        if (sErr) throw sErr;
+        const sensorRows = await apiClient.getSensors();
 
-        // Store thresholds for each sensor
-        const thresholdsMap = {};
-        (sensorRows || []).forEach((r) => {
-          if (r.sensor_id) {
-            thresholdsMap[r.sensor_id] = {
-              min: r.min_limit,
-              max: r.max_limit,
-              warning: r.warning_limit,
-            };
-          }
-        });
-        setThresholds(thresholdsMap);
+        // No need to store thresholds - using database status directly
 
         // Use sensors.latest_temp directly; no additional latest lookup required
 
@@ -258,19 +172,18 @@ export default function Dashboard() {
 
             let value = null;
             let displayValue = "--";
-            let status = "Good";
-            let color = "bg-green-500";
+            let status = "unknown"; // Default to unknown instead of "Good"
+            let color = "bg-gray-500"; // Default to gray instead of green
             let unit = prefs.unit;
 
                          if (kind === "temperature") {
                const sensorUnit = (r.metric || "F").toUpperCase() === "C" ? "C" : "F";
-               // Normalize to °F for status calculation
+               // Convert to °F for display consistency
                const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
                
-               // Get thresholds for this sensor (already in °F)
-               const sensorThresholds = thresholdsMap[r.sensor_id];
-               // Calculate status using °F values
-               status = computeStatus(valueInF, sensorThresholds, r.last_fetched_time);
+               // Use status from database instead of calculating
+               status = r.status || 'unknown';
+
                
                // Convert to user's preferred unit for display only
                value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
@@ -282,19 +195,21 @@ export default function Dashboard() {
                unit = "%";
                // Humidity values are already in the correct unit (%)
                value = raw != null ? Number(raw) : null;
-               // Get thresholds for this sensor
-               const sensorThresholds = thresholdsMap[r.sensor_id];
-               status = computeStatus(value, sensorThresholds, r.last_fetched_time);
+               // Use status from database instead of calculating
+               status = r.status || 'unknown';
+
                displayValue = value != null ? `${Math.round(value)}%` : "--%";
              }
 
-                         // Update color based on status
-             if (status === "Needs Attention") color = "bg-red-500";
-             else if (status === "Warning") color = "bg-[#FF9866]";
-             else if (status === "Unconfigured") color = "bg-gray-500";
-             else color = "bg-[#98CC37]";
+                         // Update color based on status from database
+             const statusDisplay = getStatusDisplay(status);
+             if (status === "alert") color = "bg-red-500";
+             else if (status === "warning") color = "bg-[#FF9866]";
+             else if (status === "offline") color = "bg-gray-500";
+             else if (status === "unknown") color = "bg-gray-500";
+             else color = "bg-[#98CC37]"; // ok status
 
-                         return {
+            return {
                sensor_id: r.sensor_id,
                sensor_type: sType,
                kind, // 'temperature' | 'humidity'
@@ -307,7 +222,7 @@ export default function Dashboard() {
                approx_time: r.approx_time,
                lastFetchedTime: r.last_fetched_time,
                lastUpdated: r.updated_at || new Date().toISOString(),
-               thresholds: thresholdsMap[r.sensor_id],
+               // No thresholds needed - using database status
              };
           })
           .sort((a, b) => a.name.localeCompare(b.name));
@@ -317,10 +232,10 @@ export default function Dashboard() {
 
         const sensorsKPI = {
           total: filtered.length,
-          error: filtered.filter((t) => t.status === "Needs Attention").length,
-          warning: filtered.filter((t) => t.status === "Warning").length,
-          success: filtered.filter((t) => t.status === "Good").length,
-          unconfigured: filtered.filter((t) => t.status === "Unconfigured").length,
+          error: filtered.filter((t) => t.status === "alert").length,
+          warning: filtered.filter((t) => t.status === "warning").length,
+          success: filtered.filter((t) => t.status === "ok").length,
+          unconfigured: filtered.filter((t) => t.status === "offline" || t.status === "unknown").length,
           disconnected: filtered.filter((t) => t.value == null).length,
         };
 
@@ -354,14 +269,7 @@ export default function Dashboard() {
         const r = payload.new || {};
         if (!r.sensor_id) return;
 
-        setThresholds((prev) => ({
-          ...prev,
-          [r.sensor_id]: {
-            min: r.min_limit ?? prev[r.sensor_id]?.min,
-            max: r.max_limit ?? prev[r.sensor_id]?.max,
-            warning: r.warning_limit ?? prev[r.sensor_id]?.warning,
-          },
-        }));
+        // No need to update thresholds - using database status directly
 
         setData((prev) => {
           const items = [...prev.items];
@@ -369,34 +277,29 @@ export default function Dashboard() {
           if (idx < 0) return prev;
 
           const item = items[idx];
-          const t = {
-            min: r.min_limit ?? thresholds[r.sensor_id]?.min,
-            max: r.max_limit ?? thresholds[r.sensor_id]?.max,
-            warning: r.warning_limit ?? thresholds[r.sensor_id]?.warning,
-          };
-
           let value = null;
-          let status = "Good";
+          let status = "unknown"; // Default to unknown
           let displayValue = item.displayValue;
 
           if (item.kind === "temperature") {
             const sensorUnit = (r.metric || item.unit || "F").toUpperCase() === "C" ? "C" : "F";
             const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
             const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
-            status = computeStatus(valueInF, t, r.last_fetched_time);
+            status = r.status || 'unknown';
             value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
             displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
           } else {
             const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
             value = raw != null ? raw : null;
-            status = computeStatus(value, t, r.last_fetched_time);
+            status = r.status || 'unknown';
             displayValue = value != null ? `${Math.round(value)}%` : "--%";
           }
 
           let color = "bg-[#98CC37]";
-          if (status === "Needs Attention") color = "bg-red-500";
-          else if (status === "Warning") color = "bg-[#FF9866]";
-          else if (status === "Unconfigured") color = "bg-gray-500";
+          if (status === "alert") color = "bg-red-500";
+          else if (status === "warning") color = "bg-[#FF9866]";
+          else if (status === "offline") color = "bg-gray-500";
+          else if (status === "unknown") color = "bg-gray-500";
 
           items[idx] = {
             ...item,
@@ -406,16 +309,16 @@ export default function Dashboard() {
             color,
             lastFetchedTime: r.last_fetched_time ?? item.lastFetchedTime,
             lastUpdated: r.updated_at || item.lastUpdated || new Date().toISOString(),
-            thresholds: t,
+            // No thresholds needed - using database status
           };
 
           const filtered = visibleItems(items, selectedType, prefs);
           const sensorsKPI = {
             total: filtered.length,
-            error: filtered.filter((t) => t.status === "Needs Attention").length,
-            warning: filtered.filter((t) => t.status === "Warning").length,
-            success: filtered.filter((t) => t.status === "Good").length,
-            unconfigured: filtered.filter((t) => t.status === "Unconfigured").length,
+            error: filtered.filter((t) => t.status === "alert").length,
+            warning: filtered.filter((t) => t.status === "warning").length,
+            success: filtered.filter((t) => t.status === "ok").length,
+            unconfigured: filtered.filter((t) => t.status === "offline" || t.status === "unknown").length,
             disconnected: filtered.filter((t) => t.value == null).length,
           };
           const notificationsList = buildNotifications(filtered, prefs.tz);
@@ -426,7 +329,7 @@ export default function Dashboard() {
 
     return () => supabase.removeChannel(ch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, thresholds]);
+  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
 
   /* ===== UI helpers ===== */
   useEffect(() => {
@@ -592,25 +495,25 @@ export default function Dashboard() {
                       <div className="flex items-center">
                         <div className={`w-2 h-2 bg-red-500 rounded-full mr-1 ${darkMode ? "bg-red-400" : ""}`}></div>
                         <span className={`text-red-500 font-medium ${darkMode ? "text-red-400" : ""}`}>
-                          {kpiItems.filter((t) => t.status === "Needs Attention").length}
+                          {kpiItems.filter((t) => t.status === "alert").length}
                         </span>
                       </div>
                       <div className="flex items-center">
                         <div className={`w-2 h-2 bg-yellow-500 rounded-full mr-1 ${darkMode ? "bg-yellow-400" : ""}`}></div>
                         <span className={`text-yellow-500 font-medium ${darkMode ? "text-yellow-400" : ""}`}>
-                          {kpiItems.filter((t) => t.status === "Warning").length}
+                          {kpiItems.filter((t) => t.status === "warning").length}
                         </span>
                       </div>
                       <div className="flex items-center">
                         <div className={`w-2 h-2 bg-green-500 rounded-full mr-1 ${darkMode ? "bg-green-400" : ""}`}></div>
                         <span className={`text-green-500 font-medium ${darkMode ? "text-green-400" : ""}`}>
-                          {kpiItems.filter((t) => t.status === "Good").length}
+                          {kpiItems.filter((t) => t.status === "ok").length}
                         </span>
                       </div>
                       <div className="flex items-center">
                         <div className={`w-2 h-2 bg-gray-500 rounded-full mr-1 ${darkMode ? "bg-gray-400" : ""}`}></div>
                         <span className={`text-gray-500 font-medium ${darkMode ? "text-gray-400" : ""}`}>
-                          {kpiItems.filter((t) => t.status === "Unconfigured").length}
+                          {kpiItems.filter((t) => t.status === "offline" || t.status === "unknown").length}
                         </span>
                       </div>
                       <div className="flex items-center">
@@ -711,19 +614,19 @@ export default function Dashboard() {
                     ) : (
                       chartItems.map((it, i) => {
                         const h = toHeight(it);
-                        const label = it.status === "Unconfigured"
+                        const label = it.status === "offline" || it.status === "unknown"
                           ? "NA"
                           : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue);
                         return (
                           <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                            {(it.status === "Unconfigured" || it.value != null) && (
+                            {(it.status === "offline" || it.status === "unknown" || it.value != null) && (
                               <div
                                 className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
-                                  it.status === "Needs Attention"
+                                  it.status === "alert"
                                     ? "bg-red-500 text-white border-2 border-red-600"
-                                    : it.status === "Warning"
+                                    : it.status === "warning"
                                     ? "bg-yellow-500 text-white border-2 border-yellow-600"
-                                    : it.status === "Unconfigured"
+                                    : it.status === "offline" || it.status === "unknown"
                                     ? "bg-gray-500 text-white border-2 border-gray-600"
                                     : "bg-green-500 text-white border-2 border-green-600"
                                 }`}
@@ -733,7 +636,7 @@ export default function Dashboard() {
                                   transform: "translateX(-50%)",
                                   whiteSpace: "nowrap",
                                   boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                                  animation: (it.status === "Needs Attention" || it.status === "Warning") ? "customBounce 2s infinite" : "none",
+                                  animation: (it.status === "alert" || it.status === "warning") ? "customBounce 2s infinite" : "none",
                                 }}
                               >
                                 {label}
@@ -743,16 +646,16 @@ export default function Dashboard() {
                             {it.value != null ? (
                               <div
                                 className={`relative w-16 rounded-t-lg shadow-xl transition-all duration-500 group-hover:w-20 ${it.color} ${
-                                  it.status === "Needs Attention" ? "animate-pulse" : ""
+                                  it.status === "alert" ? "animate-pulse" : ""
                                 }`}
                                 style={{
                                   height: `${Math.max(h, 8)}px`,
                                                                      background:
-                                     it.status === "Needs Attention"
+                                     it.status === "alert"
                                        ? "linear-gradient(to top, #dc2626, #ef4444)"
-                                       : it.status === "Warning"
+                                       : it.status === "warning"
                                        ? "linear-gradient(to top, #fef08a, #fef3c7)"
-                                       : it.status === "Unconfigured"
+                                       : it.status === "offline" || it.status === "unknown"
                                        ? "linear-gradient(to top, #6b7280, #9ca3af)"
                                        : "linear-gradient(to top, #bbf7d0, #dcfce7)",
                                   boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
@@ -780,11 +683,11 @@ export default function Dashboard() {
                       <p className="text-sm font-bold truncate group-hover:text-blue-600 transition-colors">{it.name}</p>
                                                                       <p
                            className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
-                             it.status === "Needs Attention"
+                             it.status === "alert"
                                ? "bg-red-100 text-red-700 animate-bounce"
-                               : it.status === "Warning"
+                               : it.status === "warning"
                                ? "bg-yellow-200 text-yellow-800"
-                               : it.status === "Unconfigured"
+                               : it.status === "offline" || it.status === "unknown"
                                ? "bg-gray-100 text-gray-700"
                                : "bg-green-200 text-green-800"
                            }`}
@@ -862,20 +765,20 @@ export default function Dashboard() {
                                                  <td className="py-2">
                            <span
                              className={`font-bold ${
-                               it.status === "Needs Attention" ? "text-red-500" : it.status === "Warning" ? "text-yellow-500" : it.status === "Unconfigured" ? "text-gray-500" : "text-green-500"
+                               it.status === "alert" ? "text-red-500" : it.status === "warning" ? "text-yellow-500" : it.status === "offline" || it.status === "unknown" ? "text-gray-500" : "text-green-500"
                              }`}
                            >
-                             {it.status === "Unconfigured" ? "NA" : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue)}
+                             {it.status === "offline" || it.status === "unknown" ? "NA" : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue)}
                            </span>
                          </td>
                         <td className="py-2">
                                                      <span
                              className={`px-2 py-1 rounded-full text-xs font-medium ${
-                               it.status === "Needs Attention"
+                               it.status === "alert"
                                  ? "bg-red-100 text-red-800"
-                                 : it.status === "Warning"
+                                 : it.status === "warning"
                                  ? "bg-yellow-200 text-yellow-800"
-                                 : it.status === "Unconfigured"
+                                 : it.status === "offline" || it.status === "unknown"
                                  ? "bg-gray-100 text-gray-800"
                                  : "bg-green-200 text-green-800"
                              } ${darkMode ? "bg-gray-700 text-white" : ""}`}
@@ -884,7 +787,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                                                  <td className="py-2">{
-                           it.status === "Unconfigured" && getUnconfiguredReason(it)
+                           (it.status === "offline" || it.status === "unknown") && getUnconfiguredReason(it)
                              ? getUnconfiguredReason(it)
                              : it.lastFetchedTime
                                ? fmtDate(it.lastFetchedTime, prefs.tz, true)

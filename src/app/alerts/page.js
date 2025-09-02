@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
+import apiClient from '../lib/apiClient';
+import { getStatusDisplay, isAlertStatus, isOfflineStatus } from '../lib/statusUtils';
 
 /* -------------------- Supabase (inline keys) -------------------- */
 const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
@@ -60,89 +62,36 @@ const toLocalFromReading = (r, timeZone) => {
 };
 
 /* -------------------- Status -------------------- */
-/** 
- * Computes sensor status based on:
- * 1. Time difference: If sensor last_fetched_time (EST) differs by 30+ minutes from user timezone → Unconfigured
- * 2. Temperature limits: If min/max missing or invalid → Unconfigured
- * 3. Temperature values: Based on thresholds → Needs Attention, Warning, or Good
- */
-const computeStatus = (temp, { min, max, warning }, sensorApproxTime, userTimeZone) => {
-  // Check if sensor time differs by 30+ minutes from current time
-  if (sensorApproxTime) {
-    try {
-      // Parse the sensor last_fetched_time
-      const sensorTime = new Date(sensorApproxTime);
-      
-      // Get current time in UTC to avoid timezone confusion
-      const currentTime = new Date();
-      
-      // Calculate time difference in minutes
-      const timeDiffMinutes = Math.abs(currentTime.getTime() - sensorTime.getTime()) / (1000 * 60);
-      
-      // Debug logging
-      console.log(`Sensor ${sensorApproxTime}: sensorTime=${sensorTime.toISOString()}, currentTime=${currentTime.toISOString()}, diff=${timeDiffMinutes.toFixed(2)} minutes`);
-      
-      // If time difference is 30 minutes or more, mark as Unconfigured
-      if (timeDiffMinutes >= 30) {
-        console.log(`Sensor marked as Unconfigured due to time difference: ${timeDiffMinutes.toFixed(2)} minutes`);
-        return 'Unconfigured';
-      }
-      
-      // If sensor has recent activity (within 30 minutes), continue with normal status logic
-      console.log(`Sensor has recent activity, proceeding with normal status logic`);
-    } catch (error) {
-      console.error('Error calculating time difference:', error);
-      // If there's an error calculating time, continue with normal status logic
-    }
-  } else {
-    // If no timestamp available, mark as Unconfigured
-    console.log('Sensor marked as Unconfigured: no timestamp available');
-    return 'Unconfigured';
-  }
-  
-  if (temp == null) {
-    console.log('Sensor marked as Unconfigured: temperature is null');
-    return 'Unconfigured';
-  }
-  if (!Number.isFinite(min) || !Number.isFinite(max) || Number(min) >= Number(max)) {
-    console.log(`Sensor marked as Unconfigured: invalid limits - min: ${min}, max: ${max}, warning: ${warning}`);
-    return 'Unconfigured';
-  }
-  const span = Number(max) - Number(min);
-  const margin = Math.max(0, Math.min(Number(warning ?? 0), span / 2)); // clamp to half-range
-  if (temp < Number(min) || temp > Number(max)) {
-    console.log(`Sensor status: Needs Attention - temp: ${temp}, min: ${min}, max: ${max}`);
-    return 'Needs Attention';
-  }
-  if (temp < Number(min) + margin || temp > Number(max) - margin) {
-    console.log(`Sensor status: Warning - temp: ${temp}, min: ${min}, max: ${max}, margin: ${margin}`);
-    return 'Warning';
-  }
-  console.log(`Sensor status: Good - temp: ${temp}, min: ${min}, max: ${max}, margin: ${margin}`);
-  return 'Good';
-};
+// No status calculations needed - using database status directly
 
 /* -------------------- Styles -------------------- */
 const getStatusStyles = (status, darkMode) => {
   switch (status) {
-    case 'Needs Attention':
+    case 'alert':
       return {
         section: `${darkMode ? 'bg-red-900 text-red-300' : 'bg-red-200 text-red-900'}`,
         border: 'border-red-500',
         value: 'text-red-600',
       };
-    case 'Warning':
+    case 'warning':
       return {
         section: `${darkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-200 text-yellow-900'}`,
         border: 'border-yellow-400',
         value: 'text-yellow-600',
       };
-    case 'Good':
+    case 'ok':
       return {
         section: `${darkMode ? 'bg-green-900 text-green-300' : 'bg-green-200 text-green-900'}`,
         border: 'border-green-500',
         value: 'text-green-600',
       };
+    case 'offline':
+      return {
+        section: `${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-800'}`,
+        border: 'border-gray-500',
+        value: 'text-gray-600',
+      };
+    case 'unknown':
     default:
       return {
         section: `${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-800'}`,
@@ -153,19 +102,23 @@ const getStatusStyles = (status, darkMode) => {
 };
 
 const CARD_STYLES = {
-  'Needs Attention': {
+  alert: {
     light: 'bg-red-50 border-red-500 text-red-900',
     dark: 'bg-red-950/40 border-red-400 text-red-200',
   },
-  Warning: {
+  warning: {
     light: 'bg-yellow-50 border-yellow-400 text-yellow-900',
     dark: 'bg-yellow-950/40 border-yellow-300 text-yellow-200',
   },
-  Good: {
+  ok: {
     light: 'bg-green-50 border-green-500 text-green-900',
     dark: 'bg-green-950/40 border-green-400 text-green-200',
   },
-  Unconfigured: {
+  offline: {
+    light: 'bg-gray-50 border-gray-400 text-gray-800',
+    dark: 'bg-gray-900/40 border-gray-500 text-gray-100',
+  },
+  unknown: {
     light: 'bg-gray-50 border-gray-300 text-gray-800',
     dark: 'bg-gray-900/40 border-gray-500 text-gray-100',
   },
@@ -184,6 +137,7 @@ function ThresholdChart({
   warning,
   darkMode,
   onChange,
+  onSave,
   sensorId,
   unit,
   editable,
@@ -240,7 +194,7 @@ function ThresholdChart({
       try {
         const now = Date.now();
         const thirtyMinAgoISO = new Date(now - 30 * 60 * 1000).toISOString();
-        const thirtyMinpprox_goSec = Math.floor((now - 30 * 60 * 1000) / 1000);
+        const thirtyMinAgoSec = Math.floor((now - 30 * 60 * 1000) / 1000);
 
         let { data: rows, error } = await supabase
           .from('raw_readings_v2')
@@ -304,11 +258,16 @@ function ThresholdChart({
         const dbMax = Number(row.max_limit);
         const dbWarning = Number(row.warning_limit);
         if (!cancelled && Number.isFinite(dbMin) && Number.isFinite(dbMax) && dbMin < dbMax) {
-          // update parent thresholds to DB values
+          // Convert from sensor metric units to user's preferred scale for display
+          const displayMin = sensorType === 'humidity' ? dbMin : convertForDisplay(toF(dbMin, unit === 'C' ? 'C' : 'F'), userTempScale);
+          const displayMax = sensorType === 'humidity' ? dbMax : convertForDisplay(toF(dbMax, unit === 'C' ? 'C' : 'F'), userTempScale);
+          const displayWarning = Number.isFinite(dbWarning) ? dbWarning : 10; // ✅ default to 10%
+          
+          // update parent thresholds to converted values
           onChange && onChange({ 
-            min: dbMin, 
-            max: dbMax, 
-            warning: Number.isFinite(dbWarning) ? dbWarning : Math.floor((dbMax - dbMin) * 0.1)
+            min: displayMin, 
+            max: displayMax, 
+            warning: displayWarning
           });
         }
       } catch {
@@ -376,8 +335,9 @@ function ThresholdChart({
   const dataGaps = createGapShading();
   
   // Use static zoom while editing, dynamic zoom when not editing
-  const fallbackMin = -20;
-  const fallbackMax = 100;
+  // Convert fallback values to user's preferred scale
+  const fallbackMin = sensorType === 'humidity' ? 0 : (userTempScale === 'C' ? fToC(-20) : -20);
+  const fallbackMax = sensorType === 'humidity' ? 100 : (userTempScale === 'C' ? fToC(100) : 100);
   const baseMinWhenNotEditing = (min !== null && Number.isFinite(min))
     ? min - limitPadding
     : (observedMin !== null ? observedMin - limitPadding : fallbackMin);
@@ -435,8 +395,11 @@ function ThresholdChart({
     if (min !== null && max !== null && warning !== null) {
       if (latestValue < min || latestValue > max) {
         lineColor = 'red'; // Danger zone - latest value is in danger
-      } else if (latestValue <= min + warning || latestValue >= max - warning) {
-        lineColor = 'orange'; // Warning zone - latest value is in warning
+      } else {
+        const band = (Number(warning) || 0) / 100 * (max - min);
+        if (latestValue <= min + band || latestValue >= max - band) {
+          lineColor = 'orange'; // Warning zone - latest value is in warning
+        }
       }
     }
     // Otherwise stays green (latest value is in good zone or no thresholds set)
@@ -544,43 +507,96 @@ function ThresholdChart({
   const nWarnDraft = Number(draftWarning);
   const lowerBound = sensorType === 'humidity' ? 0 : -100; // °F for temperature
   const upperBound = sensorType === 'humidity' ? 100 : 200; // °F for temperature
+  const rangeDraft = nMaxDraft - nMinDraft;
   const isValidLimits = (
     Number.isFinite(nMinDraft) &&
     Number.isFinite(nMaxDraft) &&
     Number.isFinite(nWarnDraft) &&
     nMinDraft >= lowerBound &&
     nMaxDraft <= upperBound &&
-    nMinDraft < nMaxDraft &&
-    nWarnDraft >= 0 && nWarnDraft <= 50 &&
-    (nMaxDraft - nWarnDraft) > (nMinDraft + nWarnDraft)
+    rangeDraft > 0 &&
+    nWarnDraft >= 0 && nWarnDraft <= 50  // 2*band < range ⇒ warn% < 50
   );
 
   const saveEdit = async () => {
     if (!sensorId || !supabase) {
+      console.error('Missing required parameters:', { sensorId, supabase: !!supabase });
       setIsEditing(false);
       return;
     }
+    
+    // Check if user is authenticated
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.error('User not authenticated');
+      setSaveStatus('error');
+      return;
+    }
     const nMin = Number(draftMin), nMax = Number(draftMax), nWarn = Number(draftWarning);
+    
+    // Validate the input values
+    if (isNaN(nMin) || isNaN(nMax) || isNaN(nWarn)) {
+      console.error('Invalid numeric values:', { nMin, nMax, nWarn });
+      setSaveStatus('error');
+      return;
+    }
+    
     if (!isValidLimits) {
+      console.error('Invalid limits validation failed:', { nMin, nMax, nWarn, isValidLimits });
       setSaveStatus('error');
       return;
     }
 
     try {
       setSaveStatus('saving');
-      // persist to DB (store Fahrenheit)
-      const { error } = await supabase
-        .from('sensors')
-        .update({
-          min_limit: nMin,
-          max_limit: nMax,
-          warning_limit: nWarn,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('sensor_id', sensorId);
-      if (error) throw error;
+      
+      // Convert limits to sensor's metric units before saving to DB
+      let dbMin = nMin, dbMax = nMax, dbWarn = nWarn;
+      
+      if (sensorType === 'temperature') {
+        // Convert from user's preferred scale to sensor's metric unit
+        if (userTempScale === 'F' && unit === 'C') {
+          // User entered in Fahrenheit, but sensor stores in Celsius - convert F→C for DB
+          dbMin = fToC(nMin);
+          dbMax = fToC(nMax);
+          // Warning limit is percentage, no temperature conversion needed
+          dbWarn = nWarn;
+          console.log(`Converting limits from Fahrenheit to Celsius: ${nMin}°F→${dbMin}°C, ${nMax}°F→${dbMax}°C, warning=${dbWarn}% (no conversion)`);
+        } else if (userTempScale === 'C' && unit === 'F') {
+          // User entered in Celsius, but sensor stores in Fahrenheit - convert C→F for DB
+          dbMin = cToF(nMin);
+          dbMax = cToF(nMax);
+          // Warning limit is percentage, no temperature conversion needed
+          dbWarn = nWarn;
+          console.log(`Converting limits from Celsius to Fahrenheit: ${nMin}°C→${dbMin}°F, ${nMax}°C→${dbMax}°F, warning=${dbWarn}% (no conversion)`);
+        } else {
+          console.log(`No conversion needed: userTempScale=${userTempScale}, sensorUnit=${unit}`);
+        }
+        // If userTempScale === unit, no conversion needed
+      } else {
+        console.log(`Humidity sensor: no conversion needed (always %)`);
+      }
+      // For humidity sensors, no conversion needed (always %)
+      
+      // Validate converted values
+      if (isNaN(dbMin) || isNaN(dbMax) || isNaN(dbWarn)) {
+        console.error('Converted values are invalid:', { dbMin, dbMax, dbWarn });
+        setSaveStatus('error');
+        return;
+      }
+      
+      // persist to DB with converted values
+      console.log(`Saving to database: min_limit=${dbMin}, max_limit=${dbMax}, warning_limit=${dbWarn} (sensor unit: ${unit})`);
+      const result = await apiClient.updateAlertThresholds(sensorId, {
+        min_limit: dbMin,
+        max_limit: dbMax,
+        warning_limit: dbWarn,
+        updated_at: new Date().toISOString(),
+      });
+      
+      console.log('Save result:', result);
 
-      // reflect in parent
+      // reflect in parent (use original values for UI consistency)
       onChange && onChange({ min: nMin, max: nMax, warning: nWarn });
       setOrigMin(nMin);
       setOrigMax(nMax);
@@ -591,9 +607,59 @@ function ThresholdChart({
       setIsEditing(false);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus(''), 1500);
+      
+      // Refresh sensor data after successful save to get updated status
+      if (onSave) {
+        console.log('Calling onSave callback to refresh sensor data...');
+        onSave();
+      }
     } catch (e) {
       console.error('Save limits error:', e);
+      console.error('Error details:', {
+        message: e.message,
+        stack: e.stack,
+        sensorId,
+        dbMin,
+        dbMax,
+        dbWarn,
+        unit,
+        sensorType,
+        userTempScale
+      });
       setSaveStatus('error');
+    }
+  };
+
+  // Test function to debug API calls
+  const testApiCall = async () => {
+    try {
+      console.log('Testing API call...');
+      const testData = {
+        sensor_id: sensorId,
+        min_limit: 20,
+        max_limit: 30,
+        warning_limit: 5, // This is a percentage (5%), not a temperature value
+        updated_at: new Date().toISOString(),
+      };
+      console.log('Test data:', testData);
+      const result = await apiClient.updateAlertThresholds(sensorId, testData);
+      console.log('Test result:', result);
+    } catch (error) {
+      console.error('Test API call failed:', error);
+    }
+  };
+
+  // Test function to check if API endpoint is working
+  const testApiEndpoint = async () => {
+    try {
+      console.log('Testing API endpoint...');
+      const response = await fetch('/api/test-alerts');
+      const data = await response.json();
+      console.log('Test endpoint result:', data);
+      alert(`Test endpoint result: ${JSON.stringify(data)}`);
+    } catch (error) {
+      console.error('Test endpoint failed:', error);
+      alert(`Test endpoint failed: ${error.message}`);
     }
   };
 
@@ -620,6 +686,21 @@ function ThresholdChart({
     `w-16 h-6 text-xs rounded border px-1.5 py-0.5 text-right ` +
     (darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white text-gray-800 border-gray-300') +
     (isEditing ? '' : ' opacity-70 cursor-not-allowed');
+
+  // Show fallback message if no data
+  if (!Array.isArray(plotData) || plotData.length === 0) {
+    return (
+      <div ref={containerRef} className={containerStyles}>
+        <div className="flex items-center justify-center h-full text-gray-500">
+          <div className="text-center">
+            <div className="text-lg mb-2">📊</div>
+            <div>No data available for this sensor</div>
+            <div className="text-sm mt-1">Data will appear here once the sensor starts sending readings</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className={containerStyles}>
@@ -662,6 +743,24 @@ function ThresholdChart({
                 >
                   {saveStatus === 'saving' ? 'Saving…' : 'Save'}
                 </button>
+                <button
+                  type="button"
+                  onClick={testApiCall}
+                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
+                    darkMode ? 'bg-blue-700 hover:bg-blue-800' : 'bg-blue-500 hover:bg-blue-600'
+                  }`}
+                >
+                  Test API
+                </button>
+                <button
+                  type="button"
+                  onClick={testApiEndpoint}
+                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
+                    darkMode ? 'bg-green-700 hover:bg-green-800' : 'bg-green-500 hover:bg-green-600'
+                  }`}
+                >
+                  Test Endpoint
+                </button>
                 {saveStatus === 'error' && (
                   <span className={darkMode ? 'text-red-300 text-xs' : 'text-red-600 text-xs'}>Save failed</span>
                 )}
@@ -692,37 +791,62 @@ function ThresholdChart({
         ))}
 
         {/* Red & orange bands - only show if limits are set */}
-        {min !== null && max !== null && warning !== null && (
-          <>
-            {/* Danger zones (red) - above max and below min */}
-            <rect x={padL} y={padT} width={chartW} height={Math.max(0, y(isEditing ? draftMax : max) - padT)} fill={red} opacity="0.22" />
-            <rect x={padL} y={y(isEditing ? draftMin : min)} width={chartW} height={Math.max(0, padT + chartH - y(isEditing ? draftMin : min))} fill={red} opacity="0.22" />
-            
-            {/* Warning zones (orange) - between danger and good zones */}
-            {/* Upper warning zone - between max and max-warning */}
-            <rect 
-              x={padL} 
-              y={y(isEditing ? draftMax : max)} 
-              width={chartW} 
-              height={Math.max(0, y(isEditing ? draftMax - draftWarning : max - warning) - y(isEditing ? draftMax : max))} 
-              fill={orange} 
-              opacity="0.15" 
-              stroke={orange}
-              strokeWidth="1"
-            />
-            {/* Lower warning zone - between min and min+warning */}
-            <rect 
-              x={padL} 
-              y={y(isEditing ? draftMin + (isEditing ? draftWarning : warning) : min + warning)} 
-              width={chartW} 
-              height={Math.max(0, y(isEditing ? draftMin : min) - y(isEditing ? draftMin + (isEditing ? draftWarning : warning) : min + warning))} 
-              fill={orange} 
-              opacity="0.15" 
-              stroke={orange}
-              strokeWidth="1"
-            />
-          </>
-        )}
+        {min !== null && max !== null && warning !== null && (() => {
+          const currentMin = isEditing ? draftMin : min;
+          const currentMax = isEditing ? draftMax : max;
+          const currentWarning = isEditing ? draftWarning : warning;
+          
+          // Validate values before calculation
+          if (!Number.isFinite(currentMin) || !Number.isFinite(currentMax) || !Number.isFinite(currentWarning)) {
+            return null;
+          }
+          
+          // Calculate warning zone as percentage of the range
+          const range = currentMax - currentMin;
+          if (range <= 0) return null; // Invalid range
+          
+          const warningOffset = (range * currentWarning) / 100; // Convert percentage to temperature offset
+          
+          const upperWarningStart = currentMax - warningOffset;
+          const lowerWarningEnd = currentMin + warningOffset;
+          
+
+          
+          // Validate warning zone boundaries
+          if (upperWarningStart <= lowerWarningEnd) return null; // Invalid warning zones
+          
+          return (
+            <>
+              {/* Danger zones (red) - above max and below min */}
+              <rect x={padL} y={padT} width={chartW} height={Math.max(0, y(currentMax) - padT)} fill={red} opacity="0.22" />
+              <rect x={padL} y={y(currentMin)} width={chartW} height={Math.max(0, padT + chartH - y(currentMin))} fill={red} opacity="0.22" />
+              
+              {/* Warning zones (orange) - between danger and good zones */}
+              {/* Upper warning zone - between max and max-warning */}
+              <rect 
+                x={padL} 
+                y={y(currentMax)} 
+                width={chartW} 
+                height={Math.max(0, y(upperWarningStart) - y(currentMax))} 
+                fill={orange} 
+                opacity="0.15" 
+                stroke={orange}
+                strokeWidth="1"
+              />
+              {/* Lower warning zone - between min and min+warning */}
+              <rect 
+                x={padL} 
+                y={y(lowerWarningEnd)} 
+                width={chartW} 
+                height={Math.max(0, y(currentMin) - y(lowerWarningEnd))} 
+                fill={orange} 
+                opacity="0.15" 
+                stroke={orange}
+                strokeWidth="1"
+              />
+            </>
+          );
+        })()}
 
         {/* Limit lines - only show if limits are set */}
         {min !== null && max !== null && (
@@ -731,6 +855,8 @@ function ThresholdChart({
             <line x1={padL} x2={padL + chartW} y1={y(isEditing ? draftMin : min)} y2={y(isEditing ? draftMin : min)} stroke={red} strokeWidth="3" strokeDasharray="8 6" />
           </>
         )}
+
+
 
         {/* X-axis time labels for 30-minute window */}
         {(() => {
@@ -797,8 +923,8 @@ function ThresholdChart({
                 : [-20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
               return baseTicks.map((t) => (
                 <g key={t}>
-                  <line x1={padL - 6} x2={padL} y1={y(userTempScale === 'C' ? cToF(t) : t)} y2={y(userTempScale === 'C' ? cToF(t) : t)} stroke={strokeAxis} />
-                  <text x={padL - 10} y={y(userTempScale === 'C' ? cToF(t) : t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
+                  <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
+                  <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
                     {Math.round(t)}{userTempScale === 'C' ? '°C' : '°F'}
                   </text>
                 </g>
@@ -816,7 +942,7 @@ function ThresholdChart({
                 <g key={t}>
                   <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
                   <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
-                    {Math.round(convertForDisplay(t, userTempScale))}{userTempScale === 'C' ? '°C' : '°F'}
+                    {Math.round(t)}{userTempScale === 'C' ? '°C' : '°F'}
                   </text>
                 </g>
               ));
@@ -868,18 +994,21 @@ function ThresholdChart({
                       filter="blur(2px)"
                     />
                   );
-                } else if (temp <= min + warning || temp >= max - warning) {
-                  // Warning zone - orange glow
-                  return (
-                    <circle 
-                      cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
-                      cy={y(plotData[plotData.length - 1])} 
-                      r="12" 
-                      fill="#EA580C" 
-                      opacity="0.4"
-                      filter="blur(2px)"
-                    />
-                  );
+                } else {
+                  const band = (Number(warning) || 0) / 100 * (max - min);
+                  if (temp <= min + band || temp >= max - band) {
+                    // Warning zone - orange glow
+                    return (
+                      <circle 
+                        cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
+                        cy={y(plotData[plotData.length - 1])} 
+                        r="12" 
+                        fill="#EA580C" 
+                        opacity="0.4"
+                        filter="blur(2px)"
+                      />
+                    );
+                  }
                 }
               }
               return null;
@@ -894,7 +1023,8 @@ function ThresholdChart({
                 const temp = plotData[plotData.length - 1];
                 if (min !== null && max !== null && warning !== null) {
                   if (temp < min || temp > max) return '#DC2626'; // Red for danger
-                  if (temp <= min + warning || temp >= max - warning) return '#EA580C'; // Orange for warning
+                  const band = (Number(warning) || 0) / 100 * (max - min);
+                  if (temp <= min + band || temp >= max - band) return '#EA580C'; // Orange for warning
                 }
                 return '#10B981'; // Green for good (default when no thresholds)
               })()}
@@ -1017,12 +1147,9 @@ function ThresholdChart({
           <input
             type="number"
             step="1"
-            min={sensorType === 'humidity' ? yMinScale : convertForDisplay(yMinScale, userTempScale)}
-            max={sensorType === 'humidity' ? yMaxScale : convertForDisplay(yMaxScale, userTempScale) ?? ''}
-            value={isEditing 
-              ? (sensorType === 'humidity' ? (draftMax ?? '') : convertForDisplay(draftMax, userTempScale) ?? '')
-              : (sensorType === 'humidity' ? (max ?? '') : convertForDisplay(max, userTempScale) ?? '')
-            }
+            min={yMinScale}
+            max={yMaxScale}
+            value={isEditing ? (draftMax ?? '') : (max ?? '')}
             disabled={!isEditing}
             onChange={(e) => {
               const displayVal = Number(e.target.value);
@@ -1046,12 +1173,9 @@ function ThresholdChart({
           <input
             type="number"
             step="1"
-            min={sensorType === 'humidity' ? yMinScale : convertForDisplay(yMinScale, userTempScale)}
-            max={sensorType === 'humidity' ? yMaxScale : convertForDisplay(yMaxScale, userTempScale) ?? ''}
-            value={isEditing 
-              ? (sensorType === 'humidity' ? (draftMin ?? '') : convertForDisplay(draftMin, userTempScale) ?? '')
-              : (sensorType === 'humidity' ? (min ?? '') : convertForDisplay(min, userTempScale) ?? '')
-            }
+            min={yMinScale}
+            max={yMaxScale}
+            value={isEditing ? (draftMin ?? '') : (min ?? '')}
             disabled={!isEditing}
             onChange={(e) => {
               const displayVal = Number(e.target.value);
@@ -1076,17 +1200,39 @@ function ThresholdChart({
             type="number"
             step="1"
             min="0"
-            max={Number.isFinite((isEditing ? draftMax : max) - (isEditing ? draftMin : min)) ? (isEditing ? draftMax : max) - (isEditing ? draftMin : min) : undefined}
+            max="100"
             value={isEditing ? (draftWarning ?? '') : (warning ?? '')}
             disabled={!isEditing}
             onChange={(e) => {
-              const val = Math.max(0, Number(e.target.value));
+              const val = Math.max(0, Math.min(100, Number(e.target.value)));
               setDraftWarning(val);
               // Don't call onChange while editing - only update local draft state
             }}
             className={baseInput}
-            title={`Warning margin (${sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'})`}
+            title="Warning margin as percentage of range"
           />
+          
+          {/* Warning Zone Calculation Display */}
+          {min !== null && max !== null && warning !== null && Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(warning) && (() => {
+            const range = max - min;
+            if (range <= 0) return null;
+            
+            const warningOffset = (range * warning) / 100;
+            const upperWarningStart = max - warningOffset;
+            const lowerWarningEnd = min + warningOffset;
+            
+            if (upperWarningStart <= lowerWarningEnd) return null;
+            
+            return (
+              <div className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                <div>Range: {Math.round(range)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
+                <div>Warning: {Math.round(warningOffset)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
+                <div className="text-orange-500">
+                  Zones: {Math.round(lowerWarningEnd)} - {Math.round(upperWarningStart)}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -1130,16 +1276,10 @@ export default function Alerts() {
 
   // Function to get the reason why a sensor is unconfigured
   const getUnconfiguredReason = (sensor) => {
-    if (sensor.status !== 'Unconfigured') return null;
-    
-    const t = thresholds[sensor.id] || {};
+    if (sensor.status !== 'offline' && sensor.status !== 'unknown') return null;
     
     if (sensor.temp == null) {
       return 'No temperature readings';
-    }
-    
-    if (!Number.isFinite(t.min) || !Number.isFinite(t.max) || Number(t.min) >= Number(t.max)) {
-      return 'Missing or invalid limits';
     }
     
     // Check for time sync issues
@@ -1157,7 +1297,7 @@ export default function Alerts() {
       }
     }
     
-    return 'Unknown configuration issue';
+    return sensor.status === 'offline' ? 'Sensor Offline' : 'Unknown status';
   };
 
   // Helper function to format time difference in appropriate units
@@ -1221,15 +1361,63 @@ export default function Alerts() {
     run();
   }, [router]);
 
+  // Function to refresh sensor data
+  const refreshSensorData = async () => {
+    try {
+      console.log('Refreshing sensor data...');
+      // Get sensors with all needed data (units, names, types, thresholds, latest values)
+      const sensorRows = await apiClient.getAlerts();
+
+      const nextThresholds = {};
+      const ui = (sensorRows || []).map((r) => {
+        const key = makeKey(r.sensor_id);
+        const unit = (r.metric || 'F').toUpperCase(); // 'F' | 'C' | '%'
+        const sensorType = r.sensor_type || (unit === '%' ? 'humidity' : 'temperature');
+
+        // Use latest_temp directly from sensors table
+        const rawVal = r.latest_temp != null ? Number(r.latest_temp) : null;
+        const valF = sensorType === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
+
+        // Convert thresholds from sensor metric units to user's preferred scale for display
+        const th = {
+          min: Number.isFinite(r?.min_limit) ? 
+            (sensorType === 'humidity' ? Number(r.min_limit) : convertForDisplay(toF(Number(r.min_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+          max: Number.isFinite(r?.max_limit) ? 
+            (sensorType === 'humidity' ? Number(r.max_limit) : convertForDisplay(toF(Number(r.max_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+          warning: Number.isFinite(r?.warning_limit) ? Number(r.warning_limit) : 10, // ✅ default to 10%
+        };
+        nextThresholds[key] = th;
+
+        // Use status directly from database
+        const status = r.status || 'unknown';
+
+        return {
+          id: key,
+          name: r.name || `Sensor ${r.sensor_id}`,
+          temp: valF,
+          status: status,
+          lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
+          lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
+          sensor_id: r.sensor_id,
+          unit,
+          sensor_type: sensorType,
+        };
+      });
+
+      setThresholds(nextThresholds);
+      setStreams(ui.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (e) {
+      console.error('Error refreshing sensor data:', e);
+      setError(e?.message || 'Failed to refresh sensors');
+    }
+  };
+
   /* ----- initial sensors + latest readings + thresholds ----- */
   useEffect(() => {
     const load = async () => {
       try {
         // Get sensors with all needed data (units, names, types, thresholds, latest values)
-        const { data: sensorRows, error: sErr } = await supabase
-          .from('sensors')
-          .select('sensor_id, sensor_name, metric, sensor_type, min_limit, max_limit, warning_limit, latest_temp, last_fetched_time');
-        if (sErr) throw sErr;
+        const sensorRows = await apiClient.getAlerts();
 
         const nextThresholds = {};
         const ui = (sensorRows || []).map((r) => {
@@ -1241,19 +1429,22 @@ export default function Alerts() {
           const rawVal = r.latest_temp != null ? Number(r.latest_temp) : null;
           const valF = sensorType === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
 
+          // Convert thresholds from sensor metric units to user's preferred scale for display
           const th = {
-            min: Number.isFinite(r?.min_limit) ? Number(r.min_limit) : null,
-            max: Number.isFinite(r?.max_limit) ? Number(r.max_limit) : null,
-            warning: Number.isFinite(r?.warning_limit) ? Number(r.warning_limit) : 0,
+            min: Number.isFinite(r?.min_limit) ? 
+              (sensorType === 'humidity' ? Number(r.min_limit) : convertForDisplay(toF(Number(r.min_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+            max: Number.isFinite(r?.max_limit) ? 
+              (sensorType === 'humidity' ? Number(r.max_limit) : convertForDisplay(toF(Number(r.max_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+            warning: Number.isFinite(r?.warning_limit) ? Number(r.warning_limit) : 10, // ✅ default to 10%
           };
           nextThresholds[key] = th;
 
-          const status = computeStatus(valF, th, r.last_fetched_time, userTimeZone);
-          console.log(`Initial load for sensor ${r.sensor_id}: temp=${valF}, status=${status}, last_fetched_time=${r.last_fetched_time}, limits=${JSON.stringify(th)}`);
+          // Use status directly from database
+          const status = r.status || 'unknown';
 
           return {
             id: key,
-            name: r.sensor_name || r.sensor_id,
+            name: r.name || `Sensor ${r.sensor_id}`,
             temp: valF,
             status: status,
             lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
@@ -1275,6 +1466,16 @@ export default function Alerts() {
     };
     load();
   }, [userTimeZone]);
+
+  /* ----- periodic refresh every 20 seconds ----- */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log('Periodic refresh: fetching latest sensor data...');
+      refreshSensorData();
+    }, 20000); // 20 seconds
+
+    return () => clearInterval(interval);
+  }, [refreshSensorData]);
 
   /* ----- history after selecting a sensor ----- */
   useEffect(() => {
@@ -1332,9 +1533,10 @@ export default function Alerts() {
           const valF = type === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
 
           const key = prev[idx].id;
+          // Use thresholds directly (they're already converted to user's preferred scale)
           const th = thresholds[key] || {};
           console.log(`Found thresholds for sensor ${r.sensor_id}:`, th);
-          const newStatus = computeStatus(valF, th, r.last_fetched_time, userTimeZone);
+          const newStatus = r.status || 'unknown';
           
           console.log(`Real-time update for sensor ${r.sensor_id}: temp=${valF}, status=${newStatus}, last_fetched_time=${r.last_fetched_time}`);
           console.log(`Previous status was: ${prev[idx].status}, new status will be: ${newStatus}`);
@@ -1420,7 +1622,7 @@ export default function Alerts() {
       const merged = { ...prev, [key]: { ...prev[key], ...next } };
       setStreams((prevS) =>
         prevS.map((s) =>
-          s.id === key ? { ...s, status: computeStatus(s.temp, merged[key], s.lastFetchedTime, userTimeZone) } : s
+          s.id === key ? { ...s, status: s.status || 'unknown' } : s
         )
       );
       return merged;
@@ -1483,16 +1685,8 @@ export default function Alerts() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from('sensors')
-        .update(updatePayload)
-        .eq('sensor_id', sel.sensor_id)
-        .select('sensor_id, sensor_name, metric, sensor_type')
-        .maybeSingle();
+      const data = await apiClient.updateAlertThresholds(sel.sensor_id, updatePayload);
 
-      if (error) {
-        throw new Error(`Supabase update error: ${JSON.stringify(error)}`);
-      }
       if (!data) {
         throw new Error('Update returned no row. Check RLS or sensor_id.');
       }
@@ -1539,14 +1733,14 @@ export default function Alerts() {
 
   const AlertCard = ({ sensor }) => {
     const { value } = getStatusStyles(sensor.status, darkMode);
-    const display = sensor.status === 'Unconfigured'
+    const display = sensor.status === 'offline' || sensor.status === 'unknown'
       ? 'NA'
       : (sensor.sensor_type === 'humidity'
         ? (sensor.temp != null ? `${sensor.temp.toFixed(1)}%` : '—')
         : (sensor.temp != null ? `${convertForDisplay(sensor.temp, userTempScale).toFixed(1)}°${userTempScale}` : '—'));
     
-    // Get the reason for unconfigured sensors
-    const unconfiguredReason = getUnconfiguredReason(sensor);
+    // Get the reason for offline/unknown sensors
+    const offlineReason = getUnconfiguredReason(sensor);
     
     return (
       <div
@@ -1554,17 +1748,17 @@ export default function Alerts() {
         onClick={() => handleAlertClick(sensor)}
       >
         <div className="flex justify-between items-center">
-                      <div>
-              <p className="font-semibold text-lg">{sensor.name}</p>
-              <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                <span className="mr-1">
-                  {sensor.status === 'Unconfigured' ? '⚠️' : '🕐'}
-                </span>
-                {sensor.status === 'Unconfigured' && unconfiguredReason 
-                  ? unconfiguredReason 
-                  : sensor.lastReading}
-              </p>
-            </div>
+          <div>
+            <p className="font-semibold text-lg">{sensor.name}</p>
+            <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+              <span className="mr-1">
+                {sensor.status === 'offline' ? '📡' : sensor.status === 'unknown' ? '❓' : '🕐'}
+              </span>
+              {sensor.status === 'offline' && offlineReason 
+                ? offlineReason 
+                : sensor.lastReading}
+            </p>
+          </div>
           <div className="text-right">
             <div className={`${value} text-xl mb-1 font-bold`}>{sensor.sensor_type === 'humidity' ? `💧 ${display}` : `🌡️ ${display}`}</div>
           </div>
@@ -1617,52 +1811,64 @@ export default function Alerts() {
       </div>
 
       <div className="space-y-6">
-        <SectionHeader icon="🚨" label="Needs Attention" status="Needs Attention" />
+        <SectionHeader icon="🚨" label="Alert" status="alert" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'Needs Attention').map((s) => (
+          {streams.filter((s) => s.status === 'alert').map((s) => (
             <AlertCard key={`na-${s.id}`} sensor={s} />
           ))}
-          {streams.filter((s) => s.status === 'Needs Attention').length === 0 && (
+          {streams.filter((s) => s.status === 'alert').length === 0 && (
             <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
               No sensors need attention
             </div>
           )}
         </div>
 
-        <SectionHeader icon="⚠️" label="Warning" status="Warning" />
+        <SectionHeader icon="⚠️" label="Warning" status="warning" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'Warning').map((s) => (
+          {streams.filter((s) => s.status === 'warning').map((s) => (
             <AlertCard key={`w-${s.id}`} sensor={s} />
           ))}
-          {streams.filter((s) => s.status === 'Warning').length === 0 && (
+          {streams.filter((s) => s.status === 'warning').length === 0 && (
             <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
               No warning alerts
             </div>
           )}
         </div>
 
-        <SectionHeader icon="✅" label="Good" status="Good" />
+        <SectionHeader icon="✅" label="OK" status="ok" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'Good').map((s) => (
+          {streams.filter((s) => s.status === 'ok').map((s) => (
             <AlertCard key={`g-${s.id}`} sensor={s} />
           ))}
-          {streams.filter((s) => s.status === 'Good').length === 0 && (
+          {streams.filter((s) => s.status === 'ok').length === 0 && (
             <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
               No sensors in good status
             </div>
           )}
         </div>
 
-        <SectionHeader icon="🧩" label="Unconfigured (No Limits or Time Sync Issues)" status="Unconfigured" />
+        <SectionHeader icon="📡" label="Sensor Offline" status="offline" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'Unconfigured').map((s) => (
+          {streams.filter((s) => s.status === 'offline').map((s) => (
             <AlertCard key={`u-${s.id}`} sensor={s} />
           ))}
-                      {streams.filter((s) => s.status === 'Unconfigured').length === 0 && (
-              <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                All sensors have limits configured and are within time sync
-              </div>
-            )}
+          {streams.filter((s) => s.status === 'offline').length === 0 && (
+            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              No offline sensors
+            </div>
+          )}
+        </div>
+
+        <SectionHeader icon="❓" label="Unknown" status="unknown" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {streams.filter((s) => s.status === 'unknown').map((s) => (
+            <AlertCard key={`unk-${s.id}`} sensor={s} />
+          ))}
+          {streams.filter((s) => s.status === 'unknown').length === 0 && (
+            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              No unknown status sensors
+            </div>
+          )}
         </div>
       </div>
     </main>
@@ -1724,16 +1930,16 @@ export default function Alerts() {
 
               <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                 <span className="mr-1">
-                  {selected.status === 'Unconfigured' ? '⚠️' : '🕐'}
+                  {selected.status === 'offline' || selected.status === 'unknown' ? '⚠️' : '🕐'}
                 </span>
-                {selected.status === 'Unconfigured' 
+                {(selected.status === 'offline' || selected.status === 'unknown') 
                   ? getUnconfiguredReason(selected) 
                   : selected.lastReading}
               </p>
             </div>
               <div className="flex items-center gap-3">
                 <div className={`${getStatusStyles(selected.status, darkMode).value} text-xl mb-1 font-bold`}>
-                  {selected.status === 'Unconfigured'
+                  {selected.status === 'offline' || selected.status === 'unknown'
                     ? 'NA'
                     : (selected.sensor_type === 'humidity'
                       ? `💧 ${selected.temp != null ? selected.temp.toFixed(1) : '—'}%`
@@ -1788,6 +1994,7 @@ export default function Alerts() {
                 warning={t.warning}
                 darkMode={darkMode}
                 onChange={({ min, max, warning }) => updateThresholdLocal(selected.sensor_id, { min, max, warning })}
+                onSave={refreshSensorData}
                 sensorId={selected.sensor_id}
                 unit={selected.unit}
                 editable
@@ -1876,7 +2083,7 @@ export default function Alerts() {
                 <div className="flex justify-between">
                   <span>{selected.status === 'Unconfigured' ? 'Status' : 'Time'}</span>
                   <span className="font-medium">
-                    {selected.status === 'Unconfigured' 
+                    {selected.status === 'offline' || selected.status === 'unknown' 
                       ? getUnconfiguredReason(selected) 
                       : selected.lastReading}
                   </span>
@@ -1894,7 +2101,7 @@ export default function Alerts() {
               <div className="flex justify-between">
                 <span>{selected.sensor_type === 'humidity' ? 'Humidity' : 'Air Temperature'}</span>
                 <span className="font-medium">
-                  {selected.status === 'Unconfigured'
+                  {selected.status === 'offline' || selected.status === 'unknown'
                     ? 'NA'
                     : (selected.temp != null
                       ? (selected.sensor_type === 'humidity'
