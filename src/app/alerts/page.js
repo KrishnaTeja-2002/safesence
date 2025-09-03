@@ -1393,7 +1393,7 @@ export default function Alerts() {
 
         return {
           id: key,
-          name: r.name || `Sensor ${r.sensor_id}`,
+          name: r.sensor_name || `Sensor ${r.sensor_id}`,
           temp: valF,
           status: status,
           lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
@@ -1442,17 +1442,17 @@ export default function Alerts() {
           // Use status directly from database
           const status = r.status || 'unknown';
 
-          return {
-            id: key,
-            name: r.name || `Sensor ${r.sensor_id}`,
-            temp: valF,
-            status: status,
-            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
-            lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
-            sensor_id: r.sensor_id,
-            unit,
-            sensor_type: sensorType,
-          };
+                  return {
+          id: key,
+          name: r.sensor_name || `Sensor ${r.sensor_id}`,
+          temp: valF,
+          status: status,
+          lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
+          lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
+          sensor_id: r.sensor_id,
+          unit,
+          sensor_type: sensorType,
+        };
         });
 
         setThresholds(nextThresholds);
@@ -1675,12 +1675,23 @@ export default function Alerts() {
       const updatePayload = {
         updated_at: new Date().toISOString(),
       };
-      if (nextName !== sel.name) updatePayload.sensor_name = nextName;
-      if (targetMetric !== sel.unit) updatePayload.metric = targetMetric;
-      if (targetSensorType !== sel.sensor_type) updatePayload.sensor_type = targetSensorType;
+      let hasChanges = false;
+      
+      if (nextName !== sel.name) {
+        updatePayload.sensor_name = nextName;
+        hasChanges = true;
+      }
+      if (targetMetric !== sel.unit) {
+        updatePayload.metric = targetMetric;
+        hasChanges = true;
+      }
+      if (targetSensorType !== sel.sensor_type) {
+        updatePayload.sensor_type = targetSensorType;
+        hasChanges = true;
+      }
 
       // if nothing changed, just close
-      if (!updatePayload.sensor_name && !updatePayload.metric && !updatePayload.sensor_type) {
+      if (!hasChanges) {
         setShowSettings(false);
         return;
       }

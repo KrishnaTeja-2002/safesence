@@ -235,10 +235,28 @@ export default function History() {
         const end = Date.now();
         const start = end - rangeHours * 3600 * 1000;
         const fromIso = new Date(start).toISOString();
+        const toIso = new Date(end).toISOString();
+
+        console.log(`Fetching data for ${activeSensor.sensor_id} (${rangeKey}):`, {
+          rangeHours,
+          startTime: fromIso,
+          endTime: toIso,
+          timeSpan: `${Math.round((end - start) / (1000 * 60 * 60))} hours`
+        });
+
+        // Increase limit for longer time ranges to ensure we get enough data points
+        const limit = rangeHours >= 24 * 7 ? 50000 : 20000; // More data for week+ ranges
 
         const data = await apiClient.getSensorReadings(activeSensor.sensor_id, {
           startTime: fromIso,
-          limit: 20000
+          endTime: toIso,
+          limit: limit
+        });
+
+        console.log(`Data received:`, {
+          count: data?.length || 0,
+          first: data?.[0]?.fetched_at,
+          last: data?.[data.length - 1]?.fetched_at
         });
 
         const deviceMetric = (activeSensor.metric || "F").toUpperCase();
@@ -254,7 +272,7 @@ export default function History() {
         const cleaned = (data || []).map(r => ({
           tsISO: r.fetched_at || r.approx_time || epochToIso(r.timestamp),
           value: convert(r.reading_value),
-        }));
+        })).reverse(); // Reverse to get chronological order for chart
 
         setRows(cleaned);
         setZoomDomain(null); // clear zoom when sensor/range changes

@@ -32,7 +32,7 @@ export async function GET(request, { params }) {
       .from('raw_readings_v2')
       .select('reading_value, fetched_at, approx_time, timestamp')
       .eq('sensor_id', sensorId)
-      .order('fetched_at', { ascending: true })
+      .order('fetched_at', { ascending: false }) // Get most recent data first
       .limit(limit);
 
     // Add time filters if provided
@@ -43,7 +43,19 @@ export async function GET(request, { params }) {
       query = query.lte('fetched_at', endTime);
     }
 
+    console.log(`API: Fetching readings for sensor ${sensorId}:`, {
+      startTime,
+      endTime,
+      limit
+    });
+
     const { data: readings, error } = await query;
+
+    console.log(`API: Query result:`, {
+      readingsCount: readings?.length || 0,
+      latestReading: readings?.[readings.length - 1]?.fetched_at,
+      error: error?.message
+    });
 
     if (error) {
       return new Response(JSON.stringify({ error: error.message }), { 

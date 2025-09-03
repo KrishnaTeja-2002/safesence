@@ -92,7 +92,7 @@ export default function Sensors() {
         console.log('Raw sensor data from Supabase:', sensorData); // Debug log
         if (sensorData && sensorData.length > 0) {
           const formattedSensors = sensorData.map(sensor => ({
-            id: sensor.id,
+            id: sensor.sensor_id, // Use sensor_id as the primary key
             name: sensor.sensor_name,
             sensor_type: sensor.sensor_type.charAt(0).toUpperCase() + sensor.sensor_type.slice(1).toLowerCase(), // Normalize to title case
             date: sensor.updated_at || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
@@ -158,7 +158,7 @@ export default function Sensors() {
             sensor_name: sensorName,
             sensor_type: sensorType,
           })
-          .eq('id', selectedSensor.id);
+          .eq('sensor_id', selectedSensor.id);
         if (error) throw error;
 
         setSensors(
@@ -190,7 +190,7 @@ export default function Sensors() {
   const handleDeleteSensor = async (sensorId) => {
     if (window.confirm('Are you sure you want to delete this sensor?')) {
       try {
-        const { error } = await supabase.from('sensors').delete().eq('id', sensorId);
+        const { error } = await supabase.from('sensors').delete().eq('sensor_id', sensorId);
         if (error) throw error;
 
         setSensors(sensors.filter(sensor => sensor.id !== sensorId));
@@ -234,7 +234,7 @@ export default function Sensors() {
         if (error) throw error;
 
         setSensors([...sensors, {
-          id: insertedSensor[0].id,
+          id: insertedSensor[0].sensor_id,
           name: sensorName,
           sensor_type: sensorType,
           date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
@@ -246,7 +246,7 @@ export default function Sensors() {
         setDeviceId(null);
         setCurrentView('success');
         setStep(3);
-        console.log('Sensor added successfully:', insertedSensor[0].id);
+        console.log('Sensor added successfully:', insertedSensor[0].sensor_id);
       } catch (err) {
         console.error('Sensor add error:', err.message);
         setError('Failed to add sensor: ' + err.message);

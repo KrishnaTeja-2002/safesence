@@ -39,3 +39,4 @@ export async function authenticateRequest(request) {
     return { error: 'Authentication failed', status: 500 };
   }
 }
+

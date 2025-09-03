@@ -68,7 +68,7 @@ export async function PUT(request) {
     const body = await request.json();
     console.log('Request body:', body);
 
-    const { sensor_id, min_limit, max_limit, warning_limit } = body;
+    const { sensor_id, min_limit, max_limit, warning_limit, sensor_name, metric, sensor_type, updated_at } = body;
 
     if (!sensor_id) {
       console.error('Missing sensor_id');
@@ -78,11 +78,15 @@ export async function PUT(request) {
       });
     }
 
-    // Update sensor thresholds
+    // Update sensor data (thresholds and settings)
     const updateData = {};
     if (min_limit !== undefined) updateData.min_limit = min_limit;
     if (max_limit !== undefined) updateData.max_limit = max_limit;
     if (warning_limit !== undefined) updateData.warning_limit = warning_limit;
+    if (sensor_name !== undefined) updateData.sensor_name = sensor_name;
+    if (metric !== undefined) updateData.metric = metric;
+    if (sensor_type !== undefined) updateData.sensor_type = sensor_type;
+    if (updated_at !== undefined) updateData.updated_at = updated_at;
 
     console.log('Updating sensor with data:', { sensor_id, updateData });
 
@@ -90,7 +94,19 @@ export async function PUT(request) {
       .from('sensors')
       .update(updateData)
       .eq('sensor_id', sensor_id)
-      .select()
+      .select(`
+        sensor_id,
+        sensor_name,
+        metric,
+        sensor_type,
+        min_limit,
+        max_limit,
+        warning_limit,
+        latest_temp,
+        last_fetched_time,
+        status,
+        updated_at
+      `)
       .single();
 
     if (error) {
