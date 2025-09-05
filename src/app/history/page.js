@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
+import apiClient from "../lib/apiClient";
 
 /* ===== Supabase (read-only) ===== */
 const supabase = createClient(
@@ -187,12 +188,7 @@ export default function History() {
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from("sensors")
-          .select("sensor_id, sensor_name, sensor_type, metric")
-          .order("sensor_name", { ascending: true });
-
-        if (error) throw error;
+        const data = await apiClient.getSensors();
 
         let list = (data || []).map(r => ({
           sensor_id: r.sensor_id,
@@ -239,16 +235,29 @@ export default function History() {
         const end = Date.now();
         const start = end - rangeHours * 3600 * 1000;
         const fromIso = new Date(start).toISOString();
+        const toIso = new Date(end).toISOString();
 
-        const { data, error } = await supabase
-          .from("raw_readings_v2")
-          .select("reading_value, fetched_at, approx_time, timestamp")
-          .eq("sensor_id", activeSensor.sensor_id)
-          .gte("fetched_at", fromIso)
-          .order("fetched_at", { ascending: true })
-          .limit(20_000);
+        console.log(`Fetching data for ${activeSensor.sensor_id} (${rangeKey}):`, {
+          rangeHours,
+          startTime: fromIso,
+          endTime: toIso,
+          timeSpan: `${Math.round((end - start) / (1000 * 60 * 60))} hours`
+        });
 
-        if (error) throw error;
+        // Increase limit for longer time ranges to ensure we get enough data points
+        const limit = rangeHours >= 24 * 7 ? 50000 : 20000; // More data for week+ ranges
+
+        const data = await apiClient.getSensorReadings(activeSensor.sensor_id, {
+          startTime: fromIso,
+          endTime: toIso,
+          limit: limit
+        });
+
+        console.log(`Data received:`, {
+          count: data?.length || 0,
+          first: data?.[0]?.fetched_at,
+          last: data?.[data.length - 1]?.fetched_at
+        });
 
         const deviceMetric = (activeSensor.metric || "F").toUpperCase();
 
@@ -263,7 +272,7 @@ export default function History() {
         const cleaned = (data || []).map(r => ({
           tsISO: r.fetched_at || r.approx_time || epochToIso(r.timestamp),
           value: convert(r.reading_value),
-        }));
+        })).reverse(); // Reverse to get chronological order for chart
 
         setRows(cleaned);
         setZoomDomain(null); // clear zoom when sensor/range changes
