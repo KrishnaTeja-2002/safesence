@@ -18,7 +18,7 @@ export async function GET(request, { params }) {
     // Get query parameters
     const startTime = searchParams.get('start_time');
     const endTime = searchParams.get('end_time');
-    const limit = parseInt(searchParams.get('limit')) || 20000;
+    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')) : null;
 
     if (!sensorId) {
       return new Response(JSON.stringify({ error: 'Sensor ID is required' }), { 
@@ -67,9 +67,7 @@ export async function GET(request, { params }) {
     let query = supabaseAdmin
       .from('raw_readings_v2')
       .select('reading_value, fetched_at, approx_time, timestamp')
-      .eq('sensor_id', sensorId)
-      .order('fetched_at', { ascending: false }) // Get most recent data first
-      .limit(limit);
+      .eq('sensor_id', sensorId);
 
     // Add time filters if provided
     if (startTime) {
@@ -79,10 +77,24 @@ export async function GET(request, { params }) {
       query = query.lte('fetched_at', endTime);
     }
 
+    // Order by time - ascending for time ranges, descending for latest data
+    if (startTime || endTime) {
+      query = query.order('fetched_at', { ascending: true }); // Chronological order for time ranges
+    } else {
+      query = query.order('fetched_at', { ascending: false }); // Most recent first for latest data
+    }
+    
+    // Apply limit - use provided limit or default to 10000 for chunked requests
+    const finalLimit = limit || 10000; // Default limit for chunked requests
+    query = query.limit(finalLimit);
+
     console.log(`API: Fetching readings for sensor ${sensorId}:`, {
       startTime,
       endTime,
-      limit
+      requestedLimit: limit,
+      finalLimit,
+      hasTimeRange: !!(startTime || endTime),
+      orderDirection: (startTime || endTime) ? 'ascending' : 'descending'
     });
 
     const { data: readings, error } = await query;

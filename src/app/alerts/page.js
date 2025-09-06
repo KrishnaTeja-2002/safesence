@@ -52,11 +52,6 @@ const convertFromDisplay = (displayTemp, userScale) =>
 const toLocalFromReading = (r, timeZone) => {
   try {
     if (r?.last_fetched_time) return new Date(r.last_fetched_time).toLocaleString('en-US', { timeZone });
-    if (r?.timestamp != null) {
-      const n = Number(r.timestamp);
-      const ms = n > 1e12 ? n : n * 1000;
-      return new Date(ms).toLocaleString('en-US', { timeZone });
-    }
   } catch {}
   return '—';
 };
@@ -206,14 +201,8 @@ function ThresholdChart({
         if (error) throw error;
 
         if (!rows || rows.length === 0) {
-          const { data: rows2, error: err2 } = await supabase
-            .from('raw_readings_v2')
-            .select('reading_value, timestamp')
-            .eq('sensor_id', sensorId)
-            .gte('timestamp', thirtyMinAgoSec)
-            .order('timestamp', { ascending: true });
-          if (err2) throw err2;
-          rows = rows2 || [];
+          // No fallback - only use fetched_at data
+          rows = [];
         }
 
         const u = (unit || 'F').toUpperCase() === 'C' ? 'C' : 'F';
@@ -222,7 +211,7 @@ function ThresholdChart({
         // Create data with timestamps for gap detection
         const dataWithTimestamps = (rows || []).map((r, index) => ({
           value: vals[index],
-          timestamp: r.fetched_at || r.timestamp,
+          timestamp: r.fetched_at,
           reading_value: r.reading_value
         }));
         
@@ -1490,7 +1479,7 @@ export default function Alerts() {
       try {
         const { data, error } = await supabase
           .from('raw_readings_v2')
-          .select('reading_value, timestamp, fetched_at')
+          .select('reading_value, fetched_at')
           .eq('sensor_id', sel.sensor_id)
           .order('fetched_at', { ascending: true })
           .limit(HISTORY_LEN);

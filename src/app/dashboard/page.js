@@ -832,9 +832,7 @@ export default function Dashboard() {
                              ? getUnconfiguredReason(it)
                              : it.lastFetchedTime
                                ? fmtDate(it.lastFetchedTime, prefs.tz, true)
-                               : it.approx_time
-                                 ? fmtDate(it.approx_time, prefs.tz, true)
-                                 : fmtDate(it.lastUpdated, prefs.tz, true)
+                               : "No data"
                          }</td>
                       </tr>
                     ))}

@@ -509,7 +509,7 @@ export default function Team() {
                       <option value="viewer">Viewer</option>
                       <option value="admin">Admin</option>
                     </select>
-                    <button
+                  <button
                       onClick={async () => {
                         try {
                           if (!inviteEmail) throw new Error('Email is required');
@@ -524,8 +524,8 @@ export default function Team() {
                       className={`px-4 py-2 rounded text-white ${darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'}`}
                     >
                       Share
-                    </button>
-                  </div>
+                  </button>
+                </div>
                 )}
 
                 {/* Access table */}
@@ -690,7 +690,7 @@ export default function Team() {
                       )}
                     </tbody>
                   </table>
-                </div>
+            </div>
               </div>
             )}
           </div>
