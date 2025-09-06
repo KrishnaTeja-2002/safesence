@@ -11,7 +11,7 @@ export async function GET(request, { params }) {
       });
     }
 
-    const { supabaseAdmin } = authResult;
+    const { supabaseAdmin, user } = authResult;
     const { id: sensorId } = params;
     const { searchParams } = new URL(request.url);
 
@@ -23,6 +23,42 @@ export async function GET(request, { params }) {
     if (!sensorId) {
       return new Response(JSON.stringify({ error: 'Sensor ID is required' }), { 
         status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Permission check: ensure the user can view this sensor
+    const { data: sensorMeta, error: metaErr } = await supabaseAdmin
+      .from('sensors')
+      .select('owner_id')
+      .eq('sensor_id', sensorId)
+      .maybeSingle();
+    if (metaErr || !sensorMeta) {
+      return new Response(JSON.stringify({ error: metaErr?.message || 'Sensor not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    let canRead = sensorMeta.owner_id === user.id;
+    if (!canRead) {
+      const userEmail = (user.email || '').toLowerCase();
+      const { data: access, error: accErr } = await supabaseAdmin
+        .from('team_invitations')
+        .select('id')
+        .eq('sensor_id', sensorId)
+        .eq('status', 'accepted')
+        .or(`user_id.eq.${user.id},email.ilike.${userEmail}`)
+        .maybeSingle();
+      if (accErr) {
+        return new Response(JSON.stringify({ error: accErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+      canRead = !!access; // accepted invite grants read
+    }
+
+    if (!canRead) {
+      return new Response(JSON.stringify({ error: 'Forbidden: no access to this sensor' }), {
+        status: 403,
         headers: { 'Content-Type': 'application/json' }
       });
     }

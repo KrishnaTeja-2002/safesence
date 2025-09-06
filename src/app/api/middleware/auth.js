@@ -3,13 +3,16 @@ import { createClient } from '@supabase/supabase-js';
 // Create a server-side Supabase client with service role key for API routes
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kwaylmatpkcajsctujor.supabase.co';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
 
 // For API routes, we need to use the service role key to bypass RLS
 // In production, make sure to set SUPABASE_SERVICE_ROLE_KEY in your environment variables
 if (!supabaseServiceKey) {
   console.error('SUPABASE_SERVICE_ROLE_KEY is not set in environment variables');
 }
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey);
+// Separate client for auth verification (anon is sufficient)
+const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function authenticateRequest(request) {
   try {
@@ -43,8 +46,8 @@ export async function authenticateRequest(request) {
     }
 
     console.log('Token found, verifying...');
-    // Verify the JWT token with Supabase
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    // Verify the JWT token with Supabase (use anon client for auth)
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token);
 
     if (error || !user) {
       console.error('Token verification failed:', error);
@@ -80,7 +83,7 @@ export async function authenticateFromSession(request) {
     }
 
     // Verify the session
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(sessionToken);
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(sessionToken);
 
     if (error || !user) {
       return { error: 'Invalid session', status: 401 };

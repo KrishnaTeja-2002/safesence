@@ -32,9 +32,11 @@ export default function Account() {
   const { darkMode, toggleDarkMode } = useDarkMode();
 
   const [userId, setUserId] = useState(null);
+  const [userEmail, setUserEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const [preferences, setPreferences] = useState({
     tempScale: "Fahrenheit",
@@ -70,7 +72,9 @@ export default function Account() {
         return;
       }
       const uid = session.user.id;
+      const email = session.user.email || "";
       setUserId(uid);
+      setUserEmail(email);
 
       // fetch prefs using API
       const row = await apiClient.getUserPreferences();
@@ -148,6 +152,24 @@ export default function Account() {
 
   const handleCloseSaved = () => setSavedPreferences(null);
 
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      router.push("/login");
+    } catch (error) {
+      setError("Failed to logout: " + error.message);
+    }
+  };
+
+  const getUserInitials = (email) => {
+    if (!email) return "U";
+    const parts = email.split("@")[0].split(".");
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return email[0].toUpperCase();
+  };
+
   // slider styles (unchanged from your UI)
   const sliderStyle = {
     position: "relative",
@@ -198,18 +220,25 @@ export default function Account() {
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-3xl font-bold">Account Settings</h2>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className={`text-sm font-medium ${darkMode ? "text-gray-200" : "text-gray-700"}`}>
+                  {preferences.username || userEmail.split("@")[0] || "User"}
+                </div>
+                <div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+                  {userEmail}
+                </div>
+              </div>
+              <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                {getUserInitials(userEmail)}
+              </div>
+            </div>
             <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                router.push("/login");
-              }}
-              className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+              onClick={() => setShowLogoutConfirm(true)}
+              className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition-colors"
             >
               Log out
             </button>
-            <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
-              FA
-            </div>
           </div>
         </div>
 
@@ -324,7 +353,41 @@ export default function Account() {
           )}
         </div>
 
-      
+        {/* Logout Confirmation Dialog */}
+        {showLogoutConfirm && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={() => setShowLogoutConfirm(false)}
+          >
+            <div 
+              className={`rounded-lg p-6 max-w-md w-full mx-4 ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold mb-4">Confirm Logout</h3>
+              <p className={`mb-6 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
+                Are you sure you want to log out? You'll need to sign in again to access your account.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className={`px-4 py-2 rounded border ${
+                    darkMode
+                      ? "bg-gray-700 text-white border-gray-600 hover:bg-gray-600"
+                      : "bg-gray-100 text-gray-800 border-gray-300 hover:bg-gray-200"
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 rounded bg-red-500 text-white hover:bg-red-600 transition-colors"
+                >
+                  Log out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

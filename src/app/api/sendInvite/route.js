@@ -3,9 +3,13 @@ import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase configuration
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kwaylmatpkcajsctujor.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Admin client for DB writes (sensor_access upserts)
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAdmin = createClient(supabaseUrl, serviceKey || supabaseAnonKey);
 
 // Helper function to get initials (same as in dashboard)
 const getInitials = (name) => {
@@ -19,7 +23,7 @@ const getInitials = (name) => {
 
 export async function POST(request) {
   try {
-    const { email, role, token } = await request.json();
+    const { email, role, token, sensor_id } = await request.json();
 
     // Option 1: Using Gmail SMTP with custom "from" name and reply-to
     const transporter = nodemailer.createTransport({
@@ -33,7 +37,7 @@ export async function POST(request) {
       requireTLS: true,
     });
 
-    const acceptLink = `http://localhost:3000/api/sendInvite?token=${token}`;
+    const acceptLink = `http://localhost:3000/api/sendInvite?token=${token}${sensor_id ? `&sensor_id=${encodeURIComponent(sensor_id)}` : ''}`;
     const mailOptions = {
       from: {
         name: 'SafeSense Team',
@@ -161,57 +165,75 @@ export async function GET(request) {
   const action = searchParams.get('action');
   const name = searchParams.get('name');
   const role = searchParams.get('role');
+  const sensorIdParam = searchParams.get('sensor_id');
 
   // Handle accept/reject actions
   if (action === 'accept' || action === 'reject') {
     try {
       const { data: invitation, error } = await supabase
         .from('team_invitations')
-        .select('email, status')
+        .select('email, status, role, sensor_id')
         .eq('token', token)
         .single();
 
       if (error || !invitation || invitation.status !== 'pending') {
-        return NextResponse.redirect(`http://localhost:3000/team?error=invalid_token`);
+        return NextResponse.redirect(`http://localhost:3000/teams?error=invalid_token`);
       }
 
       if (action === 'accept') {
-        const { error: updateError } = await supabase
-          .from('team_invitations')
-          .update({ status: 'accepted' })
-          .eq('token', token);
+        const invitedEmail = invitation.email;
+        const targetSensorId = invitation.sensor_id || sensorIdParam || null;
 
+        // Resolve user_id by email (if possible)
+        let targetUserId = null;
+        try {
+          console.log('Looking up user by email:', invitedEmail);
+          const { data: uData, error: uErr } = await supabaseAdmin.auth.admin.getUserByEmail(invitedEmail);
+          if (uErr) {
+            console.error('getUserByEmail error:', uErr);
+            throw uErr;
+          }
+          targetUserId = uData?.user?.id || null;
+          console.log('Found user_id:', targetUserId, 'for email:', invitedEmail);
+        } catch (e) {
+          console.error('Admin getUserByEmail failed:', e?.message || e);
+          // If getUserByEmail fails, we'll still accept the invitation but with user_id as null
+          // The user can still access the sensor via email-based lookup in the access checks
+          console.log('Continuing with user_id as null - access will be email-based');
+        }
+
+        // Update invitation status and store user_id (if resolved)
+        console.log('Updating invitation with token:', token, 'user_id:', targetUserId);
+        const { error: updateError } = await supabaseAdmin
+          .from('team_invitations')
+          .update({ status: 'accepted', user_id: targetUserId })
+          .eq('token', token);
         if (updateError) {
           console.error('Update invitation error:', updateError);
-          return NextResponse.redirect(`http://localhost:3000/team?error=update_failed`);
+          return NextResponse.redirect(`http://localhost:3000/teams?error=update_failed`);
         }
+        console.log('Successfully updated invitation');
 
-        const { error: insertError } = await supabase
-          .from('team_members')
-          .insert([{ name: decodeURIComponent(name), role: decodeURIComponent(role), status: 'accepted' }]);
+        // Access is now managed entirely through team_invitations table
+        // No need for separate sensor_access table
 
-        if (insertError) {
-          console.error('Insert member error:', insertError);
-          return NextResponse.redirect(`http://localhost:3000/team?error=insert_failed`);
-        }
-
-        return NextResponse.redirect(`http://localhost:3000/team?accepted=true&name=${encodeURIComponent(name)}&role=${role}&token=${token}`);
+        return NextResponse.redirect(`http://localhost:3000/login?accepted=true`);
       } else if (action === 'reject') {
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from('team_invitations')
           .update({ status: 'rejected' })
           .eq('token', token);
 
         if (updateError) {
           console.error('Update invitation error:', updateError);
-          return NextResponse.redirect(`http://localhost:3000/team?error=update_failed`);
+          return NextResponse.redirect(`http://localhost:3000/teams?error=update_failed`);
         }
 
-        return NextResponse.redirect(`http://localhost:3000/team?rejected=true&name=${encodeURIComponent(name)}&token=${token}`);
+        return NextResponse.redirect(`http://localhost:3000/login?rejected=true`);
       }
     } catch (error) {
       console.error('Action processing error:', error);
-      return NextResponse.redirect(`http://localhost:3000/team?error=processing_failed`);
+      return NextResponse.redirect(`http://localhost:3000/teams?error=processing_failed`);
     }
   }
 
@@ -363,10 +385,6 @@ export async function GET(request) {
             <h2>Team Invitation</h2>
             <p>You've been invited to join the SafeSense team with role: <span class="role-badge">${role}</span></p>
             
-            <div style="margin: 30px 0;">
-              <input type="text" id="customName" placeholder="Enter your display name" value="${username}" />
-            </div>
-            
             <div>
               <button class="btn-accept" onclick="handleAccept()">Accept Invitation</button>
               <button class="btn-reject" onclick="handleReject()">Decline</button>
@@ -375,16 +393,12 @@ export async function GET(request) {
 
           <script>
             function handleAccept() {
-              const name = document.getElementById('customName').value;
-              if (!name.trim()) {
-                alert('Please enter a display name');
-                return;
-              }
+              const name = '${username}';
               window.location.href = '/api/sendInvite?token=${token}&action=accept&name=' + encodeURIComponent(name) + '&role=${role}';
             }
             
             function handleReject() {
-              const name = document.getElementById('customName').value || '${username}';
+              const name = '${username}';
               window.location.href = '/api/sendInvite?token=${token}&action=reject&name=' + encodeURIComponent(name);
             }
           </script>

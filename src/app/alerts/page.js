@@ -1401,6 +1401,7 @@ export default function Alerts() {
           sensor_id: r.sensor_id,
           unit,
           sensor_type: sensorType,
+          access_role: r.access_role || 'viewer',
         };
       });
 
@@ -1442,17 +1443,18 @@ export default function Alerts() {
           // Use status directly from database
           const status = r.status || 'unknown';
 
-                  return {
-          id: key,
-          name: r.sensor_name || `Sensor ${r.sensor_id}`,
-          temp: valF,
-          status: status,
-          lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
-          lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
-          sensor_id: r.sensor_id,
-          unit,
-          sensor_type: sensorType,
-        };
+          return {
+            id: key,
+            name: r.sensor_name || `Sensor ${r.sensor_id}`,
+            temp: valF,
+            status: status,
+            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
+            lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
+            sensor_id: r.sensor_id,
+            unit,
+            sensor_type: sensorType,
+            access_role: r.access_role || 'viewer',
+          };
         });
 
         setThresholds(nextThresholds);
@@ -1956,23 +1958,25 @@ export default function Alerts() {
                       ? `💧 ${selected.temp != null ? selected.temp.toFixed(1) : '—'}%`
                       : `🌡️ ${selected.temp != null ? convertForDisplay(selected.temp, userTempScale).toFixed(1) : '—'}°${userTempScale}`)}
                 </div>
-                <button
-                  onClick={() => { 
-                    setNewSensorName(selected.name || ''); 
-                    const metric = selected.unit || 'F';
-                    setNewMetric(metric); 
-                    setNewSensorType(metric === '%' ? 'humidity' : 'temperature');
-                    setShowSettings(true); 
-                  }}
-                  className={`px-3 py-1.5 rounded text-sm font-medium border ${
-                    darkMode
-                      ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
-                      : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
-                  }`}
-                  title="Open sensor settings"
-                >
-                  ⚙️ Settings
-                </button>
+                {(selected.access_role === 'owner' || selected.access_role === 'admin') && (
+                  <button
+                    onClick={() => { 
+                      setNewSensorName(selected.name || ''); 
+                      const metric = selected.unit || 'F';
+                      setNewMetric(metric); 
+                      setNewSensorType(metric === '%' ? 'humidity' : 'temperature');
+                      setShowSettings(true); 
+                    }}
+                    className={`px-3 py-1.5 rounded text-sm font-medium border ${
+                      darkMode
+                        ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
+                        : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
+                    }`}
+                    title="Open sensor settings"
+                  >
+                    ⚙️ Settings
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -2008,7 +2012,7 @@ export default function Alerts() {
                 onSave={refreshSensorData}
                 sensorId={selected.sensor_id}
                 unit={selected.unit}
-                editable
+                editable={selected.access_role === 'owner' || selected.access_role === 'admin'}
                 userTempScale={userTempScale}
                 sensorType={selected.sensor_type}
                 timeZone={userTimeZone}

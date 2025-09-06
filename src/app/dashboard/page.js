@@ -38,13 +38,29 @@ const fmtDate = (d, tz, withTime = true) => {
 };
 
 // Respect user prefs when filtering what to show
-const visibleItems = (items, selectedType, prefs) =>
+const visibleItems = (items, selectedType, selectedRole, prefs) =>
   items.filter((i) => {
-    if (selectedType === "temperature") return prefs.showTemp && i.kind === "temperature";
-    if (selectedType === "humidity") return prefs.showHumidity && i.kind === "humidity";
-    // ALL
-    if (i.kind === "temperature" && !prefs.showTemp) return false;
-    if (i.kind === "humidity" && !prefs.showHumidity) return false;
+    // Type filtering
+    if (selectedType === "temperature") {
+      if (!prefs.showTemp || i.kind !== "temperature") return false;
+    } else if (selectedType === "humidity") {
+      if (!prefs.showHumidity || i.kind !== "humidity") return false;
+    } else {
+      // ALL type
+      if (i.kind === "temperature" && !prefs.showTemp) return false;
+      if (i.kind === "humidity" && !prefs.showHumidity) return false;
+    }
+    
+    // Role filtering
+    if (selectedRole === "owned") {
+      return i.access_role === "owner";
+    } else if (selectedRole === "admin") {
+      return i.access_role === "admin";
+    } else if (selectedRole === "viewer") {
+      return i.access_role === "viewer";
+    }
+    // ALL role - no additional filtering
+    
     return true;
   });
 
@@ -85,6 +101,9 @@ export default function Dashboard() {
 
   // Filter: 'all' | 'temperature' | 'humidity'
   const [selectedType, setSelectedType] = useState("all");
+  
+  // Role filter: 'all' | 'owned' | 'admin' | 'viewer'
+  const [selectedRole, setSelectedRole] = useState("all");
 
   // Notifications popup
   const [showNotifications, setShowNotifications] = useState(false);
@@ -222,13 +241,14 @@ export default function Dashboard() {
                approx_time: r.approx_time,
                lastFetchedTime: r.last_fetched_time,
                lastUpdated: r.updated_at || new Date().toISOString(),
+               access_role: r.access_role || 'owner',
                // No thresholds needed - using database status
              };
           })
           .sort((a, b) => a.name.localeCompare(b.name));
 
-        // Apply visibility for the selected type and prefs
-        const filtered = visibleItems(items, selectedType, prefs);
+        // Apply visibility for the selected type, role, and prefs
+        const filtered = visibleItems(items, selectedType, selectedRole, prefs);
 
         const sensorsKPI = {
           total: filtered.length,
@@ -259,7 +279,7 @@ export default function Dashboard() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
+  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole]);
 
   /* ===== Realtime updates: sensors table ===== */
   useEffect(() => {
@@ -312,7 +332,7 @@ export default function Dashboard() {
             // No thresholds needed - using database status
           };
 
-          const filtered = visibleItems(items, selectedType, prefs);
+          const filtered = visibleItems(items, selectedType, selectedRole, prefs);
           const sensorsKPI = {
             total: filtered.length,
             error: filtered.filter((t) => t.status === "alert").length,
@@ -329,7 +349,7 @@ export default function Dashboard() {
 
     return () => supabase.removeChannel(ch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType]);
+  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole]);
 
   /* ===== UI helpers ===== */
   useEffect(() => {
@@ -354,7 +374,7 @@ export default function Dashboard() {
   const axisHum = axisConfigHum();
 
   // Which items are visible given filter + prefs
-  const itemsVisible = visibleItems(data.items, selectedType, prefs);
+  const itemsVisible = visibleItems(data.items, selectedType, selectedRole, prefs);
 
   // In "all", decide which axes to show based on what's visible
   const hasVisibleTemp = selectedType === "all" && itemsVisible.some((i) => i.kind === "temperature");
@@ -563,6 +583,16 @@ export default function Dashboard() {
                   {prefs.showTemp && <option value="temperature">Temperature</option>}
                   {prefs.showHumidity && <option value="humidity">Humidity</option>}
                 </select>
+                <select
+                  value={selectedRole}
+                  onChange={(e) => setSelectedRole(e.target.value)}
+                  className={`border rounded px-2 py-1 ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"}`}
+                >
+                  <option value="all">All</option>
+                  <option value="owned">Owned</option>
+                  <option value="admin">Admin</option>
+                  <option value="viewer">Viewer</option>
+                </select>
               </div>
             </div>
           </div>
@@ -760,7 +790,18 @@ export default function Dashboard() {
                   <tbody>
                     {itemsVisible.map((it, i) => (
                       <tr key={i} className={`border-b ${darkMode ? "border-gray-700" : "border-gray-100"}`}>
-                        <td className="py-2 font-medium">{it.name}</td>
+                        <td className="py-2 font-medium">
+                          <span>{it.name}</span>
+                          <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full align-middle ${
+                            it.access_role === 'owner'
+                              ? 'bg-green-200 text-green-800'
+                              : it.access_role === 'admin'
+                              ? 'bg-yellow-200 text-yellow-800'
+                              : 'bg-gray-200 text-gray-800'
+                          }`}>
+                            {it.access_role}
+                          </span>
+                        </td>
                         <td className="py-2 capitalize">{it.kind}</td>
                                                  <td className="py-2">
                            <span
