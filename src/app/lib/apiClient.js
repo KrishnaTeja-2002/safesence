@@ -111,6 +111,34 @@ class ApiClient {
       })
     });
   }
+
+  // Sharing API
+  async shareSensor({ sensorId, role, email, userId }) {
+    return this.request('/shares', {
+      method: 'POST',
+      body: JSON.stringify({
+        sensor_id: sensorId,
+        role,
+        email,
+        user_id: userId
+      })
+    });
+  }
+
+  async revokeShare({ sensorId, userId }) {
+    const params = new URLSearchParams({ sensor_id: sensorId, user_id: userId });
+    return this.request(`/shares?${params.toString()}`, { method: 'DELETE' });
+  }
+
+  async cancelInvite({ sensorId, email }) {
+    const params = new URLSearchParams({ sensor_id: sensorId, email });
+    return this.request(`/shares?${params.toString()}`, { method: 'DELETE' });
+  }
+
+  async getSensorShares(sensorId) {
+    const params = new URLSearchParams({ sensor_id: sensorId });
+    return this.request(`/shares?${params.toString()}`);
+  }
 }
 
 // Export a singleton instance
