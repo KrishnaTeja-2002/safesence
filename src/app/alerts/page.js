@@ -898,7 +898,7 @@ function ThresholdChart({
                 <g key={t}>
                   <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
                   <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
-                    {Math.round(t)}%
+                    {t.toFixed(1)}%
                   </text>
                 </g>
               ));
@@ -914,7 +914,7 @@ function ThresholdChart({
                 <g key={t}>
                   <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
                   <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
-                    {Math.round(t)}{userTempScale === 'C' ? '°C' : '°F'}
+                    {t.toFixed(1)}{userTempScale === 'C' ? '°C' : '°F'}
                   </text>
                 </g>
               ));
@@ -931,7 +931,7 @@ function ThresholdChart({
                 <g key={t}>
                   <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
                   <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
-                    {Math.round(t)}{userTempScale === 'C' ? '°C' : '°F'}
+                    {t.toFixed(1)}{userTempScale === 'C' ? '°C' : '°F'}
                   </text>
                 </g>
               ));
@@ -1067,8 +1067,8 @@ function ThresholdChart({
               
               if (closestData && closestTemp != null) {
                 const displayValue = sensorType === 'humidity' 
-                  ? `${Math.round(closestTemp)}%`
-                  : `${Math.round(convertForDisplay(closestTemp, userTempScale))}°${userTempScale}`;
+                  ? `${closestTemp.toFixed(1)}%`
+                  : `${convertForDisplay(closestTemp, userTempScale).toFixed(1)}°${userTempScale}`;
                 
                 const timeStr = new Date(closestData.timestamp).toLocaleTimeString([], { 
                   hour: '2-digit', 
@@ -1214,10 +1214,10 @@ function ThresholdChart({
             
             return (
               <div className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                <div>Range: {Math.round(range)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
-                <div>Warning: {Math.round(warningOffset)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
+                <div>Range: {range.toFixed(1)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
+                <div>Warning: {warningOffset.toFixed(1)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
                 <div className="text-orange-500">
-                  Zones: {Math.round(lowerWarningEnd)} - {Math.round(upperWarningStart)}
+                  Zones: {lowerWarningEnd.toFixed(1)} - {upperWarningStart.toFixed(1)}
                 </div>
               </div>
             );
@@ -1248,6 +1248,8 @@ export default function Alerts() {
   const HISTORY_LEN = 120;
   // Local per-alert options (message + delivery channels)
   const [alertOptions, setAlertOptions] = useState({});     // id -> { message, email, sms }
+  // Alert preferences from database
+  const [alertPreferences, setAlertPreferences] = useState({}); // sensor_id -> { email_alert, mobile_alert }
   
   // Use ref to track latest streams for real-time updates
   const streamsRef = useRef(streams);
@@ -1635,6 +1637,57 @@ export default function Alerts() {
     }));
   };
 
+  // Load alert preferences from database
+  const loadAlertPreferences = async (sensorId) => {
+    try {
+      console.log('Loading alert preferences for sensorId:', sensorId);
+      const preferences = await apiClient.getAlertPreferences(sensorId);
+      console.log('Received preferences:', preferences);
+      
+      if (!preferences) {
+        console.warn('No preferences returned from API');
+        return;
+      }
+      
+      setAlertPreferences(prev => ({
+        ...prev,
+        [sensorId]: preferences
+      }));
+      
+      // Update local alert options with database preferences
+      const key = makeKey(sensorId);
+      console.log('Using key for alertOptions:', key);
+      console.log('Setting email:', preferences.email_alert, 'sms:', preferences.mobile_alert);
+      
+      setAlertOptions(prev => ({
+        ...prev,
+        [key]: {
+          ...prev[key],
+          email: preferences.email_alert,
+          sms: preferences.mobile_alert
+        }
+      }));
+    } catch (error) {
+      console.error('Failed to load alert preferences:', error);
+      console.error('Error details:', error.message, error.stack);
+      setError('Failed to load alert preferences: ' + error.message);
+    }
+  };
+
+  // Save alert preferences to database
+  const saveAlertPreferences = async (sensorId, preferences) => {
+    try {
+      await apiClient.updateAlertPreferences(sensorId, preferences);
+      setAlertPreferences(prev => ({
+        ...prev,
+        [sensorId]: { ...prev[sensorId], ...preferences }
+      }));
+    } catch (error) {
+      console.error('Failed to save alert preferences:', error);
+      setError('Failed to save alert preferences: ' + error.message);
+    }
+  };
+
   // Keep modal fields synced to selected sensor
   useEffect(() => {
     const sel = streams.find((s) => s.id === selectedId);
@@ -1643,6 +1696,16 @@ export default function Alerts() {
     setNewMetric(metric);
     // Auto-set sensor type based on metric
     setNewSensorType(metric === '%' ? 'humidity' : 'temperature');
+  }, [selectedId, streams]);
+
+  // Load alert preferences when a sensor is selected
+  useEffect(() => {
+    if (selectedId) {
+      const sel = streams.find((s) => s.id === selectedId);
+      if (sel && sel.sensor_id) {
+        loadAlertPreferences(sel.sensor_id);
+      }
+    }
   }, [selectedId, streams]);
 
   // Save sensor settings (name + metric)
@@ -1983,7 +2046,7 @@ export default function Alerts() {
               </div>
               <div className="text-sm">
                 {t.min !== null && t.max !== null ? (
-                  <>Limits: <strong>{t.min}{selected.sensor_type === 'humidity' ? '%' : '°F'}</strong> – <strong>{t.max}{selected.sensor_type === 'humidity' ? '%' : '°F'}</strong></>
+                  <>Limits: <strong>{t.min.toFixed(1)}{selected.sensor_type === 'humidity' ? '%' : '°F'}</strong> – <strong>{t.max.toFixed(1)}{selected.sensor_type === 'humidity' ? '%' : '°F'}</strong></>
                 ) : (
                   <>No limits set</>
                 )}
@@ -2051,15 +2114,22 @@ export default function Alerts() {
               <div className="flex items-center gap-6">
                 <button
                   type="button"
-                  onClick={() => updateAlertOptionsLocal(selected.sensor_id, { email: !(alertOptions[selected.id]?.email) })}
+                  onClick={async () => {
+                    console.log('Email toggle clicked. selected.id:', selected.id, 'selected.sensor_id:', selected.sensor_id);
+                    console.log('Current alertOptions[selected.id]:', alertOptions[selected.id]);
+                    const newEmailValue = !(alertOptions[selected.id]?.email);
+                    console.log('New email value:', newEmailValue);
+                    updateAlertOptionsLocal(selected.sensor_id, { email: newEmailValue });
+                    await saveAlertPreferences(selected.sensor_id, { email_alert: newEmailValue });
+                  }}
                   className={`relative inline-flex items-center transition-colors rounded-full w-24 h-12 ${(alertOptions[selected.id]?.email) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-gray-600' : 'bg-gray-300')}`}
                   aria-pressed={(alertOptions[selected.id]?.email) ? true : false}
                 >
                   <span className={`inline-block w-8 h-8 bg-white rounded-full transform transition-transform ${(alertOptions[selected.id]?.email) ? 'translate-x-12' : 'translate-x-2'}`} />
                 </button>
                 <div>
-                  <div className="font-medium">Send email alert</div>
-                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Send an Email when this alert is triggered to selected contacts</div>
+                  <div className="font-medium">Email Alerts</div>
+                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Receive email notifications when this sensor triggers alerts</div>
                 </div>
               </div>
 
@@ -2067,15 +2137,19 @@ export default function Alerts() {
               <div className="flex items-center gap-6">
                 <button
                   type="button"
-                  onClick={() => updateAlertOptionsLocal(selected.sensor_id, { sms: !(((alertOptions[selected.id]?.sms) ?? true)) })}
+                  onClick={async () => {
+                    const newSmsValue = !(((alertOptions[selected.id]?.sms) ?? true));
+                    updateAlertOptionsLocal(selected.sensor_id, { sms: newSmsValue });
+                    await saveAlertPreferences(selected.sensor_id, { mobile_alert: newSmsValue });
+                  }}
                   className={`relative inline-flex items-center transition-colors rounded-full w-24 h-12 ${(((alertOptions[selected.id]?.sms) ?? true)) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-gray-600' : 'bg-gray-300')}`}
                   aria-pressed={(((alertOptions[selected.id]?.sms) ?? true)) ? true : false}
                 >
                   <span className={`inline-block w-8 h-8 bg-white rounded-full transform transition-transform ${(((alertOptions[selected.id]?.sms) ?? true)) ? 'translate-x-12' : 'translate-x-2'}`} />
                 </button>
                 <div>
-                  <div className="font-medium">Send SMS alerts</div>
-                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Send an SMS when this alert is triggered to selected contacts</div>
+                  <div className="font-medium">Mobile Alerts</div>
+                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Receive mobile/push notifications when this sensor triggers alerts</div>
                 </div>
               </div>
             </div>
