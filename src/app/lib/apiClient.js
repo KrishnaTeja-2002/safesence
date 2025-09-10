@@ -139,6 +139,22 @@ class ApiClient {
     const params = new URLSearchParams({ sensor_id: sensorId });
     return this.request(`/shares?${params.toString()}`);
   }
+
+  // Alert Preferences API
+  async getAlertPreferences(sensorId) {
+    const params = new URLSearchParams({ sensor_id: sensorId });
+    return this.request(`/alert-preferences?${params.toString()}`);
+  }
+
+  async updateAlertPreferences(sensorId, preferences) {
+    return this.request('/alert-preferences', {
+      method: 'PUT',
+      body: JSON.stringify({
+        sensor_id: sensorId,
+        ...preferences
+      })
+    });
+  }
 }
 
 // Export a singleton instance

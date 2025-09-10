@@ -206,7 +206,7 @@ export default function Dashboard() {
                
                // Convert to user's preferred unit for display only
                value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
-               displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
+               displayValue = value != null ? `${value.toFixed(1)}°${prefs.unit}` : `--°${prefs.unit}`;
                
                // Store sensor unit for realtime updates
                unit = sensorUnit;
@@ -217,7 +217,7 @@ export default function Dashboard() {
                // Use status from database instead of calculating
                status = r.status || 'unknown';
 
-               displayValue = value != null ? `${Math.round(value)}%` : "--%";
+               displayValue = value != null ? `${value.toFixed(1)}%` : "--%";
              }
 
                          // Update color based on status from database
@@ -307,12 +307,12 @@ export default function Dashboard() {
             const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
             status = r.status || 'unknown';
             value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
-            displayValue = value != null ? `${Math.round(value)}°${prefs.unit}` : `--°${prefs.unit}`;
+            displayValue = value != null ? `${value.toFixed(1)}°${prefs.unit}` : `--°${prefs.unit}`;
           } else {
             const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
             value = raw != null ? raw : null;
             status = r.status || 'unknown';
-            displayValue = value != null ? `${Math.round(value)}%` : "--%";
+            displayValue = value != null ? `${value.toFixed(1)}%` : "--%";
           }
 
           let color = "bg-[#98CC37]";
@@ -646,7 +646,7 @@ export default function Dashboard() {
                         const h = toHeight(it);
                         const label = it.status === "offline" || it.status === "unknown"
                           ? "NA"
-                          : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue);
+                          : (it.kind === "humidity" ? (it.value != null ? `${it.value.toFixed(1)}%` : "--%") : it.displayValue);
                         return (
                           <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
                             {(it.status === "offline" || it.status === "unknown" || it.value != null) && (
@@ -809,7 +809,7 @@ export default function Dashboard() {
                                it.status === "alert" ? "text-red-500" : it.status === "warning" ? "text-yellow-500" : it.status === "offline" || it.status === "unknown" ? "text-gray-500" : "text-green-500"
                              }`}
                            >
-                             {it.status === "offline" || it.status === "unknown" ? "NA" : (it.kind === "humidity" ? (it.value != null ? `${Math.round(it.value)}%` : "--%") : it.displayValue)}
+                             {it.status === "offline" || it.status === "unknown" ? "NA" : (it.kind === "humidity" ? (it.value != null ? `${it.value.toFixed(1)}%` : "--%") : it.displayValue)}
                            </span>
                          </td>
                         <td className="py-2">
@@ -828,11 +828,9 @@ export default function Dashboard() {
                           </span>
                         </td>
                                                  <td className="py-2">{
-                           (it.status === "offline" || it.status === "unknown") && getUnconfiguredReason(it)
-                             ? getUnconfiguredReason(it)
-                             : it.lastFetchedTime
-                               ? fmtDate(it.lastFetchedTime, prefs.tz, true)
-                               : "No data"
+                           it.lastFetchedTime
+                             ? fmtDate(it.lastFetchedTime, prefs.tz, true)
+                             : "No data"
                          }</td>
                       </tr>
                     ))}
