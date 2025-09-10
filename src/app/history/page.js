@@ -55,6 +55,38 @@ const epochToIso = (n) => {
   return new Date(ms).toISOString();
 };
 
+// Robust timestamp normalization helpers
+const toMs = (t) => {
+  if (t == null) return null;
+
+  // If it's a Date or ISO-like string
+  if (t instanceof Date) return t.getTime();
+  if (typeof t === "string") {
+    // If string is purely numeric, treat as epoch
+    if (/^\d+(\.\d+)?$/.test(t.trim())) {
+      const n = Number(t);
+      return Number.isFinite(n) ? (n > 1e12 ? n : n * 1000) : null;
+    }
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+
+  // Numeric epoch (sec or ms)
+  if (typeof t === "number" && Number.isFinite(t)) {
+    return t > 1e12 ? t : t * 1000;
+  }
+
+  return null;
+};
+
+const firstValidMs = (...vals) => {
+  for (const v of vals) {
+    const ms = toMs(v);
+    if (ms != null) return ms;
+  }
+  return null;
+};
+
 const fmtTooltipTime = (iso, timeZone) =>
   new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZone });
 
@@ -146,9 +178,13 @@ export default function History() {
   const dragStart = useRef({ x: 0, startMs: 0, endMs: 0 });
 
   // Series rows
-  const [rows, setRows] = useState([]); // [{tsISO, value}]
+  const [rows, setRows] = useState([]); // [{ms, value}]
   const [metric, setMetric] = useState("temperature"); // 'temperature'|'humidity'
   const [unit, setUnit] = useState("°F"); // '°F'|'°C'|'%'
+
+  // Data fetching loading state
+  const [isFetchingData, setIsFetchingData] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState({ percentage: 0, current: 0, total: 0 });
 
   // Tooltip
   const [hovered, setHovered] = useState(null);
@@ -244,24 +280,167 @@ export default function History() {
           timeSpan: `${Math.round((end - start) / (1000 * 60 * 60))} hours`
         });
 
-        // Increase limit for longer time ranges to ensure we get enough data points
-        const limit = rangeHours >= 24 * 7 ? 50000 : 20000; // More data for week+ ranges
-
-        const data = await apiClient.getSensorReadings(activeSensor.sensor_id, {
-          startTime: fromIso,
-          endTime: toIso,
-          limit: limit
+        // Fetch data in parallel chunks with concurrent batch processing
+        // Keep larger chunk sizes but increase parallelism through batching
+        const CHUNK_HOURS = 4; // Keep 4-hour chunks (proven to work well)
+        const BATCH_SIZE = 6; // Process 6 chunks concurrently at a time
+        
+        const chunkMs = CHUNK_HOURS * 60 * 60 * 1000;
+        const totalChunks = Math.ceil(rangeHours / CHUNK_HOURS);
+        const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
+        
+        console.log(`Batch strategy: ${CHUNK_HOURS}h chunks, ${BATCH_SIZE} concurrent threads per batch, ${totalBatches} batches total`);
+        
+        // Set loading state
+        setIsFetchingData(true);
+        setFetchProgress({ percentage: 0, current: 0, total: totalChunks });
+        
+        // Create all chunk requests first
+        const chunkRequests = [];
+        let currentStart = start;
+        
+        while (currentStart < end) {
+          const chunkEnd = Math.min(currentStart + chunkMs, end);
+          const chunkStartIso = new Date(currentStart).toISOString();
+          const chunkEndIso = new Date(chunkEnd).toISOString();
+          
+          chunkRequests.push({
+            startTime: chunkStartIso,
+            endTime: chunkEndIso,
+            startMs: currentStart
+          });
+          
+          currentStart = chunkEnd;
+        }
+        
+        console.log(`Processing ${chunkRequests.length} chunks in ${totalBatches} batches of ${BATCH_SIZE} concurrent threads`);
+        
+        // Start performance timing
+        const fetchStartTime = Date.now();
+        
+        // Process chunks in batches for controlled parallelism
+        let allChunkResults = [];
+        
+        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+          const batchStart = batchIndex * BATCH_SIZE;
+          const batchEnd = Math.min(batchStart + BATCH_SIZE, chunkRequests.length);
+          const batchChunks = chunkRequests.slice(batchStart, batchEnd);
+          
+          // Update progress for current batch
+          const startPercentage = Math.round((batchStart / totalChunks) * 100);
+          setFetchProgress({ percentage: startPercentage, current: batchStart, total: totalChunks });
+          
+          console.log(`Processing batch ${batchIndex + 1}/${totalBatches}: chunks ${batchStart + 1}-${batchEnd} (${batchChunks.length} concurrent threads)`);
+          
+          // Process current batch in parallel
+          const batchPromises = batchChunks.map(async (chunk, localIndex) => {
+            const globalIndex = batchStart + localIndex;
+            console.log(`Starting chunk ${globalIndex + 1}/${chunkRequests.length}: ${chunk.startTime} to ${chunk.endTime}`);
+            
+            try {
+              const chunkData = await apiClient.getSensorReadings(activeSensor.sensor_id, {
+                startTime: chunk.startTime,
+                endTime: chunk.endTime
+              });
+              
+              console.log(`Chunk ${globalIndex + 1} completed: ${chunkData?.length || 0} records`);
+              return { 
+                data: chunkData || [], 
+                startMs: chunk.startMs,
+                success: true,
+                chunkIndex: globalIndex + 1,
+                batchIndex: batchIndex + 1
+              };
+            } catch (error) {
+              console.error(`Chunk ${globalIndex + 1} failed:`, error);
+              return { 
+                data: [], 
+                startMs: chunk.startMs,
+                success: false,
+                error: error.message,
+                chunkIndex: globalIndex + 1,
+                batchIndex: batchIndex + 1
+              };
+            }
+          });
+          
+          // Wait for current batch to complete
+          const batchResults = await Promise.all(batchPromises);
+          allChunkResults = allChunkResults.concat(batchResults);
+          
+          // Update progress after batch completion
+          const endPercentage = Math.round((batchEnd / totalChunks) * 100);
+          setFetchProgress({ percentage: endPercentage, current: batchEnd, total: totalChunks });
+          
+          console.log(`Batch ${batchIndex + 1} completed: ${batchResults.filter(r => r.success).length}/${batchResults.length} successful`);
+        }
+        
+        const chunkResults = allChunkResults;
+        
+        // Calculate performance metrics
+        const fetchEndTime = Date.now();
+        const totalFetchTime = fetchEndTime - fetchStartTime;
+        const avgTimePerChunk = totalFetchTime / chunkResults.length;
+        
+        // Log results summary
+        const successfulChunks = chunkResults.filter(r => r.success);
+        const failedChunks = chunkResults.filter(r => !r.success);
+        
+        console.log(`Batch parallel fetch results:`, {
+          totalChunks: chunkResults.length,
+          totalBatches: totalBatches,
+          batchSize: BATCH_SIZE,
+          chunkSize: `${CHUNK_HOURS}h`,
+          successful: successfulChunks.length,
+          failed: failedChunks.length,
+          totalRecords: successfulChunks.reduce((sum, r) => sum + r.data.length, 0),
+          totalFetchTime: `${totalFetchTime}ms`,
+          avgTimePerChunk: `${avgTimePerChunk.toFixed(1)}ms`,
+          concurrentThreads: `${BATCH_SIZE} per batch`,
+          estimatedSequentialTime: `${(avgTimePerChunk * chunkResults.length).toFixed(0)}ms`,
+          speedup: `${((avgTimePerChunk * chunkResults.length) / totalFetchTime).toFixed(1)}x faster`
         });
+        
+        if (failedChunks.length > 0) {
+          console.warn(`Failed chunks:`, failedChunks.map(f => `Chunk ${f.chunkIndex}: ${f.error}`));
+        }
+        
+        // Combine and sort all data by timestamp
+        const data = successfulChunks
+          .flatMap(result => result.data)
+          .sort((a, b) => {
+            const aMs = firstValidMs(a.fetched_at, a.approx_time, a.timestamp, a.created_at);
+            const bMs = firstValidMs(b.fetched_at, b.approx_time, b.timestamp, b.created_at);
+            return (aMs || 0) - (bMs || 0);
+          });
 
-        console.log(`Data received:`, {
-          count: data?.length || 0,
+        // Clear loading state
+        setIsFetchingData(false);
+        setFetchProgress({ percentage: 0, current: 0, total: 0 });
+
+        console.log(`Batch parallel chunked fetch complete:`, {
+          totalChunks: chunkRequests.length,
+          totalBatches: totalBatches,
+          batchSize: BATCH_SIZE,
+          successfulChunks: successfulChunks.length,
+          failedChunks: failedChunks.length,
+          totalRecords: data?.length || 0,
           first: data?.[0]?.fetched_at,
-          last: data?.[data.length - 1]?.fetched_at
+          last: data?.[data.length - 1]?.fetched_at,
+          requestedStart: fromIso,
+          requestedEnd: toIso,
+          timeSpan: `${Math.round((end - start) / (1000 * 60 * 60))} hours`,
+          chunkSize: `${CHUNK_HOURS} hours`,
+          concurrentThreads: `${BATCH_SIZE} per batch`,
+          batchExecution: true
         });
 
-        const deviceMetric = (activeSensor.metric || "F").toUpperCase();
+        const cleaned = (data || [])
+          .map((r) => {
+            const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
+            if (ms == null) return null;
 
-        // humidity never converted; temp converts to user's unit
+            const deviceMetric = (activeSensor.metric || "F").toUpperCase();
         const convert = (v) => {
           if (metric !== "temperature") return Number(v);
           if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
@@ -269,16 +448,19 @@ export default function History() {
           return Number(v);
         };
 
-        const cleaned = (data || []).map(r => ({
-          tsISO: r.fetched_at || r.approx_time || epochToIso(r.timestamp),
-          value: convert(r.reading_value),
-        })).reverse(); // Reverse to get chronological order for chart
+            return { ms, value: convert(r.reading_value) };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.ms - b.ms); // ascending chronological
 
         setRows(cleaned);
         setZoomDomain(null); // clear zoom when sensor/range changes
       } catch (e) {
         setErrMsg("Failed to load history: " + (e?.message || String(e)));
         setRows([]);
+        // Clear loading state on error
+        setIsFetchingData(false);
+        setFetchProgress({ percentage: 0, current: 0, total: 0 });
       }
     })();
   }, [activeSensorId, rangeHours, metric, tempScale]);
@@ -301,8 +483,20 @@ export default function History() {
         const r = payload.new || {};
         if (r.sensor_id !== activeSensor.sensor_id) return;
         if (typeof r.reading_value === "undefined") return;
-        const tsISO = r.fetched_at || r.approx_time || epochToIso(r.timestamp);
-        setRows(prev => [...prev, { tsISO, value: convert(r.reading_value) }].slice(-20_000));
+
+        const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
+        if (ms == null) return;
+
+        const deviceMetric = (activeSensor.metric || "F").toUpperCase();
+        const convert = (v) => {
+          if (metric !== "temperature") return Number(v);
+          if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
+          if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
+          return Number(v);
+        };
+
+        const next = { ms, value: convert(r.reading_value) };
+        setRows(prev => [...prev, next].slice(-20_000)); // appends in time order
       })
       .subscribe();
     return () => supabase.removeChannel(ch);
@@ -349,10 +543,12 @@ export default function History() {
 
   // Positioned points within current domain
   const points = useMemo(() => {
-    return rows.map(r => {
-      const ms = new Date(r.tsISO).getTime();
-      return { tsISO: r.tsISO, ms, x: scaleXTime(ms), y: scaleY(r.value), value: r.value };
-    }).filter(p => p.ms >= domainStart && p.ms <= domainEnd);
+    return rows.map(r => ({
+      ms: r.ms,
+      x: scaleXTime(r.ms),
+      y: scaleY(r.value),
+      value: r.value
+    })).filter(p => p.ms >= domainStart && p.ms <= domainEnd);
   }, [rows, domainStart, domainEnd, yBounds]);
 
   // Gap detection (≥ 5 minutes)
@@ -695,8 +891,23 @@ export default function History() {
                       ) : null}
                     </svg>
 
-                    {/* Clean “No data” overlay (HTML, not SVG, so it never skews) */}
-                    {segments.length === 0 && (
+                    {/* Loading indicator overlay */}
+                    {isFetchingData && (
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-white bg-opacity-75 dark:bg-gray-800 dark:bg-opacity-75">
+                        <div className="text-center">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                          <div className={`${darkMode ? "text-gray-300" : "text-gray-600"} text-sm font-medium`}>
+                            Fetching data...
+                          </div>
+                          <div className={`${darkMode ? "text-gray-400" : "text-gray-500"} text-xs mt-1`}>
+                            {fetchProgress.percentage}% complete
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Clean "No data" overlay (HTML, not SVG, so it never skews) */}
+                    {!isFetchingData && segments.length === 0 && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div className={`${darkMode ? "text-gray-400" : "text-gray-500"} text-sm font-medium`}>
                           No data in {RANGES.find(r => r.key === rangeKey)?.label || "range"}
@@ -721,7 +932,7 @@ export default function History() {
                               ? `${fmt1(hovered.value)}%`
                               : `${fmt1(hovered.value)}${unit}`}
                           </div>
-                          <div className="text-xs mt-0.5">{fmtTooltipTime(hovered.tsISO, timeZone)}</div>
+                          <div className="text-xs mt-0.5">{fmtTooltipTime(new Date(hovered.ms).toISOString(), timeZone)}</div>
                         </div>
                         <div className="w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-green-500 mx-auto" />
                       </div>

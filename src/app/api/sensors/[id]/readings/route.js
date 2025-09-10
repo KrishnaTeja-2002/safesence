@@ -11,14 +11,14 @@ export async function GET(request, { params }) {
       });
     }
 
-    const { supabaseAdmin } = authResult;
+    const { supabaseAdmin, user } = authResult;
     const { id: sensorId } = params;
     const { searchParams } = new URL(request.url);
 
     // Get query parameters
     const startTime = searchParams.get('start_time');
     const endTime = searchParams.get('end_time');
-    const limit = parseInt(searchParams.get('limit')) || 20000;
+    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')) : null;
 
     if (!sensorId) {
       return new Response(JSON.stringify({ error: 'Sensor ID is required' }), { 
@@ -27,13 +27,47 @@ export async function GET(request, { params }) {
       });
     }
 
+    // Permission check: ensure the user can view this sensor
+    const { data: sensorMeta, error: metaErr } = await supabaseAdmin
+      .from('sensors')
+      .select('owner_id')
+      .eq('sensor_id', sensorId)
+      .maybeSingle();
+    if (metaErr || !sensorMeta) {
+      return new Response(JSON.stringify({ error: metaErr?.message || 'Sensor not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    let canRead = sensorMeta.owner_id === user.id;
+    if (!canRead) {
+      const userEmail = (user.email || '').toLowerCase();
+      const { data: access, error: accErr } = await supabaseAdmin
+        .from('team_invitations')
+        .select('id')
+        .eq('sensor_id', sensorId)
+        .eq('status', 'accepted')
+        .or(`user_id.eq.${user.id},email.ilike.${userEmail}`)
+        .maybeSingle();
+      if (accErr) {
+        return new Response(JSON.stringify({ error: accErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      }
+      canRead = !!access; // accepted invite grants read
+    }
+
+    if (!canRead) {
+      return new Response(JSON.stringify({ error: 'Forbidden: no access to this sensor' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
     // Build the query
     let query = supabaseAdmin
       .from('raw_readings_v2')
       .select('reading_value, fetched_at, approx_time, timestamp')
-      .eq('sensor_id', sensorId)
-      .order('fetched_at', { ascending: false }) // Get most recent data first
-      .limit(limit);
+      .eq('sensor_id', sensorId);
 
     // Add time filters if provided
     if (startTime) {
@@ -43,10 +77,24 @@ export async function GET(request, { params }) {
       query = query.lte('fetched_at', endTime);
     }
 
+    // Order by time - ascending for time ranges, descending for latest data
+    if (startTime || endTime) {
+      query = query.order('fetched_at', { ascending: true }); // Chronological order for time ranges
+    } else {
+      query = query.order('fetched_at', { ascending: false }); // Most recent first for latest data
+    }
+    
+    // Apply limit - use provided limit or default to 10000 for chunked requests
+    const finalLimit = limit || 10000; // Default limit for chunked requests
+    query = query.limit(finalLimit);
+
     console.log(`API: Fetching readings for sensor ${sensorId}:`, {
       startTime,
       endTime,
-      limit
+      requestedLimit: limit,
+      finalLimit,
+      hasTimeRange: !!(startTime || endTime),
+      orderDirection: (startTime || endTime) ? 'ascending' : 'descending'
     });
 
     const { data: readings, error } = await query;
