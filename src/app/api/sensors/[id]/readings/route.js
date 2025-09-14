@@ -1,24 +1,19 @@
-import { authenticateRequest } from '../../../middleware/auth.js';
+export const runtime = "nodejs";
+
+import { authenticateRequest } from '../../../middleware/auth-postgres.js';
 
 // GET /api/sensors/[id]/readings - Fetch sensor readings/history
-export async function GET(request, { params }) {
+export async function GET(request, context) {
   try {
-    const authResult = await authenticateRequest(request);
-    if (authResult.error) {
-      return new Response(JSON.stringify({ error: authResult.error }), { 
-        status: authResult.status,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    const { supabaseAdmin, user } = authResult;
-    const { id: sensorId } = params;
+    const { id: sensorId } = await context.params;
     const { searchParams } = new URL(request.url);
 
     // Get query parameters
     const startTime = searchParams.get('start_time');
     const endTime = searchParams.get('end_time');
-    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')) : null;
+    const limitStr = searchParams.get('limit');
+    const parsedLimit = limitStr != null ? parseInt(limitStr, 10) : undefined;
+    const limit = Math.min(parsedLimit || 10, 100);
 
     if (!sensorId) {
       return new Response(JSON.stringify({ error: 'Sensor ID is required' }), { 
@@ -27,97 +22,75 @@ export async function GET(request, { params }) {
       });
     }
 
-    // Permission check: ensure the user can view this sensor
-    const { data: sensorMeta, error: metaErr } = await supabaseAdmin
-      .from('sensors')
-      .select('owner_id')
-      .eq('sensor_id', sensorId)
-      .maybeSingle();
-    if (metaErr || !sensorMeta) {
-      return new Response(JSON.stringify({ error: metaErr?.message || 'Sensor not found' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    let canRead = sensorMeta.owner_id === user.id;
-    if (!canRead) {
-      const userEmail = (user.email || '').toLowerCase();
-      const { data: access, error: accErr } = await supabaseAdmin
-        .from('team_invitations')
-        .select('id')
-        .eq('sensor_id', sensorId)
-        .eq('status', 'accepted')
-        .or(`user_id.eq.${user.id},email.ilike.${userEmail}`)
-        .maybeSingle();
-      if (accErr) {
-        return new Response(JSON.stringify({ error: accErr.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-      }
-      canRead = !!access; // accepted invite grants read
-    }
-
-    if (!canRead) {
-      return new Response(JSON.stringify({ error: 'Forbidden: no access to this sensor' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Build the query
-    let query = supabaseAdmin
-      .from('raw_readings_v2')
-      .select('reading_value, fetched_at, approx_time, timestamp')
-      .eq('sensor_id', sensorId);
-
-    // Add time filters if provided
-    if (startTime) {
-      query = query.gte('fetched_at', startTime);
-    }
-    if (endTime) {
-      query = query.lte('fetched_at', endTime);
-    }
-
-    // Order by time - ascending for time ranges, descending for latest data
-    if (startTime || endTime) {
-      query = query.order('fetched_at', { ascending: true }); // Chronological order for time ranges
-    } else {
-      query = query.order('fetched_at', { ascending: false }); // Most recent first for latest data
-    }
+    // Query real data from raw_readings_v2 table
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
     
-    // Apply limit - use provided limit or default to 10000 for chunked requests
-    const finalLimit = limit || 10000; // Default limit for chunked requests
-    query = query.limit(finalLimit);
-
-    console.log(`API: Fetching readings for sensor ${sensorId}:`, {
-      startTime,
-      endTime,
-      requestedLimit: limit,
-      finalLimit,
-      hasTimeRange: !!(startTime || endTime),
-      orderDirection: (startTime || endTime) ? 'ascending' : 'descending'
-    });
-
-    const { data: readings, error } = await query;
-
-    console.log(`API: Query result:`, {
-      readingsCount: readings?.length || 0,
-      latestReading: readings?.[readings.length - 1]?.fetched_at,
-      error: error?.message
-    });
-
-    if (error) {
-      return new Response(JSON.stringify({ error: error.message }), { 
+    try {
+      // Build the SQL query with proper time filtering
+      let whereClause = 'WHERE sensor_id = $1';
+      let params = [sensorId];
+      let paramIndex = 2;
+      
+      if (startTime) {
+        whereClause += ` AND fetched_at >= $${paramIndex}`;
+        params.push(new Date(startTime));
+        paramIndex++;
+      }
+      
+      if (endTime) {
+        whereClause += ` AND fetched_at <= $${paramIndex}`;
+        params.push(new Date(endTime));
+        paramIndex++;
+      }
+      
+      const query = `
+        SELECT 
+          id,
+          sensor_id,
+          reading_value,
+          fetched_at,
+          approx_time,
+          timestamp
+        FROM raw_readings_v2 
+        ${whereClause}
+        ORDER BY fetched_at DESC
+        LIMIT $${paramIndex}
+      `;
+      
+      params.push(limit);
+      
+      
+      const results = await prisma.$queryRawUnsafe(query, ...params);
+      
+      // Convert BigInt to string for JSON serialization
+      const processedResults = results.map(record => ({
+        id: record.id.toString(),
+        sensor_id: record.sensor_id,
+        reading_value: record.reading_value,
+        fetched_at: record.fetched_at?.toISOString(),
+        approx_time: record.approx_time?.toISOString(),
+        timestamp: record.timestamp?.toString()
+      }));
+      
+      
+      return new Response(JSON.stringify(processedResults), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+    } catch (error) {
+      console.error('Database query error:', error);
+      return new Response(JSON.stringify({ error: 'Failed to fetch sensor readings' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
+    } finally {
+      await prisma.$disconnect();
     }
 
-    return new Response(JSON.stringify(readings || []), { 
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
-
   } catch (error) {
+    console.error('Sensor readings API error:', error);
     return new Response(JSON.stringify({ error: 'Internal server error' }), { 
       status: 500,
       headers: { 'Content-Type': 'application/json' }

@@ -2,25 +2,31 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
-
-// Supabase configuration
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co'; // Use the working project URL
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
-
-// Log configuration for debugging
-console.log('Supabase URL:', supabaseUrl);
-console.log('Supabase Anon Key:', supabaseAnonKey);
+// Custom authentication - no longer using Supabase
 console.log('Google Client ID:', process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
-// Initialize Supabase client
-let supabase;
-try {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
-  console.log('Supabase client initialized');
-} catch (err) {
-  console.error('Failed to initialize Supabase client:', err.message);
-}
+// Authentication helper functions
+const checkAuth = async () => {
+  try {
+    const token = localStorage.getItem('auth-token');
+    if (!token) return null;
+    
+    const response = await fetch('/api/verify-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return data.user;
+    }
+    return null;
+  } catch (error) {
+    console.error('Auth check error:', error);
+    return null;
+  }
+};
 
 export default function Home() {
   const [isSignup, setIsSignup] = useState(false);
@@ -49,9 +55,8 @@ export default function Home() {
     const checkSession = async () => {
       try {
         console.log('Checking session...');
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (data.session) {
+        const user = await checkAuth();
+        if (user) {
           console.log('Session found, redirecting to dashboard');
           router.push('/dashboard');
         }
@@ -99,22 +104,7 @@ export default function Home() {
   };
 
   const handleGoogleSignIn = async () => {
-    try {
-      console.log('Initiating Google OAuth...');
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirect_to: `${window.location.origin}/dashboard` },
-      });
-      if (error) throw error;
-      console.log('Google OAuth initiated:', data);
-    } catch (error) {
-      console.error('Google Sign-In error:', error.message);
-      setError(
-        error.message === 'Failed to fetch'
-          ? 'Unable to connect to authentication server. Please check your network or contact support.'
-          : 'Failed to sign in with Google: ' + error.message
-      );
-    }
+    setError('Google Sign-In is not configured with the new auth.');
   };
 
   // Signup
@@ -138,22 +128,39 @@ export default function Home() {
 
     try {
       console.log('Attempting signup:', { email: signupEmail });
-      const { data, error } = await supabase.auth.signUp({
-        email: signupEmail,
-        password: signupPassword,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-        },
+      const response = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: signupEmail,
+          password: signupPassword,
+          username: signupEmail.split('@')[0]
+        })
       });
-      if (error) throw error;
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Signup failed');
+      }
+      
       console.log('Signup successful:', data);
-      setSignupMessage('Account created successfully! Check your email to confirm.');
-      router.push('/dashboard');
+      
+      // Store token and redirect
+      if (data.token) {
+        localStorage.setItem('auth-token', data.token);
+        setSignupMessage('Account created successfully! Redirecting...');
+        setTimeout(() => router.push('/dashboard'), 1000);
+      } else {
+        setSignupMessage('Account created successfully! Please log in.');
+      }
     } catch (error) {
       console.error('Signup error:', error.message);
       setSignupMessage(
         error.message === 'Failed to fetch'
           ? 'Unable to connect to authentication server. Please check your network or contact support.'
+          : error.message.includes('already exists') || error.message.includes('User already')
+          ? 'An account with this email already exists. Please try logging in instead.'
           : 'Signup failed: ' + error.message
       );
     }
@@ -172,20 +179,37 @@ export default function Home() {
 
     try {
       console.log('Attempting login:', { email: loginEmail });
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginEmail,
+          password: loginPassword
+        })
       });
-      if (error) throw error;
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Login failed');
+      }
+      
       console.log('Login successful:', data);
-      setLoginMessage('Logged in successfully!');
-      router.push('/dashboard');
+      
+      // Store token and redirect
+      if (data.token) {
+        localStorage.setItem('auth-token', data.token);
+        setLoginMessage('Logged in successfully! Redirecting...');
+        setTimeout(() => router.push('/dashboard'), 1000);
+      } else {
+        setLoginMessage('Login successful! Please try again.');
+      }
     } catch (error) {
       console.error('Login error:', error.message);
       setLoginMessage(
         error.message === 'Failed to fetch'
           ? 'Unable to connect to authentication server. Please check your network or contact support.'
-          : error.message.includes('Invalid login credentials')
+          : error.message.includes('Invalid') || error.message.includes('credentials')
           ? 'Invalid email or password. Please try again.'
           : 'Login failed: ' + error.message
       );

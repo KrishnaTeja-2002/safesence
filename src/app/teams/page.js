@@ -2,15 +2,10 @@
 
 import { useState, useEffect, Component } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
 import apiClient from '../lib/apiClient';
 
-// Supabase configuration
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 class ErrorBoundary extends Component {
   state = { hasError: false, error: null };
@@ -18,9 +13,8 @@ class ErrorBoundary extends Component {
     return { hasError: true, error };
   }
   render() {
-    const { darkMode } = this.context || useDarkMode();
     if (this.state.hasError) {
-      return <div className={`p-4 ${darkMode ? 'text-red-400' : 'text-red-500'}`}>Error: {this.state.error?.message || 'Something went wrong'}</div>;
+      return <div className="p-4 text-red-500">Error: {this.state.error?.message || 'Something went wrong'}</div>;
     }
     return this.props.children;
   }
@@ -62,20 +56,33 @@ export default function Team() {
     const checkSession = async () => {
       try {
         console.log('Checking session...');
-        const { data: sessionData, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (!sessionData.session) {
-          console.log('No session found, redirecting to login');
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          console.log('No token found, redirecting to login');
           router.push('/login');
-        } else {
-          const user = sessionData.session.user;
-          const displayName = user?.user_metadata?.username || user?.email?.split('@')[0] || 'User';
-          console.log('Session found, user:', displayName);
-          setUsername(displayName);
-          setCurrentUser({ id: user.id, email: user.email });
-          console.log('Set current user:', { id: user.id, email: user.email });
-          setIsAuthed(true);
+          return;
         }
+
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+
+        if (!response.ok) {
+          localStorage.removeItem('auth-token');
+          console.log('Invalid token, redirecting to login');
+          router.push('/login');
+          return;
+        }
+
+        const { user } = await response.json();
+        const displayName = user?.email?.split('@')[0] || 'User';
+        console.log('Session found, user:', displayName);
+        setUsername(displayName);
+        setCurrentUser({ id: user.id, email: user.email });
+        console.log('Set current user:', { id: user.id, email: user.email });
+        setIsAuthed(true);
       } catch (err) {
         console.error('Session check error:', err.message);
         setError(
@@ -98,7 +105,7 @@ export default function Team() {
           id: r.sensor_id,
           name: r.sensor_name || r.sensor_id,
           access_role: r.access_role || 'viewer',
-        })).sort((a,b) => a.name.localeCompare(b.name));
+        })).sort((a,b) => (a?.name || '').localeCompare(b?.name || ''));
         setSensors(mapped);
         if (mapped.length && !activeSensorId) setActiveSensorId(mapped[0].id);
       } catch (e) {
@@ -128,9 +135,24 @@ export default function Team() {
         }
         setShares(unique);
         // set my role from list
-        const { data: s } = await supabase.auth.getSession();
-        const uid = s?.session?.user?.id;
-        const userEmail = s?.session?.user?.email;
+        // Resolve current user via token verification
+        let uid = null;
+        let userEmail = null;
+        try {
+          const token = typeof window !== 'undefined' ? localStorage.getItem('auth-token') : null;
+          if (token) {
+            const resp = await fetch('/api/verify-token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token })
+            });
+            if (resp.ok) {
+              const { user } = await resp.json();
+              uid = user?.id || null;
+              userEmail = user?.email || null;
+            }
+          }
+        } catch {}
         
         // Try to find current user by user_id first, then by email as fallback
         let me = arr.find(a => a.user_id === uid);
@@ -412,8 +434,7 @@ export default function Team() {
   // Handle sign-out
   const handleSignOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      try { localStorage.removeItem('auth-token'); } catch {}
       router.push('/login');
     } catch (err) {
       setError('Failed to sign out: ' + err.message);
@@ -630,7 +651,7 @@ export default function Team() {
                                                 id: r.sensor_id,
                                                 name: r.sensor_name || r.sensor_id,
                                                 access_role: r.access_role || 'viewer',
-                                              })).sort((a,b) => a.name.localeCompare(b.name)) || []);
+                                              })).sort((a,b) => (a?.name || '').localeCompare(b?.name)) || []);
                                               
                                               // Check if the current sensor is still accessible
                                               const stillHasAccess = sensorsRes?.some(s => s.sensor_id === activeSensorId);

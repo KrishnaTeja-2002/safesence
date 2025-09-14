@@ -2,17 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
 import apiClient from "../lib/apiClient";
-
-// Supabase client (env first, then project fallback)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://kwaylmatpkcajsctujor.supabase.co",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M"
-);
 
 // UI <-> DB helpers
 const TEMP_UI_TO_DB = { Fahrenheit: "F", Celsius: "C" };
@@ -58,21 +50,30 @@ export default function Account() {
       setLoading(true);
       setError("");
 
-      const { data: sessionData, error: sErr } = await supabase.auth.getSession();
-      if (sErr) {
-        setError("Failed to verify session: " + sErr.message);
+      // Check authentication
+      const token = localStorage.getItem('auth-token');
+      if (!token) {
         setLoading(false);
         router.push("/login");
         return;
       }
-      const session = sessionData?.session;
-      if (!session) {
+
+      const response = await fetch('/api/verify-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+
+      if (!response.ok) {
+        localStorage.removeItem('auth-token');
         setLoading(false);
         router.push("/login");
         return;
       }
-      const uid = session.user.id;
-      const email = session.user.email || "";
+
+      const { user } = await response.json();
+      const uid = user.id;
+      const email = user.email || "";
       setUserId(uid);
       setUserEmail(email);
 
@@ -81,18 +82,18 @@ export default function Account() {
 
       // map DB -> UI
       const ui = {
-        tempScale: TEMP_DB_TO_UI[row.temp_scale] ?? "Fahrenheit",
+        tempScale: TEMP_DB_TO_UI[row.tempScale] ?? "Fahrenheit",
         dashboard: [
-          ...(row.show_temp ? ["Temperature Monitoring System"] : []),
-          ...(row.show_humidity ? ["Humidity Monitoring System"] : []),
-          ...(row.show_sensors ? ["Sensors"] : []),
-          ...(row.show_users ? ["Users"] : []),
-          ...(row.show_alerts ? ["Alerts"] : []),
-          ...(row.show_notifications ? ["Notifications"] : []),
+          ...(row.showTemp ? ["Temperature Monitoring System"] : []),
+          ...(row.showHumidity ? ["Humidity Monitoring System"] : []),
+          ...(row.showSensors ? ["Sensors"] : []),
+          ...(row.showUsers ? ["Users"] : []),
+          ...(row.showAlerts ? ["Alerts"] : []),
+          ...(row.showNotifications ? ["Notifications"] : []),
         ],
-        timeZone: tzIanaToLabel[row.time_zone] ?? "AKDT",
-        darkMode: !!row.dark_mode,
-        username: row.username || (session.user?.email ? session.user.email.split("@")[0] : ""),
+        timeZone: tzIanaToLabel[row.timeZone] ?? "AKDT",
+        darkMode: !!row.darkMode,
+        username: row.username || (user?.email ? user.email.split("@")[0] : ""),
       };
       setPreferences(ui);
 
@@ -154,7 +155,7 @@ export default function Account() {
 
   const handleLogout = async () => {
     try {
-      await supabase.auth.signOut();
+      localStorage.removeItem('auth-token');
       router.push("/login");
     } catch (error) {
       setError("Failed to logout: " + error.message);
@@ -365,7 +366,8 @@ export default function Account() {
             >
               <h3 className="text-lg font-semibold mb-4">Confirm Logout</h3>
               <p className={`mb-6 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
-                Are you sure you want to log out? You'll need to sign in again to access your account.
+
+                Are you sure you want to log out? You&apos;ll need to sign in again to access your account.
               </p>
               <div className="flex gap-3 justify-end">
                 <button

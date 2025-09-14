@@ -1,4 +1,6 @@
-import { authenticateRequest } from '../middleware/auth.js';
+export const runtime = "nodejs";
+
+import { authenticateRequest } from '../middleware/auth-postgres.js';
 
 // POST /api/shares -> create invitation for a user to a sensor (owner/admin)
 // Body: { sensor_id: string, email: string, role: 'viewer'|'admin' }
@@ -12,7 +14,7 @@ export async function POST(request) {
       });
     }
 
-    const { supabaseAdmin, user } = authResult;
+    const { db, user } = authResult;
     const { sensor_id, email, role } = await request.json();
 
     if (!sensor_id || !role || !email) {
@@ -22,47 +24,34 @@ export async function POST(request) {
       });
     }
 
-    // Owners or admins can invite
-    const { data: sensor, error: metaErr } = await supabaseAdmin
-      .from('sensors')
-      .select('owner_id')
-      .eq('sensor_id', sensor_id)
-      .maybeSingle();
-    if (metaErr || !sensor) {
-      return new Response(JSON.stringify({ error: metaErr?.message || 'Sensor not found' }), {
+    // Check if sensor exists and user has permission to invite
+    const sensor = await db.getSensorById(sensor_id);
+    if (!sensor) {
+      return new Response(JSON.stringify({ error: 'Sensor not found' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' }
       });
     }
-    let isOwner = sensor.owner_id === user.id;
-    let isAdmin = false;
-    if (!isOwner) {
-      const { data: inv } = await supabaseAdmin
-        .from('team_invitations')
-        .select('role')
-        .eq('sensor_id', sensor_id)
-        .eq('status', 'accepted')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      const role = inv?.role || '';
-      isAdmin = /full/i.test(role) || /admin/i.test(role);
-    }
-    if (!isOwner && !isAdmin) {
+
+    // Check if user can invite (owner or admin)
+    const canWrite = await db.canUserWriteToSensor(user.id, sensor_id);
+    if (!canWrite) {
       return new Response(JSON.stringify({ error: 'Only owners or admins can invite' }), {
         status: 403,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // Prevent duplicate pending invite for same sensor/email
-    const { data: pending } = await supabaseAdmin
-      .from('team_invitations')
-      .select('id')
-      .eq('sensor_id', sensor_id)
-      .eq('email', email)
-      .eq('status', 'pending')
-      .maybeSingle();
-    if (pending) {
+    // Check for existing pending invitation
+    const existingInvitation = await db.prisma.teamInvitation.findFirst({
+      where: {
+        sensorId: sensor_id,
+        email: email,
+        status: 'pending'
+      }
+    });
+
+    if (existingInvitation) {
       return new Response(JSON.stringify({ invited: false, reason: 'already_pending' }), {
         status: 409,
         headers: { 'Content-Type': 'application/json' }
@@ -75,15 +64,15 @@ export async function POST(request) {
     const origin = request.headers.get('origin') || `${request.headers.get('x-forwarded-proto') || 'http'}://${request.headers.get('host')}`;
     const acceptLink = `${origin}/api/sendInvite?token=${token}&sensor_id=${encodeURIComponent(sensor_id)}`;
 
-    const { error: insErr } = await supabaseAdmin
-      .from('team_invitations')
-      .insert([{ token, email, role: roleLabel, status: 'pending', inviter_id: user.id, sensor_id, invite_link: acceptLink }]);
-    if (insErr) {
-      return new Response(JSON.stringify({ error: insErr.message }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
+    const invitation = await db.createTeamInvitation({
+      token,
+      email,
+      role: roleLabel,
+      status: 'pending',
+      inviterId: user.id,
+      sensorId: sensor_id,
+      inviteLink: acceptLink
+    });
 
     // Send email via internal route
     try {
@@ -92,7 +81,9 @@ export async function POST(request) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, role: roleLabel, token, sensor_id })
       });
-    } catch {}
+    } catch (error) {
+      console.error('Failed to send invitation email:', error);
+    }
 
     return new Response(JSON.stringify({ invited: true, token }), {
       status: 200,

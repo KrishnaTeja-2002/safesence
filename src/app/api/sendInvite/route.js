@@ -1,15 +1,12 @@
+
+
+export const runtime = "nodejs";
+
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { createClient } from '@supabase/supabase-js';
+import { DatabaseClient } from '../../../../lib/database.js';
 
-// Supabase configuration
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-// Admin client for DB writes (sensor_access upserts)
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAdmin = createClient(supabaseUrl, serviceKey || supabaseAnonKey);
+const db = new DatabaseClient();
 
 // Helper function to get initials (same as in dashboard)
 const getInitials = (name) => {
@@ -170,64 +167,43 @@ export async function GET(request) {
   // Handle accept/reject actions
   if (action === 'accept' || action === 'reject') {
     try {
-      const { data: invitation, error } = await supabase
-        .from('team_invitations')
-        .select('email, status, role, sensor_id')
-        .eq('token', token)
-        .single();
+      const invitation = await db.prisma.teamInvitation.findUnique({
+        where: { token },
+        select: { email: true, status: true, role: true, sensorId: true }
+      });
 
-      if (error || !invitation || invitation.status !== 'pending') {
+      if (!invitation || invitation.status !== 'pending') {
         return NextResponse.redirect(`http://localhost:3000/teams?error=invalid_token`);
       }
 
       if (action === 'accept') {
         const invitedEmail = invitation.email;
-        const targetSensorId = invitation.sensor_id || sensorIdParam || null;
+        const targetSensorId = invitation.sensorId || sensorIdParam || null;
 
         // Resolve user_id by email (if possible)
         let targetUserId = null;
         try {
-          console.log('Looking up user by email:', invitedEmail);
-          const { data: uData, error: uErr } = await supabaseAdmin.auth.admin.getUserByEmail(invitedEmail);
-          if (uErr) {
-            console.error('getUserByEmail error:', uErr);
-            throw uErr;
-          }
-          targetUserId = uData?.user?.id || null;
-          console.log('Found user_id:', targetUserId, 'for email:', invitedEmail);
+          const authUser = await db.findAuthUserByEmail(invitedEmail);
+          targetUserId = authUser?.id || null;
         } catch (e) {
-          console.error('Admin getUserByEmail failed:', e?.message || e);
+          console.error('Lookup by email failed:', e?.message || e);
           // If getUserByEmail fails, we'll still accept the invitation but with user_id as null
           // The user can still access the sensor via email-based lookup in the access checks
           console.log('Continuing with user_id as null - access will be email-based');
         }
 
         // Update invitation status and store user_id (if resolved)
-        console.log('Updating invitation with token:', token, 'user_id:', targetUserId);
-        const { error: updateError } = await supabaseAdmin
-          .from('team_invitations')
-          .update({ status: 'accepted', user_id: targetUserId })
-          .eq('token', token);
-        if (updateError) {
-          console.error('Update invitation error:', updateError);
-          return NextResponse.redirect(`http://localhost:3000/teams?error=update_failed`);
-        }
-        console.log('Successfully updated invitation');
+        await db.prisma.teamInvitation.update({
+          where: { token },
+          data: { status: 'accepted', userId: targetUserId }
+        });
 
         // Access is now managed entirely through team_invitations table
         // No need for separate sensor_access table
 
         return NextResponse.redirect(`http://localhost:3000/login?accepted=true`);
       } else if (action === 'reject') {
-        const { error: updateError } = await supabaseAdmin
-          .from('team_invitations')
-          .update({ status: 'rejected' })
-          .eq('token', token);
-
-        if (updateError) {
-          console.error('Update invitation error:', updateError);
-          return NextResponse.redirect(`http://localhost:3000/teams?error=update_failed`);
-        }
+        await db.prisma.teamInvitation.update({ where: { token }, data: { status: 'rejected' } });
 
         return NextResponse.redirect(`http://localhost:3000/login?rejected=true`);
       }
@@ -239,13 +215,12 @@ export async function GET(request) {
 
   // Display invitation page
   try {
-    const { data: invitation, error } = await supabase
-      .from('team_invitations')
-      .select('email, role, status')
-      .eq('token', token)
-      .single();
+    const invitation = await db.prisma.teamInvitation.findUnique({
+      where: { token },
+      select: { email: true, role: true, status: true }
+    });
 
-    if (error || !invitation || invitation.status !== 'pending') {
+    if (!invitation || invitation.status !== 'pending') {
       return new NextResponse(`
         <!DOCTYPE html>
         <html>

@@ -1,0 +1,121 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public", "auth"]
+
+}
+
+// User authentication table (using existing Supabase auth.users)
+model User {
+  id        String   @id @map("id") @db.Uuid
+  email     String   @map("email")
+  createdAt DateTime @map("created_at")
+  updatedAt DateTime @map("updated_at")
+
+  // Relations
+  ownedSensors      Sensor[]
+  userPreferences   UserPreferences?
+  sentInvitations   TeamInvitation[] @relation("Inviter")
+  receivedInvitations TeamInvitation[] @relation("Invitee")
+
+  @@map("users")
+  @@schema("auth")
+}
+
+// Sensor information and configuration
+model Sensor {
+  sensorId        String    @id @map("sensor_id")
+  sensorName      String?   @map("sensor_name")
+  metric          String?
+  sensorType      String?   @map("sensor_type")
+  latestTemp      Float?    @map("latest_temp")
+  approxTime      DateTime? @map("approx_time")
+  lastFetchedTime DateTime? @map("last_fetched_time")
+  updatedAt       DateTime? @updatedAt @map("updated_at")
+  minLimit        Float?    @map("min_limit")
+  maxLimit        Float?    @map("max_limit")
+  warningLimit    Float?    @map("warning_limit")
+  status          String?
+  ownerId         String    @map("owner_id") @db.Uuid
+  emailAlert      Boolean?  @default(false) @map("email_alert")
+  mobileAlert     Boolean?  @default(false) @map("mobile_alert")
+
+  // Relations
+  owner           User              @relation(fields: [ownerId], references: [id])
+  readings        RawReading[]
+  teamInvitations TeamInvitation[]
+
+  @@map("sensors")
+  @@schema("public")
+}
+
+// User preferences and settings
+model UserPreferences {
+  userId           String  @id @map("user_id")
+  tempScale        String  @default("F") @map("temp_scale")
+  showTemp         Boolean @default(true) @map("show_temp")
+  showHumidity     Boolean @default(false) @map("show_humidity")
+  showSensors      Boolean @default(true) @map("show_sensors")
+  showUsers        Boolean @default(true) @map("show_users")
+  showAlerts       Boolean @default(true) @map("show_alerts")
+  showNotifications Boolean @default(true) @map("show_notifications")
+  timeZone         String  @default("America/Anchorage") @map("time_zone")
+  darkMode         Boolean @default(false) @map("dark_mode")
+  username         String?
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+  @@schema("public")
+}
+
+// Team invitations and sharing
+model TeamInvitation {
+  id          String   @id @default(cuid())
+  sensorId    String   @map("sensor_id")
+  email       String
+  role        String
+  status      String   @default("pending") // pending, accepted, rejected
+  token       String   @unique
+  userId      String?  @map("user_id") // Set when invitation is accepted
+  inviterId   String   @map("inviter_id")
+  inviteLink  String?  @map("invite_link")
+  emailAlert  Boolean? @default(false) @map("email_alert")
+  mobileAlert Boolean? @default(false) @map("mobile_alert")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  sensor  Sensor @relation(fields: [sensorId], references: [sensorId], onDelete: Cascade)
+  inviter User   @relation("Inviter", fields: [inviterId], references: [id])
+  invitee User?  @relation("Invitee", fields: [userId], references: [id])
+
+  @@map("team_invitations")
+  @@schema("public")
+}
+
+// Raw sensor readings
+model RawReading {
+  id           BigInt    @id
+  sensorId     String    @map("sensor_id")
+  readingValue Float     @map("reading_value")
+  sensorIndex  Int       @map("sensor_index")
+  fetchedAt    DateTime  @map("fetched_at")
+  approxTime   DateTime? @map("approx_time")
+  timestamp    BigInt
+
+  // Relations
+  sensor Sensor @relation(fields: [sensorId], references: [sensorId], onDelete: Cascade)
+
+  @@map("raw_readings_v2")
+  @@index([sensorId, fetchedAt])
+  @@schema("public")
+}

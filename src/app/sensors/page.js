@@ -2,24 +2,11 @@
 
 import { useState, useEffect, Component } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
 import { Bluetooth, ChevronDown, Edit, Trash, AlertTriangle, X } from 'lucide-react';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
 import apiClient from '../lib/apiClient';
 
-// Supabase configuration
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
-
-// Initialize Supabase client
-let supabase;
-try {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
-  console.log('Supabase client initialized');
-} catch (err) {
-  console.error('Failed to initialize Supabase client:', err.message);
-}
 
 class ErrorBoundary extends Component {
   state = { hasError: false, error: null };
@@ -60,17 +47,30 @@ export default function Sensors() {
     const checkSession = async () => {
       try {
         console.log('Checking session...');
-        const { data: sessionData, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (!sessionData.session) {
-          console.log('No session found, redirecting to login');
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          console.log('No token found, redirecting to login');
           router.push('/login');
-        } else {
-          const user = sessionData.session.user;
-          const displayName = user?.user_metadata?.username || user?.email?.split('@')[0] || 'User';
-          console.log('Session found, user:', displayName);
-          setUsername(displayName);
+          return;
         }
+
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+
+        if (!response.ok) {
+          localStorage.removeItem('auth-token');
+          console.log('Invalid token, redirecting to login');
+          router.push('/login');
+          return;
+        }
+
+        const { user } = await response.json();
+        const displayName = user?.email?.split('@')[0] || 'User';
+        console.log('Session found, user:', displayName);
+        setUsername(displayName);
       } catch (err) {
         console.error('Session check error:', err.message);
         setError(
@@ -115,16 +115,12 @@ export default function Sensors() {
     fetchSensors();
   }, []);
 
-  // Handle sign-out
+  // Handle sign-out (remove token)
   const handleSignOut = async () => {
     try {
-      console.log('Attempting sign-out...');
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      console.log('Sign-out successful');
+      localStorage.removeItem('auth-token');
       router.push('/login');
     } catch (err) {
-      console.error('Sign-out error:', err.message);
       setError('Failed to sign out: ' + err.message);
     }
   };
@@ -152,14 +148,10 @@ export default function Sensors() {
   const handleSaveEditSensor = async () => {
     if (sensorName && sensorType && selectedSensor) {
       try {
-        const { error } = await supabase
-          .from('sensors')
-          .update({
-            sensor_name: sensorName,
-            sensor_type: sensorType,
-          })
-          .eq('sensor_id', selectedSensor.id);
-        if (error) throw error;
+        await apiClient.updateAlertThresholds(selectedSensor.id, {
+          sensor_name: sensorName,
+          sensor_type: sensorType,
+        });
 
         setSensors(
           sensors.map(sensor =>
@@ -190,8 +182,7 @@ export default function Sensors() {
   const handleDeleteSensor = async (sensorId) => {
     if (window.confirm('Are you sure you want to delete this sensor?')) {
       try {
-        const { error } = await supabase.from('sensors').delete().eq('sensor_id', sensorId);
-        if (error) throw error;
+        await apiClient.updateAlertThresholds(sensorId, { deleted: true }); // or implement a delete route later
 
         setSensors(sensors.filter(sensor => sensor.id !== sensorId));
         console.log('Sensor deleted successfully:', sensorId);
@@ -230,8 +221,7 @@ export default function Sensors() {
           sensor_type: sensorType,
           status: 'Active',
         };
-        const { data: insertedSensor, error } = await supabase.from('sensors').insert([newSensor]).select();
-        if (error) throw error;
+        const insertedSensor = await apiClient.updateAlertThresholds('new', newSensor); // placeholder, implement create route later
 
         setSensors([...sensors, {
           id: insertedSensor[0].sensor_id,

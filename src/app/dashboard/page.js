@@ -2,18 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
 import apiClient from "../lib/apiClient";
 import { getStatusDisplay, isAlertStatus, isOfflineStatus } from "../lib/statusUtils";
 
-/* ===== Supabase client ===== */
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://kwaylmatpkcajsctujor.supabase.co",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M"
-);
+// Removed Supabase client after migration
 
 /* ===== Simple helpers ===== */
 const fToC = (v) => (v == null ? null : (v - 32) * 5 / 9);
@@ -114,35 +108,49 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const { data: s, error: e } = await supabase.auth.getSession();
-        if (e) throw e;
-        const session = s?.session;
-        if (!session) return router.push("/login");
+        // Check authentication
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          router.push("/login");
+          return;
+        }
 
-        const user = session.user;
-        setUsername(user?.user_metadata?.username || user?.email?.split("@")[0] || "User");
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
 
-        const { data: row } = await supabase
-          .from("user_preferences")
-          .select("*")
-          .eq("user_id", user.id)
-          .single();
+        if (!response.ok) {
+          localStorage.removeItem('auth-token');
+          router.push("/login");
+          return;
+        }
 
-        if (row) {
-          const next = {
-            unit: row.temp_scale || "F",
-            tz: row.time_zone || "America/Anchorage",
-            showTemp: !!row.show_temp,
-            showHumidity: !!row.show_humidity,
-            showSensors: !!row.show_sensors,
-            showUsers: !!row.show_users,
-            showAlerts: !!row.show_alerts || !!row.show_notifications,
-          };
-          setPrefs(next);
-          if (!!row.dark_mode !== darkMode) toggleDarkMode();
-          if (row.username) {
-            setUsername(String(row.username));
+        const { user } = await response.json();
+        setUsername(user?.email?.split("@")[0] || "User");
+
+        // Get user preferences using API client
+        try {
+          const preferences = await apiClient.getUserPreferences();
+          if (preferences) {
+            const next = {
+              unit: preferences.tempScale || "F",
+              tz: preferences.timeZone || "America/Anchorage",
+              showTemp: !!preferences.showTemp,
+              showHumidity: !!preferences.showHumidity,
+              showSensors: !!preferences.showSensors,
+              showUsers: !!preferences.showUsers,
+              showAlerts: !!preferences.showAlerts || !!preferences.showNotifications,
+            };
+            setPrefs(next);
+            if (!!preferences.darkMode !== darkMode) toggleDarkMode();
+            if (preferences.username) {
+              setUsername(String(preferences.username));
+            }
           }
+        } catch (prefError) {
+          console.error('Failed to load preferences:', prefError);
         }
       } catch (err) {
         setError("Failed to verify session: " + (err?.message || String(err)));
@@ -259,11 +267,8 @@ export default function Dashboard() {
           disconnected: filtered.filter((t) => t.value == null).length,
         };
 
-        let usersCount = 0;
-        if (prefs.showUsers) {
-          const { count } = await supabase.from("team_members").select("id", { count: "exact", head: true });
-          if (typeof count === "number") usersCount = count;
-        }
+        // Users KPI not available without Supabase; set to 0 or remove
+        const usersCount = 0;
 
         const notificationsList = buildNotifications(filtered, prefs.tz);
 
@@ -281,75 +286,7 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole]);
 
-  /* ===== Realtime updates: sensors table ===== */
-  useEffect(() => {
-    const ch = supabase
-      .channel("sensors-updates")
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "sensors" }, (payload) => {
-        const r = payload.new || {};
-        if (!r.sensor_id) return;
-
-        // No need to update thresholds - using database status directly
-
-        setData((prev) => {
-          const items = [...prev.items];
-          const idx = items.findIndex((p) => p.sensor_id === r.sensor_id);
-          if (idx < 0) return prev;
-
-          const item = items[idx];
-          let value = null;
-          let status = "unknown"; // Default to unknown
-          let displayValue = item.displayValue;
-
-          if (item.kind === "temperature") {
-            const sensorUnit = (r.metric || item.unit || "F").toUpperCase() === "C" ? "C" : "F";
-            const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
-            const valueInF = raw != null ? (sensorUnit === "C" ? cToF(raw) : raw) : null;
-            status = r.status || 'unknown';
-            value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
-            displayValue = value != null ? `${value.toFixed(1)}°${prefs.unit}` : `--°${prefs.unit}`;
-          } else {
-            const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
-            value = raw != null ? raw : null;
-            status = r.status || 'unknown';
-            displayValue = value != null ? `${value.toFixed(1)}%` : "--%";
-          }
-
-          let color = "bg-[#98CC37]";
-          if (status === "alert") color = "bg-red-500";
-          else if (status === "warning") color = "bg-[#FF9866]";
-          else if (status === "offline") color = "bg-gray-500";
-          else if (status === "unknown") color = "bg-gray-500";
-
-          items[idx] = {
-            ...item,
-            value,
-            displayValue,
-            status,
-            color,
-            lastFetchedTime: r.last_fetched_time ?? item.lastFetchedTime,
-            lastUpdated: r.updated_at || item.lastUpdated || new Date().toISOString(),
-            // No thresholds needed - using database status
-          };
-
-          const filtered = visibleItems(items, selectedType, selectedRole, prefs);
-          const sensorsKPI = {
-            total: filtered.length,
-            error: filtered.filter((t) => t.status === "alert").length,
-            warning: filtered.filter((t) => t.status === "warning").length,
-            success: filtered.filter((t) => t.status === "ok").length,
-            unconfigured: filtered.filter((t) => t.status === "offline" || t.status === "unknown").length,
-            disconnected: filtered.filter((t) => t.value == null).length,
-          };
-          const notificationsList = buildNotifications(filtered, prefs.tz);
-          return { ...prev, items, sensors: sensorsKPI, notifications: notificationsList.length, notificationsList };
-        });
-      })
-      .subscribe();
-
-    return () => supabase.removeChannel(ch);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole]);
+  // Realtime updates removed (no Supabase client). Consider polling if needed.
 
   /* ===== UI helpers ===== */
   useEffect(() => {
@@ -437,7 +374,9 @@ export default function Dashboard() {
           <div className="flex items-center space-x-3">
             <button
               onClick={async () => {
-                await supabase.auth.signOut();
+                try {
+                  localStorage.removeItem('auth-token');
+                } catch {}
                 router.push("/login");
               }}
               className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? "bg-red-600 hover:bg-red-700" : ""}`}
