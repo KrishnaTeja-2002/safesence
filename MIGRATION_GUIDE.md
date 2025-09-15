@@ -22,18 +22,18 @@ Create a `.env.local` file in your project root with your Coolify PostgreSQL con
 
 ```bash
 # Primary connection string (use this in your app/ORM)
-DATABASE_URL="postgres://postgres:oTj0MHpzEl24RUp6bfDuuY5gwdNbB3jgM29iIaYNrMVlHZYE4V3PwGu0b1g9s6j2@161.97.170.64:5400/postgres"
+DATABASE_URL="<set in .env.local>"
 
 # If you're using Prisma, it prefers the "postgresql://" scheme:
-PRISMA_DATABASE_URL="postgresql://postgres:oTj0MHpzEl24RUp6bfDuuY5gwdNbB3jgM29iIaYNrMVlHZYE4V3PwGu0b1g9s6j2@161.97.170.64:5400/postgres"
+PRISMA_DATABASE_URL="<set in .env.local>"
 
 # Breakout vars (useful for psql, node-postgres, etc.)
-PGHOST=161.97.170.64
-PGPORT=5400
-PGUSER=postgres
-PGPASSWORD=oTj0MHpzEl24RUp6bfDuuY5gwdNbB3jgM29iIaYNrMVlHZYE4V3PwGu0b1g9s6j2
-PGDATABASE=postgres
-PGSSLMODE=disable
+PGHOST=<set in .env.local>
+PGPORT=<set in .env.local>
+PGUSER=<set in .env.local>
+PGPASSWORD=<set in .env.local>
+PGDATABASE=<set in .env.local>
+PGSSLMODE=<set in .env.local>
 
 # JWT Secret for authentication (change this in production!)
 JWT_SECRET=your-super-secret-jwt-key-change-in-production

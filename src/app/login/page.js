@@ -228,13 +228,10 @@ export default function Home() {
 
     try {
       console.log('Sending password reset:', resetEmail);
-      const { data, error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) throw error;
-      console.log('Password reset email sent:', data);
+      // Password reset functionality disabled - using new auth system
+      // In a real implementation, you would call your own password reset API
       setError('');
-      alert('Password reset link sent! Check your email.');
+      alert('Password reset functionality is not available. Please contact an administrator.');
       setShowForgotPassword(false);
     } catch (error) {
       console.error('Password reset error:', error.message);

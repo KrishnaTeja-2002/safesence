@@ -79,19 +79,21 @@ model UserPreferences {
 
 // Team invitations and sharing
 model TeamInvitation {
-  id          String   @id @default(cuid())
-  sensorId    String   @map("sensor_id")
-  email       String
-  role        String
-  status      String   @default("pending") // pending, accepted, rejected
-  token       String   @unique
-  userId      String?  @map("user_id") // Set when invitation is accepted
-  inviterId   String   @map("inviter_id")
-  inviteLink  String?  @map("invite_link")
-  emailAlert  Boolean? @default(false) @map("email_alert")
-  mobileAlert Boolean? @default(false) @map("mobile_alert")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  sensorId      String   @map("sensor_id")
+  email         String
+  role          String
+  status        String   @default("pending") // pending, accepted, rejected
+  token         String   @unique
+  userId        String?  @map("user_id") // Set when invitation is accepted
+  inviterId     String   @map("inviter_id")
+  inviteLink    String?  @map("invite_link")
+  emailAlert    Boolean? @default(false) @map("email_alert")
+  mobileAlert   Boolean? @default(false) @map("mobile_alert")
+  acceptedName  String?  @map("accepted_name") // Name used when accepting
+  acceptedRole  String?  @map("accepted_role") // Role used when accepting
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
 
   // Relations
   sensor  Sensor @relation(fields: [sensorId], references: [sensorId], onDelete: Cascade)

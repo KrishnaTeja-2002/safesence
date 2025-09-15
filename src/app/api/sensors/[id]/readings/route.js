@@ -13,7 +13,7 @@ export async function GET(request, context) {
     const endTime = searchParams.get('end_time');
     const limitStr = searchParams.get('limit');
     const parsedLimit = limitStr != null ? parseInt(limitStr, 10) : undefined;
-    const limit = Math.min(parsedLimit || 10, 100);
+    const limit = Math.min(parsedLimit || 10, 50000); // Increased limit to 50,000 for better data coverage
 
     if (!sensorId) {
       return new Response(JSON.stringify({ error: 'Sensor ID is required' }), { 

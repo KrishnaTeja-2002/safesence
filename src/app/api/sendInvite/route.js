@@ -1,12 +1,10 @@
-
-
 export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { DatabaseClient } from '../../../../lib/database.js';
+import { PrismaClient } from '@prisma/client';
 
-const db = new DatabaseClient();
+const prisma = new PrismaClient();
 
 // Helper function to get initials (same as in dashboard)
 const getInitials = (name) => {
@@ -20,10 +18,73 @@ const getInitials = (name) => {
 
 export async function POST(request) {
   try {
-    const { email, role, token, sensor_id } = await request.json();
+    const { email, role, sensorId } = await request.json();
 
-    // Option 1: Using Gmail SMTP with custom "from" name and reply-to
-    const transporter = nodemailer.createTransport({
+    if (!email || !role || !sensorId) {
+      return NextResponse.json(
+        { error: 'Email, role, and sensorId are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if user is already a team member
+    const existingUser = await prisma.user.findFirst({
+      where: { email }
+    });
+
+    if (existingUser) {
+      // Check if they already have access to this sensor
+      const existingInvitation = await prisma.teamInvitation.findFirst({
+        where: {
+          email,
+          sensorId,
+          status: { in: ['accepted', 'pending'] }
+        }
+      });
+
+      if (existingInvitation) {
+        return NextResponse.json({
+          alreadyMember: true,
+          message: 'User already has access to this sensor'
+        });
+      }
+    }
+
+    // Check for pending invitations
+    const pendingInvite = await prisma.teamInvitation.findFirst({
+      where: {
+        email,
+        sensorId,
+        status: 'pending'
+      }
+    });
+
+    if (pendingInvite) {
+      return NextResponse.json({
+        pendingInvite: true,
+        message: 'There is already a pending invitation for this email'
+      });
+    }
+
+    // Generate token and create invitation
+    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    
+    // For now, we'll use a placeholder inviterId - in a real app, this would come from the authenticated user
+    const inviterId = '00000000-0000-0000-0000-000000000000'; // Placeholder UUID
+
+    await prisma.teamInvitation.create({
+      data: {
+        email,
+        role,
+        token,
+        sensorId,
+        inviterId,
+        status: 'pending'
+      }
+    });
+
+    // Send email
+    const transporter = nodemailer.createTransporter({
       service: 'gmail',
       auth: {
         user: 'safesencewinwinlabs@gmail.com',
@@ -34,7 +95,7 @@ export async function POST(request) {
       requireTLS: true,
     });
 
-    const acceptLink = `http://localhost:3000/api/sendInvite?token=${token}${sensor_id ? `&sensor_id=${encodeURIComponent(sensor_id)}` : ''}`;
+    const acceptLink = `http://localhost:3001/api/sendInvite?token=${token}`;
     const mailOptions = {
       from: {
         name: 'SafeSense Team',
@@ -79,82 +140,22 @@ export async function POST(request) {
     await transporter.verify();
     await transporter.sendMail(mailOptions);
     console.log(`Email sent to ${email} with token ${token}`);
-    return NextResponse.json({ success: true, message: 'Invitation sent' });
-  } catch (error) {
-    console.error('SMTP Error:', error.message);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-  }
-}
-
-// Alternative configuration for actual custom domain email
-// Uncomment and configure this if you have SMTP credentials for safesense@winwinlabs.org
-/*
-export async function POST(request) {
-  try {
-    const { email, role, token } = await request.json();
-
-    // Option 2: Using custom domain SMTP (requires SMTP credentials from your hosting provider)
-    const transporter = nodemailer.createTransport({
-      host: 'mail.winwinlabs.org', // Replace with your actual SMTP host
-      port: 587,
-      secure: false,
-      auth: {
-        user: 'safesense@winwinlabs.org',
-        pass: 'your_email_password_here', // Replace with actual password
-      },
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Invitation sent',
+      token 
     });
-
-    const acceptLink = `http://localhost:3000/api/sendInvite?token=${token}`;
-    const mailOptions = {
-      from: {
-        name: 'SafeSense Team',
-        address: 'safesense@winwinlabs.org'
-      },
-      to: email,
-      subject: 'Team Invitation - SafeSense',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="text-align: center; margin-bottom: 30px;">
-            <h1 style="color: #1f2937; margin-bottom: 10px;">SafeSense</h1>
-            <p style="color: #6b7280; margin: 0;">Team Invitation</p>
-          </div>
-          
-          <div style="background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <h2 style="color: #1f2937; margin-top: 0;">You're Invited!</h2>
-            <p style="color: #374151; line-height: 1.6;">
-              You have been invited to join the SafeSense team with the role: <strong>${role}</strong>.
-            </p>
-          </div>
-          
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${acceptLink}" 
-               style="background-color: #10b981; color: white; padding: 12px 30px; 
-                      text-decoration: none; border-radius: 6px; font-weight: 500;
-                      display: inline-block;">
-              Accept Invitation
-            </a>
-          </div>
-          
-          <div style="border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 30px;">
-            <p style="color: #6b7280; font-size: 14px; text-align: center; margin: 0;">
-              This invitation was sent by SafeSense Team<br>
-              safesense@winwinlabs.org
-            </p>
-          </div>
-        </div>
-      `,
-    };
-
-    await transporter.verify();
-    await transporter.sendMail(mailOptions);
-    console.log(`Email sent to ${email} with token ${token}`);
-    return NextResponse.json({ success: true, message: 'Invitation sent' });
   } catch (error) {
-    console.error('SMTP Error:', error.message);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    console.error('Send invite error:', error);
+    return NextResponse.json({ 
+      success: false, 
+      error: error.message 
+    }, { status: 500 });
+  } finally {
+    await prisma.$disconnect();
   }
 }
-*/
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -162,60 +163,64 @@ export async function GET(request) {
   const action = searchParams.get('action');
   const name = searchParams.get('name');
   const role = searchParams.get('role');
-  const sensorIdParam = searchParams.get('sensor_id');
 
   // Handle accept/reject actions
   if (action === 'accept' || action === 'reject') {
     try {
-      const invitation = await db.prisma.teamInvitation.findUnique({
+      const invitation = await prisma.teamInvitation.findUnique({
         where: { token },
         select: { email: true, status: true, role: true, sensorId: true }
       });
 
       if (!invitation || invitation.status !== 'pending') {
-        return NextResponse.redirect(`http://localhost:3000/teams?error=invalid_token`);
+        return NextResponse.redirect(`http://localhost:3001/teams?error=invalid_token`);
       }
 
       if (action === 'accept') {
         const invitedEmail = invitation.email;
-        const targetSensorId = invitation.sensorId || sensorIdParam || null;
+        const targetSensorId = invitation.sensorId;
 
         // Resolve user_id by email (if possible)
         let targetUserId = null;
         try {
-          const authUser = await db.findAuthUserByEmail(invitedEmail);
+          const authUser = await prisma.user.findFirst({
+            where: { email: invitedEmail }
+          });
           targetUserId = authUser?.id || null;
         } catch (e) {
           console.error('Lookup by email failed:', e?.message || e);
-          // If getUserByEmail fails, we'll still accept the invitation but with user_id as null
-          // The user can still access the sensor via email-based lookup in the access checks
           console.log('Continuing with user_id as null - access will be email-based');
         }
 
         // Update invitation status and store user_id (if resolved)
-        await db.prisma.teamInvitation.update({
+        await prisma.teamInvitation.update({
           where: { token },
-          data: { status: 'accepted', userId: targetUserId }
+          data: { 
+            status: 'accepted', 
+            userId: targetUserId,
+            acceptedName: name,
+            acceptedRole: role
+          }
         });
 
-        // Access is now managed entirely through team_invitations table
-        // No need for separate sensor_access table
-
-        return NextResponse.redirect(`http://localhost:3000/login?accepted=true`);
+        return NextResponse.redirect(`http://localhost:3001/teams?accepted=true&name=${encodeURIComponent(name)}&role=${encodeURIComponent(role)}&token=${token}`);
       } else if (action === 'reject') {
-        await db.prisma.teamInvitation.update({ where: { token }, data: { status: 'rejected' } });
+        await prisma.teamInvitation.update({ 
+          where: { token }, 
+          data: { status: 'rejected' } 
+        });
 
-        return NextResponse.redirect(`http://localhost:3000/login?rejected=true`);
+        return NextResponse.redirect(`http://localhost:3001/teams?rejected=true&name=${encodeURIComponent(name)}&token=${token}`);
       }
     } catch (error) {
       console.error('Action processing error:', error);
-      return NextResponse.redirect(`http://localhost:3000/teams?error=processing_failed`);
+      return NextResponse.redirect(`http://localhost:3001/teams?error=processing_failed`);
     }
   }
 
   // Display invitation page
   try {
-    const invitation = await db.prisma.teamInvitation.findUnique({
+    const invitation = await prisma.teamInvitation.findUnique({
       where: { token },
       select: { email: true, role: true, status: true }
     });
@@ -401,5 +406,7 @@ export async function GET(request) {
       headers: { 'Content-Type': 'text/html' },
       status: 500,
     });
+  } finally {
+    await prisma.$disconnect();
   }
 }

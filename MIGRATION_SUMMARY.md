@@ -58,8 +58,8 @@ Your SafeSense application has been successfully migrated from Supabase to Cooli
 ### **Step 1: Environment Setup**
 Create `.env.local` with your Coolify PostgreSQL credentials:
 ```bash
-DATABASE_URL="postgres://postgres:oTj0MHpzEl24RUp6bfDuuY5gwdNbB3jgM29iIaYNrMVlHZYE4V3PwGu0b1g9s6j2@161.97.170.64:5400/postgres"
-PRISMA_DATABASE_URL="postgresql://postgres:oTj0MHpzEl24RUp6bfDuuY5gwdNbB3jgM29iIaYNrMVlHZYE4V3PwGu0b1g9s6j2@161.97.170.64:5400/postgres"
+DATABASE_URL="<set in .env.local>"
+PRISMA_DATABASE_URL="<set in .env.local>"
 JWT_SECRET="your-super-secret-jwt-key-change-in-production"
 ```
 

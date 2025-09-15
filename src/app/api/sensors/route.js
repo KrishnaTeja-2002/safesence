@@ -2,19 +2,91 @@ export const runtime = "nodejs";
 
 import { authenticateRequest } from '../middleware/auth-postgres.js';
 
-// GET /api/sensors - Fetch all sensors with latest readings
+// GET /api/sensors - Fetch all sensors with latest readings and user access roles
 export async function GET(request) {
   try {
-    // TEMPORARY: Bypass authentication for testing
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
     
-    // Get sensors directly from database
-    const sensors = await prisma.$queryRaw`
-      SELECT sensor_id, sensor_name, metric, sensor_type, latest_temp, last_fetched_time
-      FROM public.sensors 
-      ORDER BY sensor_name
-    `;
+    // Get current user from token if available
+    let currentUserId = null;
+    try {
+      const authHeader = request.headers.get('authorization');
+      const cookieHeader = request.headers.get('cookie');
+      
+      let token = null;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.substring(7);
+      } else if (cookieHeader) {
+        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+          const [key, value] = cookie.trim().split('=');
+          acc[key] = value;
+          return acc;
+        }, {});
+        token = cookies['auth-token'];
+      }
+      
+      if (token) {
+        // Try to verify token by checking if it exists in auth.users
+        const userResult = await prisma.$queryRaw`
+          SELECT id FROM auth.users 
+          WHERE id = ${token}::uuid 
+          AND deleted_at IS NULL 
+          LIMIT 1
+        `;
+        
+        if (userResult && userResult.length > 0) {
+          currentUserId = userResult[0].id;
+          console.log('User authenticated via token:', currentUserId);
+        }
+      }
+    } catch (e) {
+      console.log('Token verification failed, proceeding without role info:', e.message);
+    }
+    
+    // Get sensors with access roles for the current user
+    let sensors;
+    if (currentUserId) {
+      sensors = await prisma.$queryRaw`
+        SELECT 
+          s.sensor_id, 
+          s.sensor_name, 
+          s.metric, 
+          s.sensor_type, 
+          s.latest_temp, 
+          s.last_fetched_time,
+          s.owner_id,
+          CASE 
+            WHEN s.owner_id = ${currentUserId}::uuid THEN 'owner'
+            WHEN ti.role IS NOT NULL AND ti.status = 'accepted' THEN 
+              CASE 
+                WHEN ti.role ILIKE '%admin%' OR ti.role ILIKE '%full%' THEN 'admin'
+                ELSE 'viewer'
+              END
+            ELSE 'viewer'
+          END as access_role
+        FROM public.sensors s
+        LEFT JOIN public.team_invitations ti ON s.sensor_id = ti.sensor_id 
+          AND ti.user_id = ${currentUserId}::uuid
+          AND ti.status = 'accepted'
+        ORDER BY s.sensor_name
+      `;
+    } else {
+      // Fallback: return sensors with owner info but default to viewer
+      sensors = await prisma.$queryRaw`
+        SELECT 
+          s.sensor_id, 
+          s.sensor_name, 
+          s.metric, 
+          s.sensor_type, 
+          s.latest_temp, 
+          s.last_fetched_time,
+          s.owner_id,
+          'viewer' as access_role
+        FROM public.sensors s
+        ORDER BY s.sensor_name
+      `;
+    }
 
     await prisma.$disconnect();
 

@@ -266,296 +266,120 @@ export default function History() {
     }
   }, [activeSensor, tempScale]);
 
-  /* ===== Fetch history (approx_time) ===== */
+  /* ===== Fetch history (using fetched_at timestamps) ===== */
   useEffect(() => {
     (async () => {
       if (!activeSensor) { setRows([]); return; }
       try {
-        const end = Date.now();
-        const start = end - rangeHours * 3600 * 1000;
-        const fromIso = new Date(start).toISOString();
-        const toIso = new Date(end).toISOString();
-
-
-         // For short ranges (≤ 4 hours), use a single API call
-        if (rangeHours <= 4) {
-          setIsFetchingData(true);
-          try {
-            const readings = await apiClient.getSensorReadings(activeSensor.sensor_id, {
-              startTime: fromIso,
-              endTime: toIso,
-              limit: 1000
-            });
-
-
-            const data = (readings || []).sort((a, b) => {
-              const aMs = firstValidMs(a.fetched_at, a.approx_time, a.timestamp, a.created_at);
-              const bMs = firstValidMs(b.fetched_at, b.approx_time, b.timestamp, b.created_at);
-              return (aMs || 0) - (bMs || 0);
-            });
-
-            const cleaned = (data || [])
-              .map((r) => {
-                const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
-                if (ms == null) return null;
-
-                const deviceMetric = (activeSensor.metric || "F").toUpperCase();
-                const convert = (v) => {
-                  if (metric !== "temperature") return Number(v);
-                  if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
-                  if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
-                  return Number(v);
-                };
-
-                return { ms, value: convert(r.reading_value) };
-              })
-              .filter(Boolean)
-              .sort((a, b) => a.ms - b.ms);
-
-
-            if (cleaned.length === 0) {
-              setErrMsg(`No data available for ${RANGES.find(r => r.key === rangeKey)?.label || "selected time range"}`);
-            } else {
-              setErrMsg(null); // Clear any previous error
-            }
-
-            setRows(cleaned);
-            setZoomDomain(null);
-          } finally {
-            setIsFetchingData(false);
-            setFetchProgress({ percentage: 0, current: 0, total: 0 });
-          }
-          return;
-        }
-
-         // For long ranges (≥ 1 week), use a single request to reduce API load
-        if (rangeHours >= 24 * 7) {
-          setIsFetchingData(true);
-          try {
-            // Use a safe limit; server also caps internally
-            const readings = await apiClient.getSensorReadings(activeSensor.sensor_id, {
-              startTime: fromIso,
-              endTime: toIso,
-              limit: 20000
-            });
-
-
-            const data = (readings || []).sort((a, b) => {
-              const aMs = firstValidMs(a.fetched_at, a.approx_time, a.timestamp, a.created_at);
-              const bMs = firstValidMs(b.fetched_at, b.approx_time, b.timestamp, b.created_at);
-              return (aMs || 0) - (bMs || 0);
-            });
-
-            const cleaned = (data || [])
-              .map((r) => {
-                const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
-                if (ms == null) return null;
-
-                const deviceMetric = (activeSensor.metric || "F").toUpperCase();
-                const convert = (v) => {
-                  if (metric !== "temperature") return Number(v);
-                  if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
-                  if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
-                  return Number(v);
-                };
-
-                return { ms, value: convert(r.reading_value) };
-              })
-              .filter(Boolean)
-              .sort((a, b) => a.ms - b.ms);
-
-
-            if (cleaned.length === 0) {
-              setErrMsg(`No data available for ${RANGES.find(r => r.key === rangeKey)?.label || "selected time range"}`);
-            } else {
-              setErrMsg(null); // Clear any previous error
-            }
-
-            setRows(cleaned);
-            setZoomDomain(null);
-          } finally {
-            setIsFetchingData(false);
-            setFetchProgress({ percentage: 0, current: 0, total: 0 });
-          }
-          return;
-        }
-
-        // Fetch data in parallel chunks with concurrent batch processing
-        // Dynamically size chunks for long ranges to reduce request count
-        const CHUNK_HOURS = rangeHours >= 24 * 7 ? 24 : // 24h chunks for 1W+
-                            rangeHours >= 24 ? 6 :      // 6h chunks for >=1D
-                            2;                            // 2h for short ranges
-        const BATCH_SIZE = rangeHours >= 24 * 7 ? 2 : 4;  // lower concurrency for long ranges
-        
-        const chunkMs = CHUNK_HOURS * 60 * 60 * 1000;
-        const totalChunks = Math.ceil(rangeHours / CHUNK_HOURS);
-        const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-        
-        
-        // Set loading state
+        // Set loading state at the beginning
         setIsFetchingData(true);
-        setFetchProgress({ percentage: 0, current: 0, total: totalChunks });
+        setFetchProgress({ percentage: 0, current: 0, total: 1 });
         
-        // Create all chunk requests first
-        const chunkRequests = [];
-        let currentStart = start;
-        
-        while (currentStart < end) {
-          const chunkEnd = Math.min(currentStart + chunkMs, end);
-          const chunkStartIso = new Date(currentStart).toISOString();
-          const chunkEndIso = new Date(chunkEnd).toISOString();
-          
-          chunkRequests.push({
-            startTime: chunkStartIso,
-            endTime: chunkEndIso,
-            startMs: currentStart
+        try {
+          // First, get all available data to determine the actual range
+          console.log('Fetching all data to determine range...');
+          const allRecords = await apiClient.getSensorReadings(activeSensor.sensor_id, {
+            limit: 50000 // Large limit to get all data
           });
           
-          currentStart = chunkEnd;
-        }
-        
-        
-        // Start performance timing
-        const fetchStartTime = Date.now();
-        
-        // Process chunks in batches for controlled parallelism
-        let allChunkResults = [];
-        
-        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-          const batchStart = batchIndex * BATCH_SIZE;
-          const batchEnd = Math.min(batchStart + BATCH_SIZE, chunkRequests.length);
-          const batchChunks = chunkRequests.slice(batchStart, batchEnd);
-          
-          // Update progress for current batch
-          const startPercentage = Math.round((batchStart / totalChunks) * 100);
-          setFetchProgress({ percentage: startPercentage, current: batchStart, total: totalChunks });
-          
-          
-          // Process current batch in parallel with retry logic
-          const batchPromises = batchChunks.map(async (chunk, localIndex) => {
-            const globalIndex = batchStart + localIndex;
-            
-            // Retry logic for failed chunks
-            let lastError;
-            for (let attempt = 1; attempt <= 2; attempt++) {
-              try {
-                const limitPerChunk = rangeHours >= 24 * 7 ? 8000 : (rangeHours >= 24 ? 9000 : 10000);
-                const chunkData = await apiClient.getSensorReadings(activeSensor.sensor_id, {
-                  startTime: chunk.startTime,
-                  endTime: chunk.endTime,
-                  limit: limitPerChunk
-                });
-                
-                return { 
-                  data: chunkData || [], 
-                  startMs: chunk.startMs,
-                  success: true,
-                  chunkIndex: globalIndex + 1,
-                  batchIndex: batchIndex + 1
-                };
-              } catch (error) {
-                lastError = error;
-                if (attempt < 2) {
-                  // Wait a bit before retry
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                  continue;
-                }
-              }
-            }
-            
-            // All attempts failed
-            // Only log errors that aren't common network issues to reduce console noise
-            if (!lastError.message.includes('Failed to fetch') && 
-                !lastError.message.includes('NetworkError') &&
-                !lastError.message.includes('timeout')) {
-              console.warn(`Chunk ${globalIndex + 1} failed after 2 attempts:`, lastError.message);
-            }
-            return { 
-              data: [], 
-              startMs: chunk.startMs,
-              success: false,
-              error: lastError.message,
-              chunkIndex: globalIndex + 1,
-              batchIndex: batchIndex + 1
-            };
-          });
-          
-          // Wait for current batch to complete
-          const batchResults = await Promise.all(batchPromises);
-          allChunkResults = allChunkResults.concat(batchResults);
-          
-          // Update progress after batch completion
-          const endPercentage = Math.round((batchEnd / totalChunks) * 100);
-          setFetchProgress({ percentage: endPercentage, current: batchEnd, total: totalChunks });
-          
-          
-          // Small delay between batches to reduce server load
-          if (batchIndex < totalBatches - 1) {
-            const delayMs = rangeHours >= 24 * 7 ? 1000 : 500;
-            await new Promise(resolve => setTimeout(resolve, delayMs));
+          if (!allRecords || allRecords.length === 0) {
+            setErrMsg(`No data available for ${activeSensor.name}`);
+            setRows([]);
+            return;
           }
-        }
-        
-        const chunkResults = allChunkResults;
-        
-        // Calculate performance metrics
-        const fetchEndTime = Date.now();
-        const totalFetchTime = fetchEndTime - fetchStartTime;
-        const avgTimePerChunk = totalFetchTime / chunkResults.length;
-        
-        // Log results summary
-        const successfulChunks = chunkResults.filter(r => r.success);
-        const failedChunks = chunkResults.filter(r => !r.success);
-        
-        
-        if (failedChunks.length > 0) {
-          console.warn(`Failed chunks:`, failedChunks.map(f => `Chunk ${f.chunkIndex}: ${f.error}`));
-        }
-        
-        // Combine and sort all data by timestamp
-        const data = successfulChunks
-          .flatMap(result => result.data)
-          .sort((a, b) => {
-            const aMs = firstValidMs(a.fetched_at, a.approx_time, a.timestamp, a.created_at);
-            const bMs = firstValidMs(b.fetched_at, b.approx_time, b.timestamp, b.created_at);
+          
+          // Sort by fetched_at to get actual first and last
+          const sortedRecords = allRecords.sort((a, b) => {
+            const aMs = toMs(a.fetched_at);
+            const bMs = toMs(b.fetched_at);
             return (aMs || 0) - (bMs || 0);
           });
+          
+          const firstData = sortedRecords[0];
+          const lastData = sortedRecords[sortedRecords.length - 1];
+          
+          const dataStart = toMs(firstData.fetched_at);
+          const dataEnd = toMs(lastData.fetched_at);
+          
+          if (!dataStart || !dataEnd) {
+            setErrMsg(`Invalid timestamp data for ${activeSensor.name}`);
+            setRows([]);
+            return;
+          }
+          
+          console.log(`Data range: ${new Date(dataStart).toISOString()} to ${new Date(dataEnd).toISOString()}`);
+          
+          // Calculate the time range based on the selected range
+          const totalDataMs = dataEnd - dataStart;
+          const rangeMs = rangeHours * 3600 * 1000;
+          
+          let start, end;
+          if (rangeMs >= totalDataMs) {
+            // If requested range is larger than available data, show all data
+            start = dataStart;
+            end = dataEnd;
+          } else {
+            // Show a portion of the data based on the selected range
+            // For now, show the most recent portion of the available data
+            end = dataEnd;
+            start = dataEnd - rangeMs;
+          }
+          
+          const fromIso = new Date(start).toISOString();
+          const toIso = new Date(end).toISOString();
+          
+          console.log(`Requested range: ${fromIso} to ${toIso}`);
+          
+          // Filter the data to the requested time range
+          const filteredData = sortedRecords.filter(record => {
+            const recordMs = toMs(record.fetched_at);
+            return recordMs >= start && recordMs <= end;
+          });
+          
+          console.log(`Filtered data points: ${filteredData.length}`);
+          
+          // Process all the data at once
+          const processedData = filteredData
+            .map((r) => {
+              const ms = toMs(r.fetched_at);
+              if (ms == null) return null;
 
-        // Clear loading state
-        setIsFetchingData(false);
-        setFetchProgress({ percentage: 0, current: 0, total: 0 });
+              const deviceMetric = (activeSensor.metric || "F").toUpperCase();
+              const convert = (v) => {
+                if (metric !== "temperature") return Number(v);
+                if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
+                if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
+                return Number(v);
+              };
 
+              return { ms, value: convert(r.reading_value) };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.ms - b.ms);
 
+          console.log(`Processed data points: ${processedData.length}`);
+          
+          // Update progress to 100%
+          setFetchProgress({ percentage: 100, current: 1, total: 1 });
+          
+          if (processedData.length === 0) {
+            setErrMsg(`No data available for ${RANGES.find(r => r.key === rangeKey)?.label || "selected time range"}`);
+          } else {
+            setErrMsg(null); // Clear any previous error
+          }
 
-
-        const cleaned = (data || [])
-          .map((r) => {
-            const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
-            if (ms == null) {
-              return null;
-            }
-
-            const deviceMetric = (activeSensor.metric || "F").toUpperCase();
-        const convert = (v) => {
-          if (metric !== "temperature") return Number(v);
-          if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
-          if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
-          return Number(v);
-        };
-
-            return { ms, value: convert(r.reading_value) };
-          })
-          .filter(Boolean)
-          .sort((a, b) => a.ms - b.ms); // ascending chronological
-
-        if (cleaned.length === 0) {
-          setErrMsg(`No data available for ${RANGES.find(r => r.key === rangeKey)?.label || "selected time range"}`);
-        } else {
-          setErrMsg(null); // Clear any previous error
+          // Display all data at once
+          setRows(processedData);
+          setZoomDomain(null);
+          
+        } finally {
+          setIsFetchingData(false);
+          setFetchProgress({ percentage: 0, current: 0, total: 0 });
         }
 
-        setRows(cleaned);
-        setZoomDomain(null); // clear zoom when sensor/range changes
+
+
+
       } catch (e) {
         setErrMsg("Failed to load history: " + (e?.message || String(e)));
         setRows([]);

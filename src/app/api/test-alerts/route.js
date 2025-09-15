@@ -1,4 +1,4 @@
-import { authenticateRequest } from '../middleware/auth.js';
+import { authenticateRequest } from '../middleware/auth-postgres.js';
 
 // GET /api/test-alerts - Test endpoint to check if alerts API is working
 export async function GET(request) {

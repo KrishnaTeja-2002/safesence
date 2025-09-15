@@ -101,11 +101,26 @@ export default function Team() {
     const loadSensors = async () => {
       try {
         const rows = await apiClient.getSensors();
-        const mapped = (rows || []).map(r => ({
-          id: r.sensor_id,
-          name: r.sensor_name || r.sensor_id,
-          access_role: r.access_role || 'viewer',
-        })).sort((a,b) => (a?.name || '').localeCompare(b?.name || ''));
+        
+        // Determine current user from verified session state
+        const currentUserId = currentUser?.id || null;
+        
+        const mapped = (rows || []).map(r => {
+          // Determine role based on owner_id and current user
+          let access_role = 'viewer';
+          if (currentUserId && r.owner_id === currentUserId) {
+            access_role = 'owner';
+          } else if (r.access_role && r.access_role !== 'viewer') {
+            access_role = r.access_role;
+          }
+          
+          return {
+            id: r.sensor_id,
+            name: r.sensor_name || r.sensor_id,
+            access_role: access_role,
+          };
+        }).sort((a,b) => (a?.name || '').localeCompare(b?.name || ''));
+        
         setSensors(mapped);
         if (mapped.length && !activeSensorId) setActiveSensorId(mapped[0].id);
       } catch (e) {
@@ -197,93 +212,33 @@ export default function Team() {
         try {
           console.log('Processing acceptance for:', { name, role, token });
           
-          // Validate token and check if already processed
-          const { data: invitation, error } = await supabase
-            .from('team_invitations')
-            .select('status, email')
-            .eq('token', token)
-            .single();
-          
-          if (error || !invitation) {
-            throw new Error(error?.message || 'Invalid token');
+          // Use API to accept invitation
+          const response = await fetch('/api/team-invitations/accept', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, name, role })
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to accept invitation');
           }
+
+          const result = await response.json();
           
-          if (invitation.status === 'accepted') {
+          if (result.alreadyAccepted) {
             alert('This invitation has already been accepted.');
             window.history.replaceState({}, document.title, '/teams');
             return;
           }
-          
-          if (invitation.status !== 'pending') {
-            throw new Error('Invitation is no longer valid');
-          }
 
-          const decodedName = decodeURIComponent(name);
-          const decodedRole = decodeURIComponent(role);
-
-          // Check if member already exists in the database
-          const { data: existingMember, error: checkError } = await supabase
-            .from('team_members')
-            .select('name')
-            .eq('name', decodedName)
-            .eq('status', 'accepted')
-            .single();
-
-          if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = no rows found
-            throw checkError;
-          }
-
-          if (existingMember) {
-            console.log('Member already exists:', decodedName);
-            alert(`${decodedName} is already a team member.`);
-            
-            // Update invitation status to accepted since member exists
-            await supabase
-              .from('team_invitations')
-              .update({ status: 'accepted' })
-              .eq('token', token);
-              
+          if (result.alreadyMember) {
+            alert(`${result.name} is already a team member.`);
             window.history.replaceState({}, document.title, '/teams');
             return;
           }
 
-          // Add member to database first
-          const { error: insertError } = await supabase
-            .from('team_members')
-            .insert([{ name: decodedName, role: decodedRole, status: 'accepted' }]);
-          
-          if (insertError) {
-            // Check if it's a duplicate key error
-            if (insertError.code === '23505') {
-              console.log('Member already exists in database:', decodedName);
-              alert(`${decodedName} is already a team member.`);
-            } else {
-              throw insertError;
-            }
-          } else {
-            console.log('New member added to database:', decodedName);
-            // Only add to UI state if database insert was successful
-            const newMember = { name: decodedName, role: decodedRole };
-            setMembers(prevMembers => {
-              // Double-check for duplicates in state
-              const memberExists = prevMembers.some(member => member.name === newMember.name);
-              if (memberExists) {
-                return prevMembers;
-              }
-              return [...prevMembers, newMember];
-            });
-            alert(`${decodedName} has been successfully added to the team!`);
-          }
-
-          // Update invitation status to accepted
-          const { error: updateError } = await supabase
-            .from('team_invitations')
-            .update({ status: 'accepted' })
-            .eq('token', token);
-
-          if (updateError) {
-            console.error('Failed to update invitation status:', updateError);
-          }
+          alert(`${result.name} has been successfully added to the team!`);
 
           window.history.replaceState({}, document.title, '/teams');
         } catch (err) {
@@ -296,34 +251,25 @@ export default function Team() {
       const handleReject = async () => {
         try {
           console.log('Processing rejection for:', { name, token });
-          const { data: invitation, error } = await supabase
-            .from('team_invitations')
-            .select('status')
-            .eq('token', token)
-            .single();
           
-          if (error || !invitation) {
-            throw new Error(error?.message || 'Invalid token');
+          // Use API to reject invitation
+          const response = await fetch('/api/team-invitations/reject', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to reject invitation');
           }
+
+          const result = await response.json();
           
-          if (invitation.status === 'rejected') {
+          if (result.alreadyRejected) {
             alert('This invitation has already been rejected.');
             window.history.replaceState({}, document.title, '/teams');
             return;
-          }
-          
-          if (invitation.status !== 'pending') {
-            throw new Error('Invitation is no longer valid');
-          }
-
-          // Update invitation status to rejected
-          const { error: updateError } = await supabase
-            .from('team_invitations')
-            .update({ status: 'rejected' })
-            .eq('token', token);
-
-          if (updateError) {
-            throw updateError;
           }
 
           setRejectedName(decodeURIComponent(name));
@@ -346,75 +292,32 @@ export default function Team() {
     }
 
     try {
-      // Check if user is already a team member
-      const { data: existingMember, error: checkError } = await supabase
-        .from('team_members')
-        .select('name')
-        .eq('name', inviteEmail.split('@')[0])
-        .eq('status', 'accepted')
-        .single();
-
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError;
+      // Use API to send invitation
+      const response = await fetch('/api/sendInvite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: inviteEmail, 
+          role: inviteRole,
+          sensorId: activeSensorId 
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to send invitation');
       }
 
-      if (existingMember) {
+      const result = await response.json();
+      
+      if (result.alreadyMember) {
         alert(`${inviteEmail} is already a team member.`);
         return;
       }
 
-      // Check for pending invitations
-      const { data: pendingInvite, error: pendingError } = await supabase
-        .from('team_invitations')
-        .select('token')
-        .eq('email', inviteEmail)
-        .eq('status', 'pending')
-        .single();
-
-      if (pendingError && pendingError.code !== 'PGRST116') {
-        throw pendingError;
-      }
-
-      if (pendingInvite) {
+      if (result.pendingInvite) {
         alert(`There's already a pending invitation for ${inviteEmail}.`);
         return;
-      }
-
-      const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      const inviteLink = `http://localhost:3000/api/sendInvite?token=${token}`;
-
-      console.log('Sending invite:', { email: inviteEmail, role: inviteRole, token });
-
-      const { error } = await supabase
-        .from('team_invitations')
-        .insert([{
-          token,
-          email: inviteEmail,
-          role: inviteRole,
-          status: 'pending',
-          invite_link: inviteLink
-        }]);
-
-      if (error) throw error;
-
-      const response = await fetch('/api/sendInvite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole, token })
-      });
-      
-      let result;
-      try {
-        result = await response.json();
-      } catch (jsonError) {
-        if (response.ok) {
-          console.log('Invite sent successfully to:', inviteEmail);
-          alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
-          setInviteEmail('');
-          return;
-        } else {
-          throw new Error('Server returned invalid response');
-        }
       }
       
       if (result.success) {
@@ -489,12 +392,23 @@ export default function Team() {
                         ? (darkMode ? 'bg-blue-700 text-white border-blue-600' : 'bg-blue-500 text-white border-blue-500')
                         : (darkMode ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100')
                     }`}
-                    title={`Role: ${s.access_role}`}
+                    title={`Role: ${activeSensorId === s.id ? myRole : (s.access_role || 'viewer')}`}
                   >
                     {s.name}
-                    <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-                      s.access_role === 'owner' ? 'bg-green-200 text-green-800' : s.access_role === 'admin' ? 'bg-yellow-200 text-yellow-800' : 'bg-gray-200 text-gray-800'
-                    }`}>{s.access_role}</span>
+                    {(() => {
+                      const roleBadge = activeSensorId === s.id ? myRole : (s.access_role || 'viewer');
+                      const badgeClass =
+                        roleBadge === 'owner'
+                          ? 'bg-green-200 text-green-800'
+                          : roleBadge === 'admin'
+                            ? 'bg-yellow-200 text-yellow-800'
+                            : 'bg-gray-200 text-gray-800';
+                      return (
+                        <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${badgeClass}`}>
+                          {roleBadge}
+                        </span>
+                      );
+                    })()}
                   </button>
                 ))}
                 {sensors.length === 0 && (
