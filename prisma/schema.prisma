@@ -20,7 +20,6 @@ model User {
   updatedAt DateTime @map("updated_at")
 
   // Relations
-  ownedSensors      Sensor[]
   userPreferences   UserPreferences?
   sentInvitations   TeamInvitation[] @relation("Inviter")
   receivedInvitations TeamInvitation[] @relation("Invitee")
@@ -31,28 +30,34 @@ model User {
 
 // Sensor information and configuration
 model Sensor {
-  sensorId        String    @id @map("sensor_id")
-  sensorName      String?   @map("sensor_name")
-  metric          String?
-  sensorType      String?   @map("sensor_type")
-  latestTemp      Float?    @map("latest_temp")
-  approxTime      DateTime? @map("approx_time")
+  sensorId        String   @id @map("sensor_id")
+  sensorName      String   @default("") @map("sensor_name")
+  metric          String   @default("F")
+  sensorType      String   @map("sensor_type")
+  latestTemp      Float?   @map("latest_temp")
   lastFetchedTime DateTime? @map("last_fetched_time")
-  updatedAt       DateTime? @updatedAt @map("updated_at")
-  minLimit        Float?    @map("min_limit")
-  maxLimit        Float?    @map("max_limit")
-  warningLimit    Float?    @map("warning_limit")
-  status          String?
-  ownerId         String    @map("owner_id") @db.Uuid
-  emailAlert      Boolean?  @default(false) @map("email_alert")
-  mobileAlert     Boolean?  @default(false) @map("mobile_alert")
+  minLimit        Float?   @map("min_limit")
+  maxLimit        Float?   @map("max_limit")
+  warningLimit    Int?     @map("warning_limit")
+  status          String   @map("status")
+  emailAlert      Boolean? @default(true)  @map("email_alert")
+  mobileAlert     Boolean? @default(true)  @map("mobile_alert")
+  deviceId        String   @map("device_id")
 
   // Relations
-  owner           User              @relation(fields: [ownerId], references: [id])
-  readings        RawReading[]
   teamInvitations TeamInvitation[]
 
   @@map("sensors")
+  @@schema("public")
+}
+
+// Devices registry
+model Device {
+  deviceId   String  @id @map("device_id")
+  deviceName String  @default("") @map("device_name")
+  ownerId    String? @map("owner_id") @db.Uuid
+
+  @@map("devices")
   @@schema("public")
 }
 
@@ -94,6 +99,7 @@ model TeamInvitation {
   acceptedRole  String?  @map("accepted_role") // Role used when accepting
   createdAt     DateTime @default(now())
   updatedAt     DateTime @default(now()) @updatedAt
+  deviceId      String?  @map("device_id")
 
   // Relations
   sensor  Sensor @relation(fields: [sensorId], references: [sensorId], onDelete: Cascade)
@@ -104,20 +110,3 @@ model TeamInvitation {
   @@schema("public")
 }
 
-// Raw sensor readings
-model RawReading {
-  id           BigInt    @id
-  sensorId     String    @map("sensor_id")
-  readingValue Float     @map("reading_value")
-  sensorIndex  Int       @map("sensor_index")
-  fetchedAt    DateTime  @map("fetched_at")
-  approxTime   DateTime? @map("approx_time")
-  timestamp    BigInt
-
-  // Relations
-  sensor Sensor @relation(fields: [sensorId], references: [sensorId], onDelete: Cascade)
-
-  @@map("raw_readings_v2")
-  @@index([sensorId, fetchedAt])
-  @@schema("public")
-}

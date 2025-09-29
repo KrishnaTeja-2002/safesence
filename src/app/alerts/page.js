@@ -685,24 +685,7 @@ function ThresholdChart({
                 >
                   {saveStatus === 'saving' ? 'Saving…' : 'Save'}
                 </button>
-                <button
-                  type="button"
-                  onClick={testApiCall}
-                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
-                    darkMode ? 'bg-blue-700 hover:bg-blue-800' : 'bg-blue-500 hover:bg-blue-600'
-                  }`}
-                >
-                  Test API
-                </button>
-                <button
-                  type="button"
-                  onClick={testApiEndpoint}
-                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
-                    darkMode ? 'bg-green-700 hover:bg-green-800' : 'bg-green-500 hover:bg-green-600'
-                  }`}
-                >
-                  Test Endpoint
-                </button>
+                {/* Removed dev test buttons to keep UI DB-driven only */}
                 {saveStatus === 'error' && (
                   <span className={darkMode ? 'text-red-300 text-xs' : 'text-red-600 text-xs'}>Save failed</span>
                 )}

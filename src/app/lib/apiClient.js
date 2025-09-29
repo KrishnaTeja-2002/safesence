@@ -184,6 +184,45 @@ class ApiClient {
       })
     });
   }
+
+  // Devices API
+  async getDevices() {
+    return this.request('/devices');
+  }
+
+  async createDevice(deviceData) {
+    return this.request('/devices', {
+      method: 'POST',
+      body: JSON.stringify(deviceData)
+    });
+  }
+
+  async updateDevice(deviceId, deviceData) {
+    return this.request('/devices', {
+      method: 'PUT',
+      body: JSON.stringify({
+        deviceId,
+        ...deviceData
+      })
+    });
+  }
+
+  async deleteDevice(deviceId) {
+    const params = new URLSearchParams({ deviceId });
+    return this.request(`/devices?${params.toString()}`, { method: 'DELETE' });
+  }
+
+  // Team Invitations API
+  async sendTeamInvite({ sensorId, role, email }) {
+    return this.request('/sendInvite', {
+      method: 'POST',
+      body: JSON.stringify({
+        sensorId,
+        role,
+        email
+      })
+    });
+  }
 }
 
 // Export a singleton instance

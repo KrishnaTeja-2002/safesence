@@ -41,12 +41,15 @@ export default function Home() {
   const [signupMessage, setSignupMessage] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showSignupRePassword, setShowSignupRePassword] = useState(false);
+  const [isSignupLoading, setIsSignupLoading] = useState(false);
 
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginMessage, setLoginMessage] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showResendOption, setShowResendOption] = useState(false);
+  const [isResending, setIsResending] = useState(false);
 
   const router = useRouter();
 
@@ -110,19 +113,29 @@ export default function Home() {
   // Signup
   const handleSignup = async (e) => {
     e.preventDefault();
+    
+    // Prevent double clicks
+    if (isSignupLoading) {
+      return;
+    }
+    
     setSignupMessage('');
     setError('');
+    setIsSignupLoading(true);
 
     if (!signupEmail || !signupPassword) {
       setSignupMessage('Email and password are required');
+      setIsSignupLoading(false);
       return;
     }
     if (signupPassword !== signupReenterPassword) {
       setSignupMessage('Passwords do not match');
+      setIsSignupLoading(false);
       return;
     }
     if (signupPassword.length < 6) {
       setSignupMessage('Password must be at least 6 characters');
+      setIsSignupLoading(false);
       return;
     }
 
@@ -163,6 +176,8 @@ export default function Home() {
           ? 'An account with this email already exists. Please try logging in instead.'
           : 'Signup failed: ' + error.message
       );
+    } finally {
+      setIsSignupLoading(false);
     }
   };
 
@@ -206,6 +221,17 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Login error:', error.message);
+      
+      // Check if error is about email verification
+      const isVerificationError = error.message.includes('verify your email') || 
+                                 error.message.includes('email before logging in');
+      
+      if (isVerificationError) {
+        setShowResendOption(true);
+      } else {
+        setShowResendOption(false);
+      }
+      
       setLoginMessage(
         error.message === 'Failed to fetch'
           ? 'Unable to connect to authentication server. Please check your network or contact support.'
@@ -213,6 +239,39 @@ export default function Home() {
           ? 'Invalid email or password. Please try again.'
           : 'Login failed: ' + error.message
       );
+    }
+  };
+
+  // Resend Verification Email
+  const handleResendVerification = async () => {
+    if (!loginEmail) {
+      setLoginMessage('Please enter your email address first');
+      return;
+    }
+    
+    setIsResending(true);
+    setLoginMessage('');
+    
+    try {
+      const response = await fetch('/api/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to resend verification email');
+      }
+      
+      setLoginMessage('Verification email sent! Please check your inbox.');
+      setShowResendOption(false);
+    } catch (error) {
+      console.error('Resend verification error:', error.message);
+      setLoginMessage('Failed to resend verification email: ' + error.message);
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -305,6 +364,20 @@ export default function Home() {
               </form>
               {loginMessage && <p style={styles.message}>{loginMessage}</p>}
               {error && <p style={styles.error}>{error}</p>}
+              {showResendOption && (
+                <div style={styles.resendContainer}>
+                  <button 
+                    style={{
+                      ...styles.resendBtn,
+                      ...(isResending ? styles.resendBtnDisabled : {})
+                    }}
+                    onClick={handleResendVerification}
+                    disabled={isResending}
+                  >
+                    {isResending ? 'Sending...' : 'Resend Verification Email'}
+                  </button>
+                </div>
+              )}
               <div style={styles.or}>or</div>
               <button style={styles.googleBtn} onClick={handleGoogleSignIn}>
                 Sign-in with Google
@@ -355,8 +428,15 @@ export default function Home() {
                     {showSignupRePassword ? '🙈' : '👁️'}
                   </span>
                 </div>
-                <button style={styles.loginBtn} type="submit">
-                  Create Account
+                <button 
+                  style={{
+                    ...styles.loginBtn,
+                    ...(isSignupLoading ? styles.loginBtnDisabled : {})
+                  }} 
+                  type="submit"
+                  disabled={isSignupLoading}
+                >
+                  {isSignupLoading ? 'Creating Account...' : 'Create Account'}
                 </button>
               </form>
               {signupMessage && <p style={styles.message}>{signupMessage}</p>}
@@ -419,6 +499,10 @@ const styles = {
   label: { marginTop: '1rem', marginBottom: '0.5rem', fontWeight: 'bold' },
   input: { width: '100%', padding: '0.5rem', marginBottom: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '0.25rem' },
   loginBtn: { width: '100%', padding: '0.5rem', backgroundColor: '#F97316', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', marginTop: '0.5rem' },
+  loginBtnDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed', opacity: 0.6 },
+  resendContainer: { marginTop: '0.5rem', textAlign: 'center' },
+  resendBtn: { padding: '0.5rem 1rem', backgroundColor: '#10B981', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', fontSize: '0.875rem' },
+  resendBtnDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed', opacity: 0.6 },
   googleBtn: { width: '100%', padding: '0.5rem', backgroundColor: '#4285F4', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', marginTop: '0.5rem' },
   link: { color: '#F97316', textDecoration: 'none', cursor: 'pointer' },
   linkRight: { color: '#F97316', textDecoration: 'none', cursor: 'pointer', display: 'block', textAlign: 'right', marginBottom: '1rem' },

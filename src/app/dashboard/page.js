@@ -85,7 +85,7 @@ export default function Dashboard() {
   // Data
   const [data, setData] = useState({
     notifications: 0,
-    users: 0,
+    users: null, // DB-driven; hide card when not provided
     items: [], // unified (temperature + humidity)
     sensors: { total: 0, error: 0, warning: 0, success: 0, disconnected: 0 },
     notificationsList: [],
@@ -194,6 +194,7 @@ export default function Dashboard() {
             const sType = r.sensor_type || "sensor"; // 'sensor'|'temperature'|'humidity'
             const kind = sType === "humidity" ? "humidity" : "temperature";
             const name = r.sensor_name || r.sensor_id;
+            const deviceName = r.device_name || r.device_id || 'Unknown Device';
 
             const raw = r.latest_temp != null ? Number(r.latest_temp) : null;
 
@@ -241,6 +242,8 @@ export default function Dashboard() {
                sensor_type: sType,
                kind, // 'temperature' | 'humidity'
                name,
+               device_name: deviceName,
+               device_id: r.device_id,
                unit,
                value,
                displayValue,
@@ -267,8 +270,8 @@ export default function Dashboard() {
           disconnected: filtered.filter((t) => t.value == null).length,
         };
 
-        // Users KPI not available without Supabase; set to 0 or remove
-        const usersCount = 0;
+        // Users KPI from DB (null when not available)
+        const usersCount = null;
 
         const notificationsList = buildNotifications(filtered, prefs.tz);
 
@@ -488,7 +491,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {prefs.showUsers && (
+          {prefs.showUsers && data.users != null && (
             <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
                              <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
                  <span className="text-2xl">👥</span>

@@ -3,7 +3,6 @@ export const runtime = "nodejs";
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 
 const prisma = new PrismaClient();
@@ -26,26 +25,35 @@ export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
     const email = (body?.email || '').trim();
-    const password = (body?.password || '').trim();
-    const username = (body?.username || (email ? email.split('@')[0] : '')).trim();
 
     if (!email) {
       return NextResponse.json({ message: 'Email is required' }, { status: 400 });
     }
-    if (!password) {
-      return NextResponse.json({ message: 'Password is required' }, { status: 400 });
+
+    // Check if user exists and needs verification
+    try {
+      const user = await prisma.$queryRaw`
+        select id, email, email_confirmed_at, confirmed_at, confirmation_token 
+        from auth.users 
+        where lower(email) = lower(${email}) 
+        and deleted_at is null
+        limit 1
+      `;
+      
+      if (!Array.isArray(user) || user.length === 0) {
+        return NextResponse.json({ success: false, message: 'No account found with this email address' }, { status: 404 });
+      }
+      
+      // Check if user is already verified
+      const isVerified = !!(user[0].email_confirmed_at || user[0].confirmed_at);
+      if (isVerified) {
+        return NextResponse.json({ success: false, message: 'Email is already verified' }, { status: 400 });
+      }
+    } catch (e) {
+      return NextResponse.json({ success: false, message: 'Error checking user account' }, { status: 500 });
     }
 
-    // Check if account already exists in auth.users (case-insensitive)
-    try {
-      const exists = await prisma.$queryRaw`select 1 from auth.users where lower(email) = lower(${email}) limit 1`;
-      if (Array.isArray(exists) && exists.length > 0) {
-        return NextResponse.json({ success: false, message: 'Account already exists' }, { status: 409 });
-      }
-    } catch {}
-
     const transporter = buildTransport();
-
     // Generate app URL - works for both local development and Coolify production
     let appUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL;
     
@@ -57,91 +65,66 @@ export async function POST(request) {
       // Validate that we have a proper host (not database URL)
       if (host && !host.includes('postgres') && !host.includes('database') && !host.includes('161.97.170.64:5401')) {
         appUrl = `${protocol}://${host}`;
-        console.log('Auto-detected app URL from headers:', appUrl);
+        console.log('Auto-detected resend app URL from headers:', appUrl);
       } else {
         // Fallback: use the request URL to extract the domain
         try {
           const requestUrl = new URL(request.url);
           appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
-          console.log('Using request URL for app URL:', appUrl);
+          console.log('Using request URL for resend app URL:', appUrl);
         } catch (error) {
-          // Last resort fallback based on environment
+          // Environment-based fallback
           appUrl = process.env.NODE_ENV === 'production' 
             ? 'https://your-coolify-domain.com' // Replace with your actual Coolify domain
             : 'http://localhost:3000';
-          console.error('Using environment-based fallback URL:', appUrl);
+          console.error('Using environment-based fallback URL for resend:', appUrl);
         }
       }
     }
     
     // CRITICAL: Validate that appUrl is NOT a database URL
     if (appUrl.includes('postgres://') || appUrl.includes('postgresql://') || appUrl.includes('161.97.170.64:5401')) {
-      console.error('CRITICAL ERROR: appUrl is a database URL!', appUrl);
-      // Force use of request URL
+      console.error('CRITICAL ERROR: resend appUrl is a database URL!', appUrl);
       try {
         const requestUrl = new URL(request.url);
         appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
-        console.log('Forced correction to request URL:', appUrl);
+        console.log('Forced correction to request URL for resend:', appUrl);
       } catch (error) {
         // Environment-based fallback
         appUrl = process.env.NODE_ENV === 'production' 
           ? 'https://your-coolify-domain.com' // Replace with your actual Coolify domain
           : 'http://localhost:3000';
-        console.error('Using emergency environment-based fallback URL:', appUrl);
+        console.error('Using emergency environment-based fallback URL for resend:', appUrl);
       }
     }
     
-    // Log final URL for debugging
-    console.log('Final app URL for verification link:', appUrl);
-    console.log('Environment:', process.env.NODE_ENV);
-
+    console.log('Final app URL for resend verification link:', appUrl);
     const fromName = process.env.SMTP_FROM_NAME || 'SafeSense Team';
     const fromAddr = process.env.SMTP_FROM || (process.env.SMTP_USER || 'safesencewinwinlabs@gmail.com');
 
-    // Create account directly in auth.users table
-    let verifyToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    // Generate new verification token
+    const verifyToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    const username = email.split('@')[0];
+
     try {
-      const hashed = await bcrypt.hash(password, 12);
-      const userId = crypto.randomUUID();
-      
-      // Create user directly in auth.users with all required fields
+      // Update verification token in auth.users table
       await prisma.$executeRaw`
-        INSERT INTO auth.users (
-          id, 
-          email, 
-          encrypted_password, 
-          confirmation_token,
-          confirmation_sent_at,
-          created_at, 
-          updated_at,
-          aud,
-          role,
-          is_sso_user,
-          is_anonymous
-        ) VALUES (
-          ${userId}::uuid,
-          ${email},
-          ${hashed},
-          ${verifyToken},
-          now(),
-          now(),
-          now(),
-          'authenticated',
-          'authenticated',
-          false,
-          false
-        )
+        update auth.users 
+        set confirmation_token = ${verifyToken},
+            confirmation_sent_at = now(),
+            updated_at = now()
+        where lower(email) = lower(${email}) 
+        and deleted_at is null
       `;
       
-      console.log('Created user in auth.users:', { userId, email, verifyToken });
-      
+      console.log('Resent verification token:', { email, verifyToken });
     } catch (e) {
-      return NextResponse.json({ success: false, message: 'Failed to create account: ' + (e?.message || e) }, { status: 500 });
+      return NextResponse.json({ success: false, message: 'Failed to update verification token: ' + (e?.message || e) }, { status: 500 });
     }
 
-    // 1) Send verification link to the user
+    // Send verification email
     const verificationUrl = `${appUrl}/api/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}`;
-    console.log('Verification URL:', verificationUrl);
+    console.log('Resend verification URL:', verificationUrl);
     
     const userMail = {
       from: { name: fromName, address: fromAddr },
@@ -149,7 +132,7 @@ export async function POST(request) {
       subject: 'Verify your SafeSense account',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="margin: 0 0 16px;">Welcome, ${username || 'there'} 👋</h2>
+          <h2 style="margin: 0 0 16px;">Welcome back, ${username} 👋</h2>
           <p style="margin: 0 0 12px; color: #374151;">Please verify your email to activate your account.</p>
           <p style="margin: 0 0 24px;"><a href="${verificationUrl}" style="background:#10b981;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Verify Email</a></p>
           <p style="margin:0; color:#6b7280; font-size: 12px;">If you didn't request this, you can ignore this email.</p>
@@ -157,23 +140,12 @@ export async function POST(request) {
       `,
     };
 
-    // 2) Notify admin mailbox
-    const adminTo = process.env.SIGNUP_NOTIFY_TO || fromAddr;
-    const adminMail = {
-      from: { name: fromName, address: fromAddr },
-      to: adminTo,
-      subject: 'New SafeSense signup request',
-      text: `New signup request\nEmail: ${email}\nUsername: ${username}`,
-    };
-
     await transporter.verify().catch(() => {});
-    await Promise.all([
-      transporter.sendMail(userMail),
-      transporter.sendMail(adminMail),
-    ]);
+    await transporter.sendMail(userMail);
 
-    return NextResponse.json({ success: true, message: 'Verification email sent. Please verify to sign in.' });
+    return NextResponse.json({ success: true, message: 'Verification email sent successfully' });
   } catch (error) {
-    return NextResponse.json({ success: false, message: error.message || 'Signup failed' }, { status: 500 });
+    console.error('Resend verification error:', error);
+    return NextResponse.json({ success: false, message: error.message || 'Failed to resend verification email' }, { status: 500 });
   }
 }

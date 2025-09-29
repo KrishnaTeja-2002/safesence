@@ -18,6 +18,41 @@ const getInitials = (name) => {
 
 export async function POST(request) {
   try {
+    // Authenticate the user making the invitation
+    const authHeader = request.headers.get('authorization');
+    const cookieHeader = request.headers.get('cookie');
+    
+    let token = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    } else if (cookieHeader) {
+      const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+        const [key, value] = cookie.trim().split('=');
+        acc[key] = value;
+        return acc;
+      }, {});
+      token = cookies['auth-token'];
+    }
+
+    if (!token) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    // Verify the token and get user info
+    const userResult = await prisma.$queryRaw`
+      SELECT id, email FROM auth.users 
+      WHERE id = ${token}::uuid 
+      AND deleted_at IS NULL 
+      LIMIT 1
+    `;
+    
+    if (!userResult || userResult.length === 0) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    }
+
+    const inviterId = userResult[0].id;
+    const inviterEmail = userResult[0].email;
+
     const { email, role, sensorId } = await request.json();
 
     if (!email || !role || !sensorId) {
@@ -27,27 +62,36 @@ export async function POST(request) {
       );
     }
 
+    // Check if the inviter owns the device that contains this sensor
+    const sensorWithDevice = await prisma.$queryRaw`
+      SELECT s.sensor_id, s.device_id, d.owner_id, d.device_name
+      FROM public.sensors s
+      JOIN public.devices d ON s.device_id = d.device_id
+      WHERE s.sensor_id = ${sensorId}
+    `;
+
+    if (!sensorWithDevice || sensorWithDevice.length === 0) {
+      return NextResponse.json({ error: 'Sensor not found' }, { status: 404 });
+    }
+
+    if (sensorWithDevice[0].owner_id !== inviterId) {
+      return NextResponse.json({ error: 'You can only invite users to sensors on devices you own' }, { status: 403 });
+    }
+
     // Check if user is already a team member
-    const existingUser = await prisma.user.findFirst({
-      where: { email }
+    const existingInvitation = await prisma.teamInvitation.findFirst({
+      where: {
+        email,
+        sensorId,
+        status: { in: ['accepted', 'pending'] }
+      }
     });
 
-    if (existingUser) {
-      // Check if they already have access to this sensor
-      const existingInvitation = await prisma.teamInvitation.findFirst({
-        where: {
-          email,
-          sensorId,
-          status: { in: ['accepted', 'pending'] }
-        }
+    if (existingInvitation) {
+      return NextResponse.json({
+        alreadyMember: true,
+        message: 'User already has access to this sensor'
       });
-
-      if (existingInvitation) {
-        return NextResponse.json({
-          alreadyMember: true,
-          message: 'User already has access to this sensor'
-        });
-      }
     }
 
     // Check for pending invitations
@@ -67,18 +111,16 @@ export async function POST(request) {
     }
 
     // Generate token and create invitation
-    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    
-    // For now, we'll use a placeholder inviterId - in a real app, this would come from the authenticated user
-    const inviterId = '00000000-0000-0000-0000-000000000000'; // Placeholder UUID
+    const inviteToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
     await prisma.teamInvitation.create({
       data: {
         email,
         role,
-        token,
+        token: inviteToken,
         sensorId,
         inviterId,
+        deviceId: sensorWithDevice[0].device_id,
         status: 'pending'
       }
     });
@@ -95,7 +137,52 @@ export async function POST(request) {
       requireTLS: true,
     });
 
-    const acceptLink = `http://localhost:3001/api/sendInvite?token=${token}`;
+    // Generate app URL - works for both local development and Coolify production
+    let appUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL;
+    
+    if (!appUrl) {
+      // Auto-detect URL from request headers (works in both local and production)
+      const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+      const protocol = request.headers.get('x-forwarded-proto') || 'https';
+      
+      // Validate that we have a proper host (not database URL)
+      if (host && !host.includes('postgres') && !host.includes('database') && !host.includes('161.97.170.64:5401')) {
+        appUrl = `${protocol}://${host}`;
+        console.log('Auto-detected invite app URL from headers:', appUrl);
+      } else {
+        // Fallback: use the request URL to extract the domain
+        try {
+          const requestUrl = new URL(request.url);
+          appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
+          console.log('Using request URL for invite app URL:', appUrl);
+        } catch (error) {
+          // Environment-based fallback
+          appUrl = process.env.NODE_ENV === 'production' 
+            ? 'https://your-coolify-domain.com' // Replace with your actual Coolify domain
+            : 'http://localhost:3000';
+          console.error('Using environment-based fallback URL for invite:', appUrl);
+        }
+      }
+    }
+    
+    // CRITICAL: Validate that appUrl is NOT a database URL
+    if (appUrl.includes('postgres://') || appUrl.includes('postgresql://') || appUrl.includes('161.97.170.64:5401')) {
+      console.error('CRITICAL ERROR: invite appUrl is a database URL!', appUrl);
+      try {
+        const requestUrl = new URL(request.url);
+        appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
+        console.log('Forced correction to request URL for invite:', appUrl);
+      } catch (error) {
+        // Environment-based fallback
+        appUrl = process.env.NODE_ENV === 'production' 
+          ? 'https://your-coolify-domain.com' // Replace with your actual Coolify domain
+          : 'http://localhost:3000';
+        console.error('Using emergency environment-based fallback URL for invite:', appUrl);
+      }
+    }
+    
+    console.log('Final app URL for invite link:', appUrl);
+    const acceptLink = `${appUrl}/api/sendInvite?token=${inviteToken}`;
     const mailOptions = {
       from: {
         name: 'SafeSense Team',
@@ -114,8 +201,13 @@ export async function POST(request) {
           <div style="background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
             <h2 style="color: #1f2937; margin-top: 0;">You're Invited!</h2>
             <p style="color: #374151; line-height: 1.6;">
-              You have been invited to join the SafeSense team with the role: <strong>${role}</strong>.
+              <strong>${inviterEmail}</strong> has invited you to join a SafeSense sensor monitoring team with the role: <strong>${role}</strong>.
             </p>
+            <div style="background-color: white; padding: 15px; border-radius: 6px; border-left: 4px solid #10b981; margin-top: 15px;">
+              <p style="margin: 0; color: #374151; font-weight: 500;">Device: ${sensorWithDevice[0].device_name || sensorWithDevice[0].device_id}</p>
+              <p style="margin: 5px 0; color: #374151; font-weight: 500;">Sensor ID: ${sensorId}</p>
+              <p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">Role: ${role}</p>
+            </div>
           </div>
           
           <div style="text-align: center; margin: 30px 0;">
@@ -129,7 +221,7 @@ export async function POST(request) {
           
           <div style="border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 30px;">
             <p style="color: #6b7280; font-size: 14px; text-align: center; margin: 0;">
-              This invitation was sent by SafeSense Team<br>
+              This invitation was sent by ${inviterEmail}<br>
               If you have any questions, please reply to this email.
             </p>
           </div>
@@ -173,7 +265,7 @@ export async function GET(request) {
       });
 
       if (!invitation || invitation.status !== 'pending') {
-        return NextResponse.redirect(`http://localhost:3001/teams?error=invalid_token`);
+        return NextResponse.redirect(`${appUrl}/teams?error=invalid_token`);
       }
 
       if (action === 'accept') {
@@ -203,18 +295,18 @@ export async function GET(request) {
           }
         });
 
-        return NextResponse.redirect(`http://localhost:3001/teams?accepted=true&name=${encodeURIComponent(name)}&role=${encodeURIComponent(role)}&token=${token}`);
+        return NextResponse.redirect(`${appUrl}/teams?accepted=true&name=${encodeURIComponent(name)}&role=${encodeURIComponent(role)}&token=${token}`);
       } else if (action === 'reject') {
         await prisma.teamInvitation.update({ 
           where: { token }, 
           data: { status: 'rejected' } 
         });
 
-        return NextResponse.redirect(`http://localhost:3001/teams?rejected=true&name=${encodeURIComponent(name)}&token=${token}`);
+        return NextResponse.redirect(`${appUrl}/teams?rejected=true&name=${encodeURIComponent(name)}&token=${token}`);
       }
     } catch (error) {
       console.error('Action processing error:', error);
-      return NextResponse.redirect(`http://localhost:3001/teams?error=processing_failed`);
+      return NextResponse.redirect(`${appUrl}/teams?error=processing_failed`);
     }
   }
 

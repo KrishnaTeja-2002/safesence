@@ -44,35 +44,79 @@ export async function GET(request) {
       console.log('Token verification failed, proceeding without role info:', e.message);
     }
     
-    // Get sensors with access roles for the current user
+    // Get sensors with access roles for the current user (device-based structure)
     let sensors;
     if (currentUserId) {
+      // Get user's email for team invitation lookup
+      const userResult = await prisma.$queryRaw`
+        SELECT email FROM auth.users 
+        WHERE id = ${currentUserId}::uuid 
+        AND deleted_at IS NULL 
+        LIMIT 1
+      `;
+      const userEmail = userResult && userResult.length > 0 ? userResult[0].email : null;
+
       sensors = await prisma.$queryRaw`
-        SELECT 
-          s.sensor_id, 
-          s.sensor_name, 
-          s.metric, 
-          s.sensor_type, 
-          s.latest_temp, 
-          s.last_fetched_time,
-          s.owner_id,
-          CASE 
-            WHEN s.owner_id = ${currentUserId}::uuid THEN 'owner'
-            WHEN ti.role IS NOT NULL AND ti.status = 'accepted' THEN 
-              CASE 
-                WHEN ti.role ILIKE '%admin%' OR ti.role ILIKE '%full%' THEN 'admin'
-                ELSE 'viewer'
-              END
-            ELSE 'viewer'
-          END as access_role
-        FROM public.sensors s
-        LEFT JOIN public.team_invitations ti ON s.sensor_id = ti.sensor_id 
-          AND ti.user_id = ${currentUserId}::uuid
-          AND ti.status = 'accepted'
-        ORDER BY s.sensor_name
+        WITH user_devices AS (
+          SELECT device_id FROM public.devices 
+          WHERE owner_id = ${currentUserId}::uuid
+        ),
+        owned_sensors AS (
+          SELECT 
+            s.sensor_id, 
+            s.sensor_name, 
+            s.metric, 
+            s.sensor_type, 
+            s.latest_temp, 
+            s.last_fetched_time,
+            s.min_limit,
+            s.max_limit,
+            s.warning_limit,
+            s.status,
+            s.email_alert,
+            s.mobile_alert,
+            s.device_id,
+            d.device_name,
+            'owner' as access_role
+          FROM public.sensors s
+          JOIN public.devices d ON s.device_id = d.device_id
+          WHERE d.device_id IN (SELECT device_id FROM user_devices)
+        ),
+        shared_sensors AS (
+          SELECT 
+            s.sensor_id, 
+            s.sensor_name, 
+            s.metric, 
+            s.sensor_type, 
+            s.latest_temp, 
+            s.last_fetched_time,
+            s.min_limit,
+            s.max_limit,
+            s.warning_limit,
+            s.status,
+            s.email_alert,
+            s.mobile_alert,
+            s.device_id,
+            d.device_name,
+            CASE 
+              WHEN ti.role ILIKE '%admin%' OR ti.role ILIKE '%full%' THEN 'admin'
+              WHEN ti.role ILIKE '%owner%' THEN 'owner'
+              ELSE 'viewer'
+            END as access_role
+          FROM public.sensors s
+          JOIN public.devices d ON s.device_id = d.device_id
+          JOIN public.team_invitations ti ON s.sensor_id = ti.sensor_id
+          WHERE ti.status = 'accepted'
+            AND (ti.user_id = ${currentUserId}::uuid OR ti.email = ${userEmail})
+            AND d.device_id NOT IN (SELECT device_id FROM user_devices)
+        )
+        SELECT * FROM owned_sensors
+        UNION ALL
+        SELECT * FROM shared_sensors
+        ORDER BY sensor_name
       `;
     } else {
-      // Fallback: return sensors with owner info but default to viewer
+      // Fallback: return sensors with device info but default to viewer
       sensors = await prisma.$queryRaw`
         SELECT 
           s.sensor_id, 
@@ -81,9 +125,17 @@ export async function GET(request) {
           s.sensor_type, 
           s.latest_temp, 
           s.last_fetched_time,
-          s.owner_id,
+          s.min_limit,
+          s.max_limit,
+          s.warning_limit,
+          s.status,
+          s.email_alert,
+          s.mobile_alert,
+          s.device_id,
+          d.device_name,
           'viewer' as access_role
         FROM public.sensors s
+        JOIN public.devices d ON s.device_id = d.device_id
         ORDER BY s.sensor_name
       `;
     }
@@ -116,7 +168,7 @@ export async function PUT(request) {
 
     const { db, user } = authResult;
     const body = await request.json();
-    const { sensor_id, min_limit, max_limit, warning_limit } = body;
+    const { sensor_id, min_limit, max_limit, warning_limit, latest_temp } = body;
 
     if (!sensor_id) {
       return new Response(JSON.stringify({ error: 'sensor_id is required' }), {
@@ -143,13 +195,15 @@ export async function PUT(request) {
       });
     }
 
-    // Update sensor thresholds
+    // Update sensor data (thresholds and/or latest reading)
     const updateData = {};
     if (min_limit !== undefined) updateData.minLimit = min_limit;
     if (max_limit !== undefined) updateData.maxLimit = max_limit;
     if (warning_limit !== undefined) updateData.warningLimit = warning_limit;
+    if (latest_temp !== undefined) updateData.latestTemp = latest_temp;
 
-    const updatedSensor = await db.updateSensorThresholds(sensor_id, updateData);
+    // Use the new updateSensorData method which will trigger status updates
+    const updatedSensor = await db.updateSensorData(sensor_id, updateData);
 
     return new Response(JSON.stringify(updatedSensor), {
       status: 200,
