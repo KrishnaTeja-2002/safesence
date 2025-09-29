@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  safesence-app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres:postgresteam5@161.97.170.64:5401/postgres
+      - APP_BASE_URL=https://your-coolify-domain.com  # Replace with your actual Coolify domain
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=safesencewinwinlabs@gmail.com
+      - SMTP_PASS=your-smtp-password  # Replace with your actual SMTP password
+      - SMTP_FROM_NAME=SafeSense Team
+      - SMTP_FROM=safesencewinwinlabs@gmail.com
+      - SIGNUP_NOTIFY_TO=your-admin-email@example.com  # Replace with your admin email
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+

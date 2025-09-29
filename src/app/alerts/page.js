@@ -2,18 +2,10 @@
 
 import React, { useEffect, useMemo, useRef, useState, Component } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
 import apiClient from '../lib/apiClient';
 import { getStatusDisplay, isAlertStatus, isOfflineStatus } from '../lib/statusUtils';
-
-/* -------------------- Supabase (inline keys) -------------------- */
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co';
-const supabaseAnonKey =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 /* -------------------- Error Boundary -------------------- */
 class ErrorBoundary extends Component {
@@ -182,34 +174,32 @@ function ThresholdChart({
   useEffect(() => {
     let cancelled = false;
     const fetchRecent = async () => {
-      if (!sensorId || !supabase) {
+      if (!sensorId) {
         setLocalData(Array.isArray(data) ? data : []);
         return;
       }
       try {
         const now = Date.now();
         const thirtyMinAgoISO = new Date(now - 30 * 60 * 1000).toISOString();
-        const thirtyMinAgoSec = Math.floor((now - 30 * 60 * 1000) / 1000);
+        
+        // Use API client to fetch recent readings
+        const readings = await apiClient.getSensorReadings(sensorId, {
+          startTime: thirtyMinAgoISO,
+          endTime: new Date(now).toISOString(),
+          limit: 1000
+        });
 
-        let { data: rows, error } = await supabase
-          .from('raw_readings_v2')
-          .select('reading_value, fetched_at, timestamp')
-          .eq('sensor_id', sensorId)
-          .gte('fetched_at', thirtyMinAgoISO)
-          .order('fetched_at', { ascending: true });
-
-        if (error) throw error;
-
-        if (!rows || rows.length === 0) {
-          // No fallback - only use fetched_at data
-          rows = [];
+        if (!readings || readings.length === 0) {
+          setLocalData(Array.isArray(data) ? data : []);
+          setLocalDataWithTimestamps([]);
+          return;
         }
 
         const u = (unit || 'F').toUpperCase() === 'C' ? 'C' : 'F';
-        const vals = (rows || []).map((r) => toF(Number(r.reading_value), u));
+        const vals = readings.map((r) => toF(Number(r.reading_value), u));
         
         // Create data with timestamps for gap detection
-        const dataWithTimestamps = (rows || []).map((r, index) => ({
+        const dataWithTimestamps = readings.map((r, index) => ({
           value: vals[index],
           timestamp: r.fetched_at,
           reading_value: r.reading_value
@@ -219,7 +209,8 @@ function ThresholdChart({
           setLocalData(vals.length ? vals : (Array.isArray(data) ? data : []));
           setLocalDataWithTimestamps(dataWithTimestamps);
         }
-      } catch {
+      } catch (error) {
+        console.error('Error fetching recent readings:', error);
         if (!cancelled) setLocalData(Array.isArray(data) ? data : []);
       }
     };
@@ -229,42 +220,11 @@ function ThresholdChart({
   
   
 
-  // Also load any saved limits from DB (if present) and apply once
+  // Remove the Supabase limits loading effect since we now get limits from props
   useEffect(() => {
-    let cancelled = false;
-    const getLimits = async () => {
-      if (!sensorId || !supabase) return;
-      try {
-        const { data: row, error } = await supabase
-          .from('sensors')
-          .select('min_limit, max_limit, warning_limit')
-          .eq('sensor_id', sensorId)
-          .maybeSingle();
-        if (error) throw error;
-        if (!row) return;
-
-        const dbMin = Number(row.min_limit);
-        const dbMax = Number(row.max_limit);
-        const dbWarning = Number(row.warning_limit);
-        if (!cancelled && Number.isFinite(dbMin) && Number.isFinite(dbMax) && dbMin < dbMax) {
-          // Convert from sensor metric units to user's preferred scale for display
-          const displayMin = sensorType === 'humidity' ? dbMin : convertForDisplay(toF(dbMin, unit === 'C' ? 'C' : 'F'), userTempScale);
-          const displayMax = sensorType === 'humidity' ? dbMax : convertForDisplay(toF(dbMax, unit === 'C' ? 'C' : 'F'), userTempScale);
-          const displayWarning = Number.isFinite(dbWarning) ? dbWarning : 10; // ✅ default to 10%
-          
-          // update parent thresholds to converted values
-          onChange && onChange({ 
-            min: displayMin, 
-            max: displayMax, 
-            warning: displayWarning
-          });
-        }
-      } catch {
-        // ignore (no stored limits yet or RLS)
-      }
-    };
-    getLimits();
-  }, [sensorId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // This effect previously loaded limits from Supabase - now they come from parent
+    // No action needed as limits are passed via props from parent component
+  }, [sensorId]);
 
   // ---------- Geometry & helpers ----------
   const W = 720, H = 380;
@@ -508,19 +468,12 @@ function ThresholdChart({
   );
 
   const saveEdit = async () => {
-    if (!sensorId || !supabase) {
-      console.error('Missing required parameters:', { sensorId, supabase: !!supabase });
+    if (!sensorId) {
+      console.error('Missing sensorId');
       setIsEditing(false);
       return;
     }
     
-    // Check if user is authenticated
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      console.error('User not authenticated');
-      setSaveStatus('error');
-      return;
-    }
     const nMin = Number(draftMin), nMax = Number(draftMax), nWarn = Number(draftWarning);
     
     // Validate the input values
@@ -732,24 +685,7 @@ function ThresholdChart({
                 >
                   {saveStatus === 'saving' ? 'Saving…' : 'Save'}
                 </button>
-                <button
-                  type="button"
-                  onClick={testApiCall}
-                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
-                    darkMode ? 'bg-blue-700 hover:bg-blue-800' : 'bg-blue-500 hover:bg-blue-600'
-                  }`}
-                >
-                  Test API
-                </button>
-                <button
-                  type="button"
-                  onClick={testApiEndpoint}
-                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
-                    darkMode ? 'bg-green-700 hover:bg-green-800' : 'bg-green-500 hover:bg-green-600'
-                  }`}
-                >
-                  Test Endpoint
-                </button>
+                {/* Removed dev test buttons to keep UI DB-driven only */}
                 {saveStatus === 'error' && (
                   <span className={darkMode ? 'text-red-300 text-xs' : 'text-red-600 text-xs'}>Save failed</span>
                 )}
@@ -1317,32 +1253,34 @@ export default function Alerts() {
   useEffect(() => {
     const run = async () => {
       try {
-        const { data: sessionData, error: sErr } = await supabase.auth.getSession();
-        if (sErr) throw sErr;
-        if (!sessionData.session) return router.push('/login');
+        // Check authentication
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          router.push('/login');
+          return;
+        }
 
-        const userId = sessionData.session.user.id;
-        const sessionUser = sessionData.session.user;
-        setUsername(sessionUser?.user_metadata?.username || sessionUser?.email?.split('@')[0] || 'User');
-        const { data: pref } = await supabase
-          .from('user_preferences')
-          .select('temp_scale, time_zone, username')
-          .eq('user_id', userId)
-          .maybeSingle();
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
 
-        if (pref?.temp_scale) setUserTempScale(pref.temp_scale === 'C' ? 'C' : 'F');
-        if (pref?.time_zone) setUserTimeZone(pref.time_zone);
+        if (!response.ok) {
+          localStorage.removeItem('auth-token');
+          router.push('/login');
+          return;
+        }
 
-        // Ensure username stored in user_preferences by default (email prefix)
-        try {
-          const emailUsername = (sessionUser?.email || '').split('@')[0] || null;
-          if (emailUsername && (!pref || !pref.username)) {
-            await supabase
-              .from('user_preferences')
-              .update({ username: emailUsername })
-              .eq('user_id', userId);
-          }
-        } catch {}
+        const { user } = await response.json();
+        setUsername(user?.email?.split('@')[0] || 'User');
+
+        // Get user preferences using API client
+        const pref = await apiClient.getUserPreferences();
+        if (pref) {
+          if (pref.tempScale) setUserTempScale(pref.tempScale === 'C' ? 'C' : 'F');
+          if (pref.timeZone) setUserTimeZone(pref.timeZone);
+        }
       } catch (e) {
         console.error(e);
         setError(e?.message || 'Failed to verify session');
@@ -1479,15 +1417,8 @@ export default function Alerts() {
 
     const loadHistory = async () => {
       try {
-        const { data, error } = await supabase
-          .from('raw_readings_v2')
-          .select('reading_value, fetched_at')
-          .eq('sensor_id', sel.sensor_id)
-          .order('fetched_at', { ascending: true })
-          .limit(HISTORY_LEN);
-        if (error) throw error;
-
-        const values = (data || []).map((r) =>
+        const readings = await apiClient.getSensorReadings(sel.sensor_id, { limit: HISTORY_LEN, endTime: new Date().toISOString() });
+        const values = (readings || []).map((r) =>
           sel.sensor_type === 'humidity' ? Number(r.reading_value) : toF(Number(r.reading_value), sel.unit === 'C' ? 'C' : 'F')
         );
         setSeries((prev) => ({ ...prev, [selectedId]: values }));
@@ -1502,111 +1433,11 @@ export default function Alerts() {
 
   /* ----- realtime updates from sensors table ----- */
   useEffect(() => {
-    const ch = supabase
-      .channel('sensors-updates')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sensors' }, (payload) => {
-        console.log('Real-time update received:', payload);
-        const r = payload.new || {};
-        if (!r.sensor_id) {
-          console.log('No sensor_id in payload, skipping');
-          return;
-        }
-
-        setStreams((prev) => {
-          const idx = prev.findIndex((p) => p.sensor_id === r.sensor_id);
-          if (idx === -1) {
-            console.log(`Sensor ${r.sensor_id} not found in streams, skipping update`);
-            return prev;
-          }
-          const unit = prev[idx].unit;
-          const type = prev[idx].sensor_type;
-          
-          // Use latest_temp from sensors table
-          const rawVal = r.latest_temp != null ? Number(r.latest_temp) : null;
-          const valF = type === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
-
-          const key = prev[idx].id;
-          // Use thresholds directly (they're already converted to user's preferred scale)
-          const th = thresholds[key] || {};
-          console.log(`Found thresholds for sensor ${r.sensor_id}:`, th);
-          const newStatus = r.status || 'unknown';
-          
-          console.log(`Real-time update for sensor ${r.sensor_id}: temp=${valF}, status=${newStatus}, last_fetched_time=${r.last_fetched_time}`);
-          console.log(`Previous status was: ${prev[idx].status}, new status will be: ${newStatus}`);
-          
-          const next = [...prev];
-          next[idx] = {
-            ...prev[idx],
-            temp: valF,
-            status: newStatus,
-            lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
-            lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
-          };
-          console.log(`Updated sensor ${r.sensor_id} status from ${prev[idx].status} to ${newStatus}`);
-          console.log(`Final streams state:`, next.map(s => ({ id: s.id, name: s.name, status: s.status })));
-          console.log(`Streams updated successfully for sensor ${r.sensor_id}`);
-          console.log(`Real-time update completed for sensor ${r.sensor_id}`);
-          console.log(`All updates completed for sensor ${r.sensor_id}`);
-          console.log(`Real-time update fully completed for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update cycle completed for sensor ${r.sensor_id}`);
-          console.log(`Real-time update final completion for sensor ${r.sensor_id}`);
-          console.log(`Real-time update completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process fully completed for sensor ${r.sensor_id}`);
-          console.log(`Real-time update cycle fully completed for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update cycle completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process cycle completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update cycle process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Real-time update process cycle process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          return next;
-        });
-
-        setSeries((prev) => {
-          const s = streamsRef.current.find((p) => p.sensor_id === r.sensor_id);
-          if (!s) {
-            console.log(`Sensor ${r.sensor_id} not found in streamsRef for series update`);
-            return prev;
-          }
-          const val = s.sensor_type === 'humidity' ? Number(r.reading_value) : toF(Number(r.reading_value), s.unit === 'C' ? 'C' : 'F');
-          console.log(`Updating series for sensor ${r.sensor_id}: adding value ${val}`);
-          const arr = prev[s.id] ? [...prev[s.id], val] : [val];
-          console.log(`Series for sensor ${r.sensor_id}: ${arr.length} values, latest: ${arr[arr.length - 1]}`);
-          console.log(`Series updated successfully for sensor ${r.sensor_id}`);
-          console.log(`Series update completed for sensor ${r.sensor_id}`);
-          console.log(`All series updates completed for sensor ${r.sensor_id}`);
-          console.log(`Series update fully completed for sensor ${r.sensor_id}`);
-          console.log(`Series update process finished for sensor ${r.sensor_id}`);
-          console.log(`Series update cycle completed for sensor ${r.sensor_id}`);
-          console.log(`Series update final completion for sensor ${r.sensor_id}`);
-          console.log(`Series update completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update process fully completed for sensor ${r.sensor_id}`);
-          console.log(`Series update cycle fully completed for sensor ${r.sensor_id}`);
-          console.log(`Series update process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update cycle completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update process cycle completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          console.log(`Series update cycle process cycle process cycle process completely finished for sensor ${r.sensor_id}`);
-          return { ...prev, [s.id]: arr.slice(-HISTORY_LEN) };
-        });
-      })
-      .subscribe((status) => {
-        console.log('Sensors realtime subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to sensors table changes');
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('Error subscribing to sensors table changes');
-        }
-      });
-    return () => supabase.removeChannel(ch);
-  }, [thresholds, streams, userTimeZone]);
+    const id = setInterval(() => {
+      refreshSensorData();
+    }, 20000);
+    return () => clearInterval(id);
+  }, [refreshSensorData]);
 
   /* ----- local helpers ----- */
   const updateThresholdLocal = (sensorId, next) => {
@@ -1856,14 +1687,9 @@ export default function Alerts() {
         <div className="flex items-center space-x-4">
           {error && <p className="text-red-500 text-sm">{error}</p>}
           <button
-            onClick={async () => {
-              try {
-                const { error } = await supabase.auth.signOut();
-                if (error) throw error;
-                router.push('/login');
-              } catch (err) {
-                setError('Failed to sign out: ' + err.message);
-              }
+            onClick={() => {
+              try { localStorage.removeItem('auth-token'); } catch {};
+              router.push('/login');
             }}
             className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
           >
@@ -1961,14 +1787,9 @@ export default function Alerts() {
           </div>
           <div className="flex items-center space-x-4">
             <button
-              onClick={async () => {
-                try {
-                  const { error } = await supabase.auth.signOut();
-                  if (error) throw error;
-                  router.push('/login');
-                } catch (err) {
-                  setError('Failed to sign out: ' + err.message);
-                }
+              onClick={() => {
+                try { localStorage.removeItem('auth-token'); } catch {};
+                router.push('/login');
               }}
               className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
             >

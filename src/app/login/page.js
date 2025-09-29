@@ -2,25 +2,31 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
-
-// Supabase configuration
-const supabaseUrl = 'https://kwaylmatpkcajsctujor.supabase.co'; // Use the working project URL
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M';
-
-// Log configuration for debugging
-console.log('Supabase URL:', supabaseUrl);
-console.log('Supabase Anon Key:', supabaseAnonKey);
+// Custom authentication - no longer using Supabase
 console.log('Google Client ID:', process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
-// Initialize Supabase client
-let supabase;
-try {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
-  console.log('Supabase client initialized');
-} catch (err) {
-  console.error('Failed to initialize Supabase client:', err.message);
-}
+// Authentication helper functions
+const checkAuth = async () => {
+  try {
+    const token = localStorage.getItem('auth-token');
+    if (!token) return null;
+    
+    const response = await fetch('/api/verify-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return data.user;
+    }
+    return null;
+  } catch (error) {
+    console.error('Auth check error:', error);
+    return null;
+  }
+};
 
 export default function Home() {
   const [isSignup, setIsSignup] = useState(false);
@@ -35,12 +41,15 @@ export default function Home() {
   const [signupMessage, setSignupMessage] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showSignupRePassword, setShowSignupRePassword] = useState(false);
+  const [isSignupLoading, setIsSignupLoading] = useState(false);
 
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginMessage, setLoginMessage] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showResendOption, setShowResendOption] = useState(false);
+  const [isResending, setIsResending] = useState(false);
 
   const router = useRouter();
 
@@ -49,9 +58,8 @@ export default function Home() {
     const checkSession = async () => {
       try {
         console.log('Checking session...');
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (data.session) {
+        const user = await checkAuth();
+        if (user) {
           console.log('Session found, redirecting to dashboard');
           router.push('/dashboard');
         }
@@ -99,63 +107,77 @@ export default function Home() {
   };
 
   const handleGoogleSignIn = async () => {
-    try {
-      console.log('Initiating Google OAuth...');
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirect_to: `${window.location.origin}/dashboard` },
-      });
-      if (error) throw error;
-      console.log('Google OAuth initiated:', data);
-    } catch (error) {
-      console.error('Google Sign-In error:', error.message);
-      setError(
-        error.message === 'Failed to fetch'
-          ? 'Unable to connect to authentication server. Please check your network or contact support.'
-          : 'Failed to sign in with Google: ' + error.message
-      );
-    }
+    setError('Google Sign-In is not configured with the new auth.');
   };
 
   // Signup
   const handleSignup = async (e) => {
     e.preventDefault();
+    
+    // Prevent double clicks
+    if (isSignupLoading) {
+      return;
+    }
+    
     setSignupMessage('');
     setError('');
+    setIsSignupLoading(true);
 
     if (!signupEmail || !signupPassword) {
       setSignupMessage('Email and password are required');
+      setIsSignupLoading(false);
       return;
     }
     if (signupPassword !== signupReenterPassword) {
       setSignupMessage('Passwords do not match');
+      setIsSignupLoading(false);
       return;
     }
     if (signupPassword.length < 6) {
       setSignupMessage('Password must be at least 6 characters');
+      setIsSignupLoading(false);
       return;
     }
 
     try {
       console.log('Attempting signup:', { email: signupEmail });
-      const { data, error } = await supabase.auth.signUp({
-        email: signupEmail,
-        password: signupPassword,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-        },
+      const response = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: signupEmail,
+          password: signupPassword,
+          username: signupEmail.split('@')[0]
+        })
       });
-      if (error) throw error;
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Signup failed');
+      }
+      
       console.log('Signup successful:', data);
-      setSignupMessage('Account created successfully! Check your email to confirm.');
-      router.push('/dashboard');
+      
+      // Store token and redirect
+      if (data.token) {
+        localStorage.setItem('auth-token', data.token);
+        setSignupMessage('Account created successfully! Redirecting...');
+        setTimeout(() => router.push('/dashboard'), 1000);
+      } else {
+        setSignupMessage('Account created successfully! Please log in.');
+      }
     } catch (error) {
       console.error('Signup error:', error.message);
       setSignupMessage(
         error.message === 'Failed to fetch'
           ? 'Unable to connect to authentication server. Please check your network or contact support.'
+          : error.message.includes('already exists') || error.message.includes('User already')
+          ? 'An account with this email already exists. Please try logging in instead.'
           : 'Signup failed: ' + error.message
       );
+    } finally {
+      setIsSignupLoading(false);
     }
   };
 
@@ -172,23 +194,84 @@ export default function Home() {
 
     try {
       console.log('Attempting login:', { email: loginEmail });
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginEmail,
+          password: loginPassword
+        })
       });
-      if (error) throw error;
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Login failed');
+      }
+      
       console.log('Login successful:', data);
-      setLoginMessage('Logged in successfully!');
-      router.push('/dashboard');
+      
+      // Store token and redirect
+      if (data.token) {
+        localStorage.setItem('auth-token', data.token);
+        setLoginMessage('Logged in successfully! Redirecting...');
+        setTimeout(() => router.push('/dashboard'), 1000);
+      } else {
+        setLoginMessage('Login successful! Please try again.');
+      }
     } catch (error) {
       console.error('Login error:', error.message);
+      
+      // Check if error is about email verification
+      const isVerificationError = error.message.includes('verify your email') || 
+                                 error.message.includes('email before logging in');
+      
+      if (isVerificationError) {
+        setShowResendOption(true);
+      } else {
+        setShowResendOption(false);
+      }
+      
       setLoginMessage(
         error.message === 'Failed to fetch'
           ? 'Unable to connect to authentication server. Please check your network or contact support.'
-          : error.message.includes('Invalid login credentials')
+          : error.message.includes('Invalid') || error.message.includes('credentials')
           ? 'Invalid email or password. Please try again.'
           : 'Login failed: ' + error.message
       );
+    }
+  };
+
+  // Resend Verification Email
+  const handleResendVerification = async () => {
+    if (!loginEmail) {
+      setLoginMessage('Please enter your email address first');
+      return;
+    }
+    
+    setIsResending(true);
+    setLoginMessage('');
+    
+    try {
+      const response = await fetch('/api/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to resend verification email');
+      }
+      
+      setLoginMessage('Verification email sent! Please check your inbox.');
+      setShowResendOption(false);
+    } catch (error) {
+      console.error('Resend verification error:', error.message);
+      setLoginMessage('Failed to resend verification email: ' + error.message);
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -204,13 +287,10 @@ export default function Home() {
 
     try {
       console.log('Sending password reset:', resetEmail);
-      const { data, error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) throw error;
-      console.log('Password reset email sent:', data);
+      // Password reset functionality disabled - using new auth system
+      // In a real implementation, you would call your own password reset API
       setError('');
-      alert('Password reset link sent! Check your email.');
+      alert('Password reset functionality is not available. Please contact an administrator.');
       setShowForgotPassword(false);
     } catch (error) {
       console.error('Password reset error:', error.message);
@@ -284,6 +364,20 @@ export default function Home() {
               </form>
               {loginMessage && <p style={styles.message}>{loginMessage}</p>}
               {error && <p style={styles.error}>{error}</p>}
+              {showResendOption && (
+                <div style={styles.resendContainer}>
+                  <button 
+                    style={{
+                      ...styles.resendBtn,
+                      ...(isResending ? styles.resendBtnDisabled : {})
+                    }}
+                    onClick={handleResendVerification}
+                    disabled={isResending}
+                  >
+                    {isResending ? 'Sending...' : 'Resend Verification Email'}
+                  </button>
+                </div>
+              )}
               <div style={styles.or}>or</div>
               <button style={styles.googleBtn} onClick={handleGoogleSignIn}>
                 Sign-in with Google
@@ -334,8 +428,15 @@ export default function Home() {
                     {showSignupRePassword ? '🙈' : '👁️'}
                   </span>
                 </div>
-                <button style={styles.loginBtn} type="submit">
-                  Create Account
+                <button 
+                  style={{
+                    ...styles.loginBtn,
+                    ...(isSignupLoading ? styles.loginBtnDisabled : {})
+                  }} 
+                  type="submit"
+                  disabled={isSignupLoading}
+                >
+                  {isSignupLoading ? 'Creating Account...' : 'Create Account'}
                 </button>
               </form>
               {signupMessage && <p style={styles.message}>{signupMessage}</p>}
@@ -398,6 +499,10 @@ const styles = {
   label: { marginTop: '1rem', marginBottom: '0.5rem', fontWeight: 'bold' },
   input: { width: '100%', padding: '0.5rem', marginBottom: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '0.25rem' },
   loginBtn: { width: '100%', padding: '0.5rem', backgroundColor: '#F97316', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', marginTop: '0.5rem' },
+  loginBtnDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed', opacity: 0.6 },
+  resendContainer: { marginTop: '0.5rem', textAlign: 'center' },
+  resendBtn: { padding: '0.5rem 1rem', backgroundColor: '#10B981', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', fontSize: '0.875rem' },
+  resendBtnDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed', opacity: 0.6 },
   googleBtn: { width: '100%', padding: '0.5rem', backgroundColor: '#4285F4', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', marginTop: '0.5rem' },
   link: { color: '#F97316', textDecoration: 'none', cursor: 'pointer' },
   linkRight: { color: '#F97316', textDecoration: 'none', cursor: 'pointer', display: 'block', textAlign: 'right', marginBottom: '1rem' },

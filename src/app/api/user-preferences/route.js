@@ -1,4 +1,6 @@
-import { authenticateRequest } from '../middleware/auth-simple.js';
+export const runtime = "nodejs";
+
+import { authenticateRequest } from '../middleware/auth-postgres.js';
 
 // GET /api/user-preferences - Fetch user preferences
 export async function GET(request) {
@@ -11,56 +13,27 @@ export async function GET(request) {
       });
     }
 
-    const { user, supabase } = authResult;
+    const { db, user } = authResult;
 
     // Fetch user preferences
-    const { data: preferences, error } = await supabase
-      .from('user_preferences')
-      .select('*')
-      .eq('user_id', user.id)
-      .single();
+    let preferences = await db.getUserPreferences(user.id);
 
-    if (error && error.code !== 'PGRST116') {
-      return new Response(JSON.stringify({ error: error.message }), { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // If no preferences found, return default values
+    // If no preferences found, create default values
     if (!preferences) {
       const defaultPreferences = {
-        user_id: user.id,
-        temp_scale: 'F',
-        show_temp: true,
-        show_humidity: false,
-        show_sensors: true,
-        show_users: true,
-        show_alerts: true,
-        show_notifications: true,
-        time_zone: 'America/Anchorage',
-        dark_mode: false,
+        tempScale: 'F',
+        showTemp: true,
+        showHumidity: false,
+        showSensors: true,
+        showUsers: true,
+        showAlerts: true,
+        showNotifications: true,
+        timeZone: 'America/Anchorage',
+        darkMode: false,
         username: user.email ? user.email.split('@')[0] : null
       };
 
-      // Create default preferences
-      const { data: newPreferences, error: insertError } = await supabase
-        .from('user_preferences')
-        .insert(defaultPreferences)
-        .select()
-        .single();
-
-      if (insertError) {
-        return new Response(JSON.stringify({ error: insertError.message }), { 
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      return new Response(JSON.stringify(newPreferences), { 
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      preferences = await db.upsertUserPreferences(user.id, defaultPreferences);
     }
 
     return new Response(JSON.stringify(preferences), { 
@@ -69,6 +42,7 @@ export async function GET(request) {
     });
 
   } catch (error) {
+    console.error('User preferences GET error:', error);
     return new Response(JSON.stringify({ error: 'Internal server error' }), { 
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -87,7 +61,7 @@ export async function PUT(request) {
       });
     }
 
-    const { user, supabase } = authResult;
+    const { db, user } = authResult;
     const body = await request.json();
 
     // Validate required fields
@@ -105,32 +79,20 @@ export async function PUT(request) {
     } = body;
 
     const updateData = {
-      user_id: user.id,
-      temp_scale: temp_scale || 'F',
-      show_temp: show_temp !== undefined ? show_temp : true,
-      show_humidity: show_humidity !== undefined ? show_humidity : false,
-      show_sensors: show_sensors !== undefined ? show_sensors : true,
-      show_users: show_users !== undefined ? show_users : true,
-      show_alerts: show_alerts !== undefined ? show_alerts : true,
-      show_notifications: show_notifications !== undefined ? show_notifications : true,
-      time_zone: time_zone || 'America/Anchorage',
-      dark_mode: dark_mode !== undefined ? dark_mode : false,
+      tempScale: temp_scale || 'F',
+      showTemp: show_temp !== undefined ? show_temp : true,
+      showHumidity: show_humidity !== undefined ? show_humidity : false,
+      showSensors: show_sensors !== undefined ? show_sensors : true,
+      showUsers: show_users !== undefined ? show_users : true,
+      showAlerts: show_alerts !== undefined ? show_alerts : true,
+      showNotifications: show_notifications !== undefined ? show_notifications : true,
+      timeZone: time_zone || 'America/Anchorage',
+      darkMode: dark_mode !== undefined ? dark_mode : false,
       username: username ? username.trim() : null
     };
 
     // Upsert user preferences
-    const { data: preferences, error } = await supabase
-      .from('user_preferences')
-      .upsert(updateData, { onConflict: 'user_id' })
-      .select()
-      .single();
-
-    if (error) {
-      return new Response(JSON.stringify({ error: error.message }), { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
+    const preferences = await db.upsertUserPreferences(user.id, updateData);
 
     return new Response(JSON.stringify(preferences), { 
       status: 200,
@@ -138,6 +100,7 @@ export async function PUT(request) {
     });
 
   } catch (error) {
+    console.error('User preferences PUT error:', error);
     return new Response(JSON.stringify({ error: 'Internal server error' }), { 
       status: 500,
       headers: { 'Content-Type': 'application/json' }

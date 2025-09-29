@@ -2,17 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, Component } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
 import apiClient from "../lib/apiClient";
-
-/* ===== Supabase (read-only) ===== */
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://kwaylmatpkcajsctujor.supabase.co",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M"
-);
 
 /* ===== Error Boundary ===== */
 class ErrorBoundary extends Component {
@@ -42,7 +34,7 @@ const RANGES = [
 ];
 
 const H = 300; // SVG viewBox height
-const W = 100; // SVG viewBox width
+const W = 800; // SVG viewBox width
 
 /* ===== Helpers ===== */
 const toF = (c) => (c == null ? null : c * 9/5 + 32);
@@ -194,26 +186,37 @@ export default function History() {
   useEffect(() => {
     (async () => {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (!data?.session?.user?.id) return router.push("/login");
+        // Check authentication
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          router.push('/login');
+          return;
+        }
 
-        const uid = data.session.user.id;
-        const sessionUser = data.session.user;
-        const { data: prefs, error: pErr } = await supabase
-          .from("user_preferences")
-          .select("temp_scale, time_zone, show_temp, show_humidity, username")
-          .eq("user_id", uid)
-          .maybeSingle();
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
 
-        if (pErr) throw pErr;
+        if (!response.ok) {
+          localStorage.removeItem('auth-token');
+          router.push('/login');
+          return;
+        }
 
-        setTempScale((prefs?.temp_scale || "F").toUpperCase());
-        setTimeZone(prefs?.time_zone || "UTC");
-        setShowTemp(prefs?.show_temp ?? true);
-        setShowHumidity(prefs?.show_humidity ?? true);
-        const name = prefs?.username || (sessionUser?.email ? sessionUser.email.split("@")[0] : "User");
-        setUsername(name);
+        const { user } = await response.json();
+
+        // Get user preferences using API client
+        const prefs = await apiClient.getUserPreferences();
+        if (prefs) {
+          setTempScale((prefs.tempScale || "F").toUpperCase());
+          setTimeZone(prefs.timeZone || "UTC");
+          setShowTemp(prefs.showTemp ?? true);
+          setShowHumidity(prefs.showHumidity ?? true);
+          const name = prefs.username || (user?.email ? user.email.split("@")[0] : "User");
+          setUsername(name);
+        }
       } catch (e) {
         setErrMsg("Failed to load session or preferences: " + (e?.message || String(e)));
       }
@@ -263,198 +266,120 @@ export default function History() {
     }
   }, [activeSensor, tempScale]);
 
-  /* ===== Fetch history (approx_time) ===== */
+  /* ===== Fetch history (using fetched_at timestamps) ===== */
   useEffect(() => {
     (async () => {
       if (!activeSensor) { setRows([]); return; }
       try {
-        const end = Date.now();
-        const start = end - rangeHours * 3600 * 1000;
-        const fromIso = new Date(start).toISOString();
-        const toIso = new Date(end).toISOString();
-
-        console.log(`Fetching data for ${activeSensor.sensor_id} (${rangeKey}):`, {
-          rangeHours,
-          startTime: fromIso,
-          endTime: toIso,
-          timeSpan: `${Math.round((end - start) / (1000 * 60 * 60))} hours`
-        });
-
-        // Fetch data in parallel chunks with concurrent batch processing
-        // Keep larger chunk sizes but increase parallelism through batching
-        const CHUNK_HOURS = 4; // Keep 4-hour chunks (proven to work well)
-        const BATCH_SIZE = 6; // Process 6 chunks concurrently at a time
-        
-        const chunkMs = CHUNK_HOURS * 60 * 60 * 1000;
-        const totalChunks = Math.ceil(rangeHours / CHUNK_HOURS);
-        const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-        
-        console.log(`Batch strategy: ${CHUNK_HOURS}h chunks, ${BATCH_SIZE} concurrent threads per batch, ${totalBatches} batches total`);
-        
-        // Set loading state
+        // Set loading state at the beginning
         setIsFetchingData(true);
-        setFetchProgress({ percentage: 0, current: 0, total: totalChunks });
+        setFetchProgress({ percentage: 0, current: 0, total: 1 });
         
-        // Create all chunk requests first
-        const chunkRequests = [];
-        let currentStart = start;
-        
-        while (currentStart < end) {
-          const chunkEnd = Math.min(currentStart + chunkMs, end);
-          const chunkStartIso = new Date(currentStart).toISOString();
-          const chunkEndIso = new Date(chunkEnd).toISOString();
-          
-          chunkRequests.push({
-            startTime: chunkStartIso,
-            endTime: chunkEndIso,
-            startMs: currentStart
+        try {
+          // First, get all available data to determine the actual range
+          console.log('Fetching all data to determine range...');
+          const allRecords = await apiClient.getSensorReadings(activeSensor.sensor_id, {
+            limit: 50000 // Large limit to get all data
           });
           
-          currentStart = chunkEnd;
-        }
-        
-        console.log(`Processing ${chunkRequests.length} chunks in ${totalBatches} batches of ${BATCH_SIZE} concurrent threads`);
-        
-        // Start performance timing
-        const fetchStartTime = Date.now();
-        
-        // Process chunks in batches for controlled parallelism
-        let allChunkResults = [];
-        
-        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-          const batchStart = batchIndex * BATCH_SIZE;
-          const batchEnd = Math.min(batchStart + BATCH_SIZE, chunkRequests.length);
-          const batchChunks = chunkRequests.slice(batchStart, batchEnd);
+          if (!allRecords || allRecords.length === 0) {
+            setErrMsg(`No data available for ${activeSensor.name}`);
+            setRows([]);
+            return;
+          }
           
-          // Update progress for current batch
-          const startPercentage = Math.round((batchStart / totalChunks) * 100);
-          setFetchProgress({ percentage: startPercentage, current: batchStart, total: totalChunks });
-          
-          console.log(`Processing batch ${batchIndex + 1}/${totalBatches}: chunks ${batchStart + 1}-${batchEnd} (${batchChunks.length} concurrent threads)`);
-          
-          // Process current batch in parallel
-          const batchPromises = batchChunks.map(async (chunk, localIndex) => {
-            const globalIndex = batchStart + localIndex;
-            console.log(`Starting chunk ${globalIndex + 1}/${chunkRequests.length}: ${chunk.startTime} to ${chunk.endTime}`);
-            
-            try {
-              const chunkData = await apiClient.getSensorReadings(activeSensor.sensor_id, {
-                startTime: chunk.startTime,
-                endTime: chunk.endTime
-              });
-              
-              console.log(`Chunk ${globalIndex + 1} completed: ${chunkData?.length || 0} records`);
-              return { 
-                data: chunkData || [], 
-                startMs: chunk.startMs,
-                success: true,
-                chunkIndex: globalIndex + 1,
-                batchIndex: batchIndex + 1
-              };
-            } catch (error) {
-              console.error(`Chunk ${globalIndex + 1} failed:`, error);
-              return { 
-                data: [], 
-                startMs: chunk.startMs,
-                success: false,
-                error: error.message,
-                chunkIndex: globalIndex + 1,
-                batchIndex: batchIndex + 1
-              };
-            }
-          });
-          
-          // Wait for current batch to complete
-          const batchResults = await Promise.all(batchPromises);
-          allChunkResults = allChunkResults.concat(batchResults);
-          
-          // Update progress after batch completion
-          const endPercentage = Math.round((batchEnd / totalChunks) * 100);
-          setFetchProgress({ percentage: endPercentage, current: batchEnd, total: totalChunks });
-          
-          console.log(`Batch ${batchIndex + 1} completed: ${batchResults.filter(r => r.success).length}/${batchResults.length} successful`);
-        }
-        
-        const chunkResults = allChunkResults;
-        
-        // Calculate performance metrics
-        const fetchEndTime = Date.now();
-        const totalFetchTime = fetchEndTime - fetchStartTime;
-        const avgTimePerChunk = totalFetchTime / chunkResults.length;
-        
-        // Log results summary
-        const successfulChunks = chunkResults.filter(r => r.success);
-        const failedChunks = chunkResults.filter(r => !r.success);
-        
-        console.log(`Batch parallel fetch results:`, {
-          totalChunks: chunkResults.length,
-          totalBatches: totalBatches,
-          batchSize: BATCH_SIZE,
-          chunkSize: `${CHUNK_HOURS}h`,
-          successful: successfulChunks.length,
-          failed: failedChunks.length,
-          totalRecords: successfulChunks.reduce((sum, r) => sum + r.data.length, 0),
-          totalFetchTime: `${totalFetchTime}ms`,
-          avgTimePerChunk: `${avgTimePerChunk.toFixed(1)}ms`,
-          concurrentThreads: `${BATCH_SIZE} per batch`,
-          estimatedSequentialTime: `${(avgTimePerChunk * chunkResults.length).toFixed(0)}ms`,
-          speedup: `${((avgTimePerChunk * chunkResults.length) / totalFetchTime).toFixed(1)}x faster`
-        });
-        
-        if (failedChunks.length > 0) {
-          console.warn(`Failed chunks:`, failedChunks.map(f => `Chunk ${f.chunkIndex}: ${f.error}`));
-        }
-        
-        // Combine and sort all data by timestamp
-        const data = successfulChunks
-          .flatMap(result => result.data)
-          .sort((a, b) => {
-            const aMs = firstValidMs(a.fetched_at, a.approx_time, a.timestamp, a.created_at);
-            const bMs = firstValidMs(b.fetched_at, b.approx_time, b.timestamp, b.created_at);
+          // Sort by fetched_at to get actual first and last
+          const sortedRecords = allRecords.sort((a, b) => {
+            const aMs = toMs(a.fetched_at);
+            const bMs = toMs(b.fetched_at);
             return (aMs || 0) - (bMs || 0);
           });
+          
+          const firstData = sortedRecords[0];
+          const lastData = sortedRecords[sortedRecords.length - 1];
+          
+          const dataStart = toMs(firstData.fetched_at);
+          const dataEnd = toMs(lastData.fetched_at);
+          
+          if (!dataStart || !dataEnd) {
+            setErrMsg(`Invalid timestamp data for ${activeSensor.name}`);
+            setRows([]);
+            return;
+          }
+          
+          console.log(`Data range: ${new Date(dataStart).toISOString()} to ${new Date(dataEnd).toISOString()}`);
+          
+          // Calculate the time range based on the selected range
+          const totalDataMs = dataEnd - dataStart;
+          const rangeMs = rangeHours * 3600 * 1000;
+          
+          let start, end;
+          if (rangeMs >= totalDataMs) {
+            // If requested range is larger than available data, show all data
+            start = dataStart;
+            end = dataEnd;
+          } else {
+            // Show a portion of the data based on the selected range
+            // For now, show the most recent portion of the available data
+            end = dataEnd;
+            start = dataEnd - rangeMs;
+          }
+          
+          const fromIso = new Date(start).toISOString();
+          const toIso = new Date(end).toISOString();
+          
+          console.log(`Requested range: ${fromIso} to ${toIso}`);
+          
+          // Filter the data to the requested time range
+          const filteredData = sortedRecords.filter(record => {
+            const recordMs = toMs(record.fetched_at);
+            return recordMs >= start && recordMs <= end;
+          });
+          
+          console.log(`Filtered data points: ${filteredData.length}`);
+          
+          // Process all the data at once
+          const processedData = filteredData
+            .map((r) => {
+              const ms = toMs(r.fetched_at);
+              if (ms == null) return null;
 
-        // Clear loading state
-        setIsFetchingData(false);
-        setFetchProgress({ percentage: 0, current: 0, total: 0 });
+              const deviceMetric = (activeSensor.metric || "F").toUpperCase();
+              const convert = (v) => {
+                if (metric !== "temperature") return Number(v);
+                if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
+                if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
+                return Number(v);
+              };
 
-        console.log(`Batch parallel chunked fetch complete:`, {
-          totalChunks: chunkRequests.length,
-          totalBatches: totalBatches,
-          batchSize: BATCH_SIZE,
-          successfulChunks: successfulChunks.length,
-          failedChunks: failedChunks.length,
-          totalRecords: data?.length || 0,
-          first: data?.[0]?.fetched_at,
-          last: data?.[data.length - 1]?.fetched_at,
-          requestedStart: fromIso,
-          requestedEnd: toIso,
-          timeSpan: `${Math.round((end - start) / (1000 * 60 * 60))} hours`,
-          chunkSize: `${CHUNK_HOURS} hours`,
-          concurrentThreads: `${BATCH_SIZE} per batch`,
-          batchExecution: true
-        });
+              return { ms, value: convert(r.reading_value) };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.ms - b.ms);
 
-        const cleaned = (data || [])
-          .map((r) => {
-            const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
-            if (ms == null) return null;
+          console.log(`Processed data points: ${processedData.length}`);
+          
+          // Update progress to 100%
+          setFetchProgress({ percentage: 100, current: 1, total: 1 });
+          
+          if (processedData.length === 0) {
+            setErrMsg(`No data available for ${RANGES.find(r => r.key === rangeKey)?.label || "selected time range"}`);
+          } else {
+            setErrMsg(null); // Clear any previous error
+          }
 
-            const deviceMetric = (activeSensor.metric || "F").toUpperCase();
-        const convert = (v) => {
-          if (metric !== "temperature") return Number(v);
-          if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
-          if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
-          return Number(v);
-        };
+          // Display all data at once
+          setRows(processedData);
+          setZoomDomain(null);
+          
+        } finally {
+          setIsFetchingData(false);
+          setFetchProgress({ percentage: 0, current: 0, total: 0 });
+        }
 
-            return { ms, value: convert(r.reading_value) };
-          })
-          .filter(Boolean)
-          .sort((a, b) => a.ms - b.ms); // ascending chronological
 
-        setRows(cleaned);
-        setZoomDomain(null); // clear zoom when sensor/range changes
+
+
       } catch (e) {
         setErrMsg("Failed to load history: " + (e?.message || String(e)));
         setRows([]);
@@ -465,42 +390,8 @@ export default function History() {
     })();
   }, [activeSensorId, rangeHours, metric, tempScale]);
 
-  /* ===== Realtime (unit-aware) ===== */
-  useEffect(() => {
-    if (!activeSensor) return;
-
-    const deviceMetric = (activeSensor.metric || "F").toUpperCase();
-    const convert = (v) => {
-      if (metric !== "temperature") return Number(v); // humidity untouched
-      if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
-      if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
-      return Number(v);
-    };
-
-    const ch = supabase
-      .channel("rrv2-history")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "raw_readings_v2" }, (payload) => {
-        const r = payload.new || {};
-        if (r.sensor_id !== activeSensor.sensor_id) return;
-        if (typeof r.reading_value === "undefined") return;
-
-        const ms = firstValidMs(r.fetched_at, r.approx_time, r.timestamp, r.created_at);
-        if (ms == null) return;
-
-        const deviceMetric = (activeSensor.metric || "F").toUpperCase();
-        const convert = (v) => {
-          if (metric !== "temperature") return Number(v);
-          if (tempScale === "C" && deviceMetric !== "C") return toC(Number(v));
-          if (tempScale === "F" && deviceMetric !== "F") return toF(Number(v));
-          return Number(v);
-        };
-
-        const next = { ms, value: convert(r.reading_value) };
-        setRows(prev => [...prev, next].slice(-20_000)); // appends in time order
-      })
-      .subscribe();
-    return () => supabase.removeChannel(ch);
-  }, [activeSensorId, metric, tempScale]);
+  // Realtime removed; consider client-side polling if desired
+  // useEffect(() => { const id = setInterval(() => {/* re-fetch */}, 30000); return () => clearInterval(id); }, []);
 
   /* ===== Chart domain, scaling, geometry ===== */
   const nowMs = Date.now();
@@ -508,6 +399,7 @@ export default function History() {
   const domainStart = zoomDomain?.startMs ?? fullStartMs;
   const domainEnd   = zoomDomain?.endMs   ?? nowMs;
   const visibleMs   = domainEnd - domainStart;
+
 
   const scaleXTime = (ms) => {
     const t = (ms - domainStart) / Math.max(1, visibleMs);
@@ -543,12 +435,15 @@ export default function History() {
 
   // Positioned points within current domain
   const points = useMemo(() => {
-    return rows.map(r => ({
+    const mapped = rows.map(r => ({
       ms: r.ms,
       x: scaleXTime(r.ms),
       y: scaleY(r.value),
       value: r.value
     })).filter(p => p.ms >= domainStart && p.ms <= domainEnd);
+    
+    
+    return mapped;
   }, [rows, domainStart, domainEnd, yBounds]);
 
   // Gap detection (≥ 5 minutes)
@@ -766,6 +661,7 @@ export default function History() {
   }
 
   const empty = points.length === 0;
+  
 
   /* ===== Render ===== */
   return (
@@ -777,12 +673,9 @@ export default function History() {
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-3xl font-bold">History</h2>
             <div className="flex items-center space-x-3">
-              {errMsg && <p className="text-red-500 text-sm">{errMsg}</p>}
+              
               <button
-                onClick={async () => {
-                  try { const { error } = await supabase.auth.signOut(); if (error) throw error; router.push("/login"); }
-                  catch (e) { setErrMsg("Failed to sign out: " + (e?.message || String(e))); }
-                }}
+                onClick={() => { try { localStorage.removeItem('auth-token'); } catch {}; router.push("/login"); }}
                 className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? "bg-red-600 hover:bg-red-700" : ""}`}
               >
                 Log out

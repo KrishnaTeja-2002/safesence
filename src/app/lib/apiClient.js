@@ -1,24 +1,35 @@
-import { createClient } from '@supabase/supabase-js';
-
-// Create Supabase client for getting auth tokens
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://kwaylmatpkcajsctujor.supabase.co",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXlsbWF0cGtjYWpzY3R1am9yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyNDAwMjQsImV4cCI6MjA3MDgxNjAyNH0.-ZICiwnXTGWgPNTMYvirIJ3rP7nQ9tIRC1ZwJBZM96M"
-);
-
 class ApiClient {
   constructor() {
     this.baseUrl = '/api';
   }
 
   async getAuthHeaders() {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      throw new Error('No active session');
+    // Get token from localStorage or cookies
+    let token = null;
+    
+    // Try to get from localStorage first (for client-side)
+    if (typeof window !== 'undefined') {
+      token = localStorage.getItem('auth-token');
     }
+    
+    // If no token in localStorage, try to get from cookies
+    if (!token && typeof document !== 'undefined') {
+      const cookies = document.cookie.split(';');
+      for (let cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'auth-token') {
+          token = value;
+          break;
+        }
+      }
+    }
+    
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+    
     return {
-      'Authorization': `Bearer ${session.access_token}`,
+      'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
     };
   }
@@ -43,16 +54,34 @@ class ApiClient {
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (parseError) {
+          console.error('Failed to parse error response as JSON:', parseError);
+          errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
         console.error('API Error Response:', errorData);
         throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
-      const data = await response.json();
-      console.log('API Success Response:', data);
-      return data;
+      let data;
+      try {
+        data = await response.json();
+        console.log('API Success Response:', data);
+        return data;
+      } catch (parseError) {
+        console.error('Failed to parse success response as JSON:', parseError);
+        throw new Error('Invalid JSON response from server');
+      }
     } catch (error) {
       console.error('API request failed:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        endpoint,
+        method: options.method || 'GET'
+      });
       throw error;
     }
   }
@@ -152,6 +181,45 @@ class ApiClient {
       body: JSON.stringify({
         sensor_id: sensorId,
         ...preferences
+      })
+    });
+  }
+
+  // Devices API
+  async getDevices() {
+    return this.request('/devices');
+  }
+
+  async createDevice(deviceData) {
+    return this.request('/devices', {
+      method: 'POST',
+      body: JSON.stringify(deviceData)
+    });
+  }
+
+  async updateDevice(deviceId, deviceData) {
+    return this.request('/devices', {
+      method: 'PUT',
+      body: JSON.stringify({
+        deviceId,
+        ...deviceData
+      })
+    });
+  }
+
+  async deleteDevice(deviceId) {
+    const params = new URLSearchParams({ deviceId });
+    return this.request(`/devices?${params.toString()}`, { method: 'DELETE' });
+  }
+
+  // Team Invitations API
+  async sendTeamInvite({ sensorId, role, email }) {
+    return this.request('/sendInvite', {
+      method: 'POST',
+      body: JSON.stringify({
+        sensorId,
+        role,
+        email
       })
     });
   }
