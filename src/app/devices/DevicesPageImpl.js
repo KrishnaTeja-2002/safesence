@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
+import { Bluetooth, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
@@ -19,6 +20,11 @@ export default function DevicesPage() {
   const [newSensorType, setNewSensorType] = useState('');
   const [newMetric, setNewMetric] = useState('');
   const [savingSensor, setSavingSensor] = useState(false);
+  const [showAddDevice, setShowAddDevice] = useState(false);
+  const [connectedDevice, setConnectedDevice] = useState(null);
+  const [connectedDeviceId, setConnectedDeviceId] = useState(null);
+  const [savingDevice, setSavingDevice] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState('');
 
   useEffect(() => {
     const load = async () => {
@@ -61,6 +67,53 @@ export default function DevicesPage() {
     }
   };
 
+  // Bluetooth pairing for adding a device
+  const connectToBluetoothDevice = async () => {
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'SafeSense' }],
+        optionalServices: ['battery_service']
+      });
+      setConnectedDevice(device.name || 'SafeSense Device');
+      setConnectedDeviceId(device.id);
+      if (!newDeviceName) setNewDeviceName(device.name || '');
+    } catch (error) {
+      // Ignore user-cancel; surface others
+      if (!String(error?.message || '').toLowerCase().includes('cancel')) {
+        setError('Bluetooth connection failed: ' + (error?.message || String(error)));
+      }
+    }
+  };
+
+  const saveNewDevice = async () => {
+    if (!connectedDeviceId) {
+      setError('Please connect to a device first.');
+      return;
+    }
+    try {
+      setSavingDevice(true);
+      const created = await apiClient.createDevice({ deviceId: connectedDeviceId, deviceName: (newDeviceName || connectedDevice || '') });
+      // Reflect locally
+      setDevices((prev) => {
+        const exists = prev.some((d) => d.device_id === (created.deviceId || created.device_id));
+        if (exists) return prev;
+        return [
+          ...prev,
+          { device_id: created.deviceId || created.device_id, device_name: created.deviceName || created.device_name || newDeviceName || connectedDevice || '', sensors: [] }
+        ];
+      });
+      // cleanup
+      setShowAddDevice(false);
+      setConnectedDevice(null);
+      setConnectedDeviceId(null);
+      setNewDeviceName('');
+    } catch (e) {
+      setError(e?.message || 'Failed to create device');
+    } finally {
+      setSavingDevice(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-800'}`}>
@@ -76,7 +129,16 @@ export default function DevicesPage() {
       <main className="flex-1 p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-3xl font-bold">Devices</h2>
-          {error && <span className="text-sm text-red-500">{error}</span>}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push('/devices/add')}
+              className={`${darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'} text-white px-4 py-2 rounded`}
+            >
+              + Add Device
+            </button>
+            {error && <span className="text-sm text-red-500">{error}</span>}
+          </div>
         </div>
 
         {devices.length === 0 ? (
@@ -166,6 +228,7 @@ export default function DevicesPage() {
           </div>
         )}
       </main>
+      {/* Add Device flow moved to /devices/add */}
       {/* Sensor Settings Modal */}
       <SensorSettingsModal
         darkMode={darkMode}

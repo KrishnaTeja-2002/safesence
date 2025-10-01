@@ -63,7 +63,9 @@ export default function Dashboard() {
   const { darkMode, toggleDarkMode } = useDarkMode();
 
   const [username, setUsername] = useState("User");
+  const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [error, setError] = useState("");
+  const [loadingData, setLoadingData] = useState(true);
 
   // Mounted timestamp for hydration-safe "Last updated" display
   const [nowTs, setNowTs] = useState(null);
@@ -129,6 +131,7 @@ export default function Dashboard() {
 
         const { user } = await response.json();
         setUsername(user?.email?.split("@")[0] || "User");
+        setCurrentUserEmail(user?.email || null);
 
         // Get user preferences using API client
         try {
@@ -183,6 +186,7 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
+        setLoadingData(true);
         const sensorRows = await apiClient.getSensors();
 
         // No need to store thresholds - using database status directly
@@ -270,8 +274,24 @@ export default function Dashboard() {
           disconnected: filtered.filter((t) => t.value == null).length,
         };
 
-        // Users KPI from DB (null when not available)
-        const usersCount = null;
+        // Users KPI: unique users across all sensors' access lists (dedup by user_id/email)
+        let usersCount = 0;
+        try {
+          const uniq = new Set();
+          await Promise.all((sensorRows || []).map(async (r) => {
+            try {
+              const res = await apiClient.getSensorShares(r.sensor_id);
+              const arr = res?.access || [];
+              for (const a of arr) {
+                const key = a.user_id ? String(a.user_id) : (a.email ? String(a.email).toLowerCase() : null);
+                if (key) uniq.add(key);
+              }
+            } catch {}
+          }));
+          // Exclude current user by email if present
+          if (currentUserEmail) uniq.delete(String(currentUserEmail).toLowerCase());
+          usersCount = uniq.size;
+        } catch {}
 
         const notificationsList = buildNotifications(filtered, prefs.tz);
 
@@ -282,12 +302,14 @@ export default function Dashboard() {
           sensors: sensorsKPI,
           notificationsList,
         });
+        setLoadingData(false);
       } catch (err) {
         setError("Failed to fetch sensor data: " + (err?.message || String(err)));
+        setLoadingData(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole]);
+  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole, currentUserEmail]);
 
   // Realtime updates removed (no Supabase client). Consider polling if needed.
 
@@ -354,6 +376,20 @@ export default function Dashboard() {
   // Items to plot (respect prefs in ALL)
   const chartItems = itemsVisible;
 
+  if (loadingData) {
+    return (
+      <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}>
+        <Sidebar />
+        <main className="flex-1 p-6 flex items-center justify-center">
+          <div className="text-center">
+            <div className={`animate-spin h-12 w-12 rounded-full border-2 border-gray-300 border-t-orange-500 mx-auto ${darkMode ? 'border-gray-600 border-t-orange-400' : ''}`}></div>
+            <p className={`mt-4 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Loading dashboard…</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
      return (
      <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}>
                <style jsx>{`
@@ -396,6 +432,14 @@ export default function Dashboard() {
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          {loadingData && (
+            <div className={`rounded-lg p-6 shadow text-center col-span-full ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
+              <div className="flex items-center justify-center">
+                <div className={`animate-spin h-8 w-8 rounded-full border-2 border-gray-300 border-t-orange-500 ${darkMode ? 'border-gray-600 border-t-orange-400' : ''}`}></div>
+              </div>
+              <p className={`mt-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Loading latest data…</p>
+            </div>
+          )}
           {prefs.showAlerts && (
             <div className={`rounded-lg p-6 shadow text-center relative ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
               <div className="cursor-pointer" onClick={() => setShowNotifications(!showNotifications)} ref={notificationCardRef}>
