@@ -8,53 +8,28 @@ export async function GET(request) {
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
     
-    // Get current user from token if available
+    // Authenticate using shared middleware (supports JWT and cookies)
+    const authResult = await authenticateRequest(request);
     let currentUserId = null;
-    try {
-      const authHeader = request.headers.get('authorization');
-      const cookieHeader = request.headers.get('cookie');
-      
-      let token = null;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        token = authHeader.substring(7);
-      } else if (cookieHeader) {
-        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
-          const [key, value] = cookie.trim().split('=');
-          acc[key] = value;
-          return acc;
-        }, {});
-        token = cookies['auth-token'];
-      }
-      
-      if (token) {
-        // Try to verify token by checking if it exists in auth.users
-        const userResult = await prisma.$queryRaw`
-          SELECT id FROM auth.users 
-          WHERE id = ${token}::uuid 
-          AND deleted_at IS NULL 
-          LIMIT 1
-        `;
-        
-        if (userResult && userResult.length > 0) {
-          currentUserId = userResult[0].id;
-          console.log('User authenticated via token:', currentUserId);
-        }
-      }
-    } catch (e) {
-      console.log('Token verification failed, proceeding without role info:', e.message);
+    let userEmail = null;
+    if (!authResult.error && authResult.user) {
+      currentUserId = authResult.user.id;
+      userEmail = authResult.user.email || null;
     }
     
     // Get sensors with access roles for the current user (device-based structure)
     let sensors;
     if (currentUserId) {
-      // Get user's email for team invitation lookup
-      const userResult = await prisma.$queryRaw`
-        SELECT email FROM auth.users 
-        WHERE id = ${currentUserId}::uuid 
-        AND deleted_at IS NULL 
-        LIMIT 1
-      `;
-      const userEmail = userResult && userResult.length > 0 ? userResult[0].email : null;
+      // Ensure user's email for team invitation lookup
+      if (!userEmail) {
+        const userResult = await prisma.$queryRaw`
+          SELECT email FROM auth.users 
+          WHERE id = ${currentUserId}::uuid 
+          AND deleted_at IS NULL 
+          LIMIT 1
+        `;
+        userEmail = userResult && userResult.length > 0 ? userResult[0].email : null;
+      }
 
       sensors = await prisma.$queryRaw`
         WITH user_devices AS (

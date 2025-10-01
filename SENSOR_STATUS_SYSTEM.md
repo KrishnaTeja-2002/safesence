@@ -210,3 +210,7 @@ ORDER BY status, sensor_name;
 - No external dependencies required
 - Status calculation is deterministic and consistent
 
+
+
+
+

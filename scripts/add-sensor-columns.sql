@@ -36,3 +36,7 @@ WHERE table_schema = 'public'
   AND table_name = 'sensors'
 ORDER BY ordinal_position;
 
+
+
+
+

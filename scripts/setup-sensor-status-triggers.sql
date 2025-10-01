@@ -205,3 +205,7 @@ SELECT
     COUNT(CASE WHEN status = 'offline' THEN 1 END) as offline_sensors
 FROM public.sensors;
 
+
+
+
+

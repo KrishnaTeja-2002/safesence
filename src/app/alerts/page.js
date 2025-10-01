@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState, Component } from 'react';
+import React, { useEffect, useMemo, useRef, useState, Component, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
@@ -131,6 +131,7 @@ function ThresholdChart({
   userTempScale = 'F',
   sensorType = 'temperature',
   timeZone = 'UTC',
+  deviceId,
 }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -170,53 +171,68 @@ function ThresholdChart({
     }
   }, [min, max, warning, isEditing]);
 
-  // Fetch last 30 minutes of readings (if Alert Detail passed sensorId)
-  useEffect(() => {
-    let cancelled = false;
-    const fetchRecent = async () => {
-      if (!sensorId) {
-        setLocalData(Array.isArray(data) ? data : []);
+  // Fetch last 30 minutes of readings (and refresh periodically)
+  const fetchRecent = useCallback(async () => {
+    if (!sensorId) {
+      // fall back to prop data if available
+      setLocalData(Array.isArray(data) ? data : []);
+      setLocalDataWithTimestamps([]);
+      return;
+    }
+    try {
+      const now = Date.now();
+      const thirtyMinAgoISO = new Date(now - 30 * 60 * 1000).toISOString();
+      
+      // Use API client to fetch recent readings
+      const readings = await apiClient.getSensorReadings(sensorId, {
+        startTime: thirtyMinAgoISO,
+        endTime: new Date(now).toISOString(),
+        limit: 1000
+      });
+
+      // If backend temporarily returns no rows, do NOT clear existing chart data
+      if (!readings || readings.length === 0) {
         return;
       }
-      try {
-        const now = Date.now();
-        const thirtyMinAgoISO = new Date(now - 30 * 60 * 1000).toISOString();
-        
-        // Use API client to fetch recent readings
-        const readings = await apiClient.getSensorReadings(sensorId, {
-          startTime: thirtyMinAgoISO,
-          endTime: new Date(now).toISOString(),
-          limit: 1000
-        });
 
-        if (!readings || readings.length === 0) {
-          setLocalData(Array.isArray(data) ? data : []);
-          setLocalDataWithTimestamps([]);
-          return;
-        }
+      const u = (unit || 'F').toUpperCase() === 'C' ? 'C' : 'F';
+      // Convert to Fahrenheit from sensor unit, then to user's display scale for temperature
+      const valsF = readings.map((r) => toF(Number(r.reading_value), u));
+      const vals = (sensorType === 'humidity')
+        ? valsF.map((v) => Number.isFinite(v) ? v : null)
+        : valsF.map((v) => Number.isFinite(v) ? convertForDisplay(v, userTempScale) : null);
+      
+      // Create data with timestamps for gap detection (values in display units)
+      const dataWithTimestamps = readings.map((r, index) => ({
+        value: vals[index],
+        timestamp: r.fetched_at,
+        reading_value: r.reading_value
+      }));
 
-        const u = (unit || 'F').toUpperCase() === 'C' ? 'C' : 'F';
-        const vals = readings.map((r) => toF(Number(r.reading_value), u));
-        
-        // Create data with timestamps for gap detection
-        const dataWithTimestamps = readings.map((r, index) => ({
-          value: vals[index],
-          timestamp: r.fetched_at,
-          reading_value: r.reading_value
-        }));
-        
-        if (!cancelled) {
-          setLocalData(vals.length ? vals : (Array.isArray(data) ? data : []));
-          setLocalDataWithTimestamps(dataWithTimestamps);
-        }
-      } catch (error) {
-        console.error('Error fetching recent readings:', error);
-        if (!cancelled) setLocalData(Array.isArray(data) ? data : []);
+      // Skip state updates if nothing changed (prevents flicker)
+      const lastExistingTs = localDataWithTimestamps.length > 0
+        ? localDataWithTimestamps[localDataWithTimestamps.length - 1]?.timestamp
+        : null;
+      const lastIncomingTs = dataWithTimestamps[dataWithTimestamps.length - 1]?.timestamp;
+      if (lastExistingTs && lastIncomingTs && new Date(lastExistingTs).getTime() === new Date(lastIncomingTs).getTime()) {
+        return;
       }
-    };
+
+      setLocalData(vals.length ? vals : (Array.isArray(data) ? data : []));
+      setLocalDataWithTimestamps(dataWithTimestamps);
+    } catch (error) {
+      console.error('Error fetching recent readings:', error);
+      // keep existing data on error
+    }
+  }, [sensorId, unit, data, userTempScale, sensorType, localDataWithTimestamps]);
+
+  useEffect(() => {
     fetchRecent();
-    return () => { cancelled = true; };
-  }, [sensorId, unit, data]);
+    const id = setInterval(() => {
+      fetchRecent();
+    }, 20000);
+    return () => clearInterval(id);
+  }, [fetchRecent]);
   
   
 
@@ -232,7 +248,13 @@ function ThresholdChart({
   const chartW = W - padL - padR, chartH = H - padT - padB;
 
   // Dynamic zoom based on limits and data - only when not editing
-  const plotData = (localData && localData.length ? localData : data) || [];
+  // Ensure plot data is in display units (°C/°F for temperature, % for humidity)
+  const propDataDisplay = Array.isArray(data)
+    ? (sensorType === 'humidity'
+        ? data.map((v) => Number(v))
+        : data.map((v) => convertForDisplay(Number(v), userTempScale)))
+    : [];
+  const plotData = (localData && localData.length ? localData : propDataDisplay) || [];
   const limitPadding = 10; // Add padding around limits for better visibility
   // Use only finite numeric values for calculations to avoid NaN issues
   const numericData = Array.isArray(plotData) ? plotData.filter((v) => Number.isFinite(v)) : [];
@@ -252,6 +274,12 @@ function ThresholdChart({
     for (let time = thirtyMinAgo; time <= now; time += 2 * 60 * 1000) { // 2-minute intervals
       timeline.push(time);
     }
+    // Local X mapping (duplicate of x()) to avoid referencing x before initialization
+    const computeX = (timeMs) => {
+      const start = thirtyMinAgo;
+      const progress = (timeMs - start) / (now - start);
+      return padL + (chartW * Math.max(0, Math.min(1, progress)));
+    };
     
     // Find gaps in the data
     for (let i = 0; i < timeline.length - 1; i++) {
@@ -266,8 +294,8 @@ function ThresholdChart({
       
       if (!hasData) {
         // This is a gap - create a grey rectangle
-        const startX = x(startTime);
-        const endX = x(endTime);
+        const startX = computeX(startTime);
+        const endX = computeX(endTime);
         
         gaps.push({
           x: startX,
@@ -281,7 +309,8 @@ function ThresholdChart({
     return gaps;
   };
   
-  const dataGaps = createGapShading();
+  // Disable grey gap shading for clearer charts
+  const dataGaps = [];
   
   // Use static zoom while editing, dynamic zoom when not editing
   // Convert fallback values to user's preferred scale
@@ -331,9 +360,20 @@ function ThresholdChart({
     return padL;
   };
   
+  // Compute the X position for the latest point; if the latest reading is older than now,
+  // extend the marker to "now" so it appears at the right edge of the window.
+  const getLatestX = () => {
+    if (localDataWithTimestamps && localDataWithTimestamps.length > 0) {
+      const lastTs = new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime();
+      const nowTime = Date.now();
+      return x(lastTs < nowTime ? nowTime : lastTs);
+    }
+    return x(plotData.length - 1);
+  };
+  
   // Create line path with color based only on latest value
   const createColoredLinePath = () => {
-    if (plotData.length === 0 || !localDataWithTimestamps || localDataWithTimestamps.length === 0) {
+    if (plotData.length === 0) {
       return { path: '', segments: [] };
     }
     
@@ -353,15 +393,29 @@ function ThresholdChart({
     }
     // Otherwise stays green (latest value is in good zone or no thresholds set)
     
-    // Create path using timestamps for proper 30-minute window positioning
+    // Create path using timestamps when available; otherwise fall back to index-based positions
     let path = '';
-    if (localDataWithTimestamps.length > 0) {
+    if (localDataWithTimestamps && localDataWithTimestamps.length > 0) {
       const firstPoint = localDataWithTimestamps[0];
-      path = `M ${x(new Date(firstPoint.timestamp).getTime())} ${y(firstPoint.value)}`;
-      
+      const firstTs = new Date(firstPoint.timestamp).getTime();
+      // Extend line to the left edge (30-minute window start) at the first value level
+      const leftEdgeTime = Date.now() - 30 * 60 * 1000;
+      path = `M ${x(leftEdgeTime)} ${y(firstPoint.value)} L ${x(firstTs)} ${y(firstPoint.value)}`;
       for (let i = 1; i < localDataWithTimestamps.length; i++) {
         const point = localDataWithTimestamps[i];
         path += ` L ${x(new Date(point.timestamp).getTime())} ${y(point.value)}`;
+      }
+      // If the latest reading is older than now, extend the line horizontally to "now"
+      const last = localDataWithTimestamps[localDataWithTimestamps.length - 1];
+      const lastTs = new Date(last.timestamp).getTime();
+      const nowTime = Date.now();
+      if (lastTs < nowTime) {
+        path += ` L ${x(nowTime)} ${y(last.value)}`;
+      }
+    } else {
+      path = `M ${x(0)} ${y(plotData[0])}`;
+      for (let i = 1; i < plotData.length; i++) {
+        path += ` L ${x(i)} ${y(plotData[i])}`;
       }
     }
     
@@ -454,8 +508,12 @@ function ThresholdChart({
   const nMinDraft = Number(draftMin);
   const nMaxDraft = Number(draftMax);
   const nWarnDraft = Number(draftWarning);
-  const lowerBound = sensorType === 'humidity' ? 0 : -100; // °F for temperature
-  const upperBound = sensorType === 'humidity' ? 100 : 200; // °F for temperature
+  const lowerBound = sensorType === 'humidity' 
+    ? 0 
+    : (userTempScale === 'C' ? fToC(-100) : -100);
+  const upperBound = sensorType === 'humidity' 
+    ? 100 
+    : (userTempScale === 'C' ? fToC(200) : 200);
   const rangeDraft = nMaxDraft - nMinDraft;
   const isValidLimits = (
     Number.isFinite(nMinDraft) &&
@@ -474,7 +532,7 @@ function ThresholdChart({
       return;
     }
     
-    const nMin = Number(draftMin), nMax = Number(draftMax), nWarn = Number(draftWarning);
+    const nMin = Number(draftMin), nMax = Number(draftMax), nWarn = Math.round(Number(draftWarning));
     
     // Validate the input values
     if (isNaN(nMin) || isNaN(nMax) || isNaN(nWarn)) {
@@ -533,8 +591,7 @@ function ThresholdChart({
         min_limit: dbMin,
         max_limit: dbMax,
         warning_limit: dbWarn,
-        updated_at: new Date().toISOString(),
-      });
+      }, deviceId);
       
       console.log('Save result:', result);
 
@@ -584,7 +641,7 @@ function ThresholdChart({
         updated_at: new Date().toISOString(),
       };
       console.log('Test data:', testData);
-      const result = await apiClient.updateAlertThresholds(sensorId, testData);
+      const result = await apiClient.updateAlertThresholds(sensorId, testData, deviceId);
       console.log('Test result:', result);
     } catch (error) {
       console.error('Test API call failed:', error);
@@ -901,7 +958,7 @@ function ThresholdChart({
           </g>
         ))}
         {/* Latest data point with glow effect */}
-        {plotData.length > 0 && localDataWithTimestamps && localDataWithTimestamps.length > 0 && (
+        {plotData.length > 0 && (
           <g>
             {/* Glow effect for the last data point (current reading) */}
             {(() => {
@@ -909,9 +966,12 @@ function ThresholdChart({
               if (min !== null && max !== null && warning !== null) {
                 if (temp < min || temp > max) {
                   // Danger zone - red glow
+                  const cx = (localDataWithTimestamps && localDataWithTimestamps.length > 0)
+                    ? getLatestX()
+                    : x(plotData.length - 1);
                   return (
                     <circle 
-                      cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
+                      cx={cx} 
                       cy={y(plotData[plotData.length - 1])} 
                       r="12" 
                       fill="#DC2626" 
@@ -923,9 +983,12 @@ function ThresholdChart({
                   const band = (Number(warning) || 0) / 100 * (max - min);
                   if (temp <= min + band || temp >= max - band) {
                     // Warning zone - orange glow
+                    const cx = (localDataWithTimestamps && localDataWithTimestamps.length > 0)
+                      ? getLatestX()
+                      : x(plotData.length - 1);
                     return (
                       <circle 
-                        cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
+                        cx={cx} 
                         cy={y(plotData[plotData.length - 1])} 
                         r="12" 
                         fill="#EA580C" 
@@ -941,7 +1004,7 @@ function ThresholdChart({
             
             {/* Latest data point */}
             <circle 
-              cx={x(new Date(localDataWithTimestamps[localDataWithTimestamps.length - 1].timestamp).getTime())} 
+              cx={getLatestX()} 
               cy={y(plotData[plotData.length - 1])} 
               r="5" 
               fill={(() => {
@@ -968,7 +1031,7 @@ function ThresholdChart({
           fill="transparent" 
           style={{ cursor: 'default' }}
           onMouseMove={(e) => {
-            if (plotData.length === 0 || !localDataWithTimestamps || localDataWithTimestamps.length === 0) return;
+            if (plotData.length === 0) return;
             
             const rect = e.currentTarget.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
@@ -978,42 +1041,59 @@ function ThresholdChart({
             let closestIndex = 0;
             let minDistance = Infinity;
             
-            localDataWithTimestamps.forEach((dataPoint, index) => {
-              const temp = plotData[index];
-              if (temp == null) return;
-              
-              const dataX = x(new Date(dataPoint.timestamp).getTime());
-              const dataY = y(temp);
-              
-              // Check if mouse is close to the line (within 10px vertically)
-              const verticalDistance = Math.abs(mouseY - dataY);
-              if (verticalDistance <= 10) {
-                const horizontalDistance = Math.abs(mouseX - dataX);
-                if (horizontalDistance < minDistance) {
-                  minDistance = horizontalDistance;
-                  closestIndex = index;
+            if (localDataWithTimestamps && localDataWithTimestamps.length > 0) {
+              localDataWithTimestamps.forEach((dataPoint, index) => {
+                const temp = plotData[index];
+                if (temp == null) return;
+                const dataX = x(new Date(dataPoint.timestamp).getTime());
+                const dataY = y(temp);
+                const verticalDistance = Math.abs(mouseY - dataY);
+                if (verticalDistance <= 10) {
+                  const horizontalDistance = Math.abs(mouseX - dataX);
+                  if (horizontalDistance < minDistance) {
+                    minDistance = horizontalDistance;
+                    closestIndex = index;
+                  }
+                }
+              });
+            } else {
+              for (let index = 0; index < plotData.length; index++) {
+                const temp = plotData[index];
+                if (temp == null) continue;
+                const dataX = x(index);
+                const dataY = y(temp);
+                const verticalDistance = Math.abs(mouseY - dataY);
+                if (verticalDistance <= 10) {
+                  const horizontalDistance = Math.abs(mouseX - dataX);
+                  if (horizontalDistance < minDistance) {
+                    minDistance = horizontalDistance;
+                    closestIndex = index;
+                  }
                 }
               }
-            });
+            }
             
             // Show tooltip for closest point if we found one close enough
             if (minDistance < Infinity) {
-              const closestData = localDataWithTimestamps[closestIndex];
               const closestTemp = plotData[closestIndex];
-              
-              if (closestData && closestTemp != null) {
-                const displayValue = sensorType === 'humidity' 
-                  ? `${closestTemp.toFixed(1)}%`
-                  : `${convertForDisplay(closestTemp, userTempScale).toFixed(1)}°${userTempScale}`;
-                
-                const timeStr = new Date(closestData.timestamp).toLocaleTimeString([], { 
-                  hour: '2-digit', 
-                  minute: '2-digit',
-                  second: '2-digit',
-                  timeZone
-                });
-                
-                e.currentTarget.title = `${displayValue} at ${timeStr}`;
+              const displayValue = sensorType === 'humidity' 
+                ? `${closestTemp.toFixed(1)}%`
+                : `${closestTemp.toFixed(1)}°${userTempScale}`; // already in display units
+              if (localDataWithTimestamps && localDataWithTimestamps.length > 0) {
+                const closestData = localDataWithTimestamps[closestIndex];
+                if (closestData) {
+                  const timeStr = new Date(closestData.timestamp).toLocaleTimeString([], { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    second: '2-digit',
+                    timeZone
+                  });
+                  e.currentTarget.title = `${displayValue} at ${timeStr}`;
+                } else {
+                  e.currentTarget.title = `${displayValue}`;
+                }
+              } else {
+                e.currentTarget.title = `${displayValue}`;
               }
             } else {
               e.currentTarget.title = '';
@@ -1078,12 +1158,8 @@ function ThresholdChart({
             disabled={!isEditing}
             onChange={(e) => {
               const displayVal = Number(e.target.value);
-              if (sensorType === 'humidity') {
-                setDraftMaxClamped(displayVal);
-              } else {
-                const fahrenheitVal = convertFromDisplay(displayVal, userTempScale);
-                setDraftMaxClamped(fahrenheitVal);
-              }
+              // Keep drafts in display units for consistent UI and validation
+              setDraftMaxClamped(displayVal);
             }}
             className={baseInput}
             title={`Max (${sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'})`}
@@ -1104,12 +1180,8 @@ function ThresholdChart({
             disabled={!isEditing}
             onChange={(e) => {
               const displayVal = Number(e.target.value);
-              if (sensorType === 'humidity') {
-                setDraftMinClamped(displayVal);
-              } else {
-                const fahrenheitVal = convertFromDisplay(displayVal, userTempScale);
-                setDraftMinClamped(fahrenheitVal);
-              }
+              // Keep drafts in display units for consistent UI and validation
+              setDraftMinClamped(displayVal);
             }}
             className={baseInput}
             title={`Min (${sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'})`}
@@ -1121,37 +1193,42 @@ function ThresholdChart({
           <label className={`text-xs font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
             Warning
           </label>
-          <input
-            type="number"
-            step="1"
-            min="0"
-            max="100"
-            value={isEditing ? (draftWarning ?? '') : (warning ?? '')}
-            disabled={!isEditing}
-            onChange={(e) => {
-              const val = Math.max(0, Math.min(100, Number(e.target.value)));
-              setDraftWarning(val);
-              // Don't call onChange while editing - only update local draft state
-            }}
-            className={baseInput}
-            title="Warning margin as percentage of range"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="100"
+              value={isEditing ? (draftWarning ?? '') : (warning ?? '')}
+              disabled={!isEditing}
+              onChange={(e) => {
+                const val = Math.max(0, Math.min(100, Number(e.target.value)));
+                setDraftWarning(val);
+                // Don't call onChange while editing - only update local draft state
+              }}
+              className={baseInput}
+              title="Warning margin as percentage of range"
+            />
+            <span className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} text-xs`}>%</span>
+          </div>
           
           {/* Warning Zone Calculation Display */}
-          {min !== null && max !== null && warning !== null && Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(warning) && (() => {
-            const range = max - min;
+          {(() => {
+            const mMin = Number(isEditing ? draftMin : min);
+            const mMax = Number(isEditing ? draftMax : max);
+            const mWarn = Number(isEditing ? draftWarning : warning);
+            if (!Number.isFinite(mMin) || !Number.isFinite(mMax) || !Number.isFinite(mWarn)) return null;
+            const range = mMax - mMin;
             if (range <= 0) return null;
-            
-            const warningOffset = (range * warning) / 100;
-            const upperWarningStart = max - warningOffset;
-            const lowerWarningEnd = min + warningOffset;
-            
+            const warningOffset = (range * mWarn) / 100;
+            const upperWarningStart = mMax - warningOffset;
+            const lowerWarningEnd = mMin + warningOffset;
             if (upperWarningStart <= lowerWarningEnd) return null;
-            
+            const unitLbl = sensorType === 'humidity' ? '%' : (userTempScale === 'C' ? '°C' : '°F');
             return (
               <div className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                <div>Range: {range.toFixed(1)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
-                <div>Warning: {warningOffset.toFixed(1)}{sensorType === 'humidity' ? '%' : userTempScale === 'C' ? '°C' : '°F'}</div>
+                <div>Range: {range.toFixed(1)}{unitLbl}</div>
+                <div>Warning: {warningOffset.toFixed(1)}{unitLbl}</div>
                 <div className="text-orange-500">
                   Zones: {lowerWarningEnd.toFixed(1)} - {upperWarningStart.toFixed(1)}
                 </div>
@@ -1179,6 +1256,7 @@ export default function Alerts() {
   const [userTempScale, setUserTempScale] = useState('F'); // fetched from user_preferences.temp_scale
   const [userTimeZone, setUserTimeZone] = useState('UTC'); // fetched from user_preferences.time_zone
   const [streams, setStreams] = useState([]);               // list rows
+  const [selectedRole, setSelectedRole] = useState('all');  // all | owned | admin | viewer
   const [thresholds, setThresholds] = useState({});         // id -> {min,max,warning}
   const [series, setSeries] = useState({});                 // id -> values in °F (or % for humidity)
   const HISTORY_LEN = 120;
@@ -1291,8 +1369,16 @@ export default function Alerts() {
   }, [router]);
 
   // Function to refresh sensor data
-  const refreshSensorData = async () => {
+  const refreshSensorData = useCallback(async () => {
     try {
+      // Skip if not authenticated to avoid 401s
+      if (typeof window !== 'undefined') {
+        const token = localStorage.getItem('auth-token');
+        if (!token) {
+          setError('Not authenticated');
+          return;
+        }
+      }
       console.log('Refreshing sensor data...');
       // Get sensors with all needed data (units, names, types, thresholds, latest values)
       const sensorRows = await apiClient.getAlerts();
@@ -1308,12 +1394,15 @@ export default function Alerts() {
         const valF = sensorType === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
 
         // Convert thresholds from sensor metric units to user's preferred scale for display
+        const nMin = Number(r?.min_limit);
+        const nMax = Number(r?.max_limit);
+        const nWarn = Number(r?.warning_limit);
         const th = {
-          min: Number.isFinite(r?.min_limit) ? 
-            (sensorType === 'humidity' ? Number(r.min_limit) : convertForDisplay(toF(Number(r.min_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
-          max: Number.isFinite(r?.max_limit) ? 
-            (sensorType === 'humidity' ? Number(r.max_limit) : convertForDisplay(toF(Number(r.max_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
-          warning: Number.isFinite(r?.warning_limit) ? Number(r.warning_limit) : 10, // ✅ default to 10%
+          min: Number.isFinite(nMin) ? 
+            (sensorType === 'humidity' ? nMin : convertForDisplay(toF(nMin, unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+          max: Number.isFinite(nMax) ? 
+            (sensorType === 'humidity' ? nMax : convertForDisplay(toF(nMax, unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+          warning: Number.isFinite(nWarn) ? nWarn : 10, // ✅ default to 10%
         };
         nextThresholds[key] = th;
 
@@ -1328,6 +1417,7 @@ export default function Alerts() {
           lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
           lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
           sensor_id: r.sensor_id,
+          device_id: r.device_id,
           unit,
           sensor_type: sensorType,
           access_role: r.access_role || 'viewer',
@@ -1340,12 +1430,20 @@ export default function Alerts() {
       console.error('Error refreshing sensor data:', e);
       setError(e?.message || 'Failed to refresh sensors');
     }
-  };
+  }, [userTempScale, userTimeZone]);
 
   /* ----- initial sensors + latest readings + thresholds ----- */
   useEffect(() => {
     const load = async () => {
       try {
+        // Skip if not authenticated to avoid 401s
+        if (typeof window !== 'undefined') {
+          const token = localStorage.getItem('auth-token');
+          if (!token) {
+            setLoading(false);
+            return;
+          }
+        }
         // Get sensors with all needed data (units, names, types, thresholds, latest values)
         const sensorRows = await apiClient.getAlerts();
 
@@ -1360,12 +1458,15 @@ export default function Alerts() {
           const valF = sensorType === 'humidity' ? rawVal : (rawVal != null ? toF(rawVal, unit === 'C' ? 'C' : 'F') : null);
 
           // Convert thresholds from sensor metric units to user's preferred scale for display
+          const nMin2 = Number(r?.min_limit);
+          const nMax2 = Number(r?.max_limit);
+          const nWarn2 = Number(r?.warning_limit);
           const th = {
-            min: Number.isFinite(r?.min_limit) ? 
-              (sensorType === 'humidity' ? Number(r.min_limit) : convertForDisplay(toF(Number(r.min_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
-            max: Number.isFinite(r?.max_limit) ? 
-              (sensorType === 'humidity' ? Number(r.max_limit) : convertForDisplay(toF(Number(r.max_limit), unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
-            warning: Number.isFinite(r?.warning_limit) ? Number(r.warning_limit) : 10, // ✅ default to 10%
+            min: Number.isFinite(nMin2) ? 
+              (sensorType === 'humidity' ? nMin2 : convertForDisplay(toF(nMin2, unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+            max: Number.isFinite(nMax2) ? 
+              (sensorType === 'humidity' ? nMax2 : convertForDisplay(toF(nMax2, unit === 'C' ? 'C' : 'F'), userTempScale)) : null,
+            warning: Number.isFinite(nWarn2) ? nWarn2 : 10, // ✅ default to 10%
           };
           nextThresholds[key] = th;
 
@@ -1380,6 +1481,7 @@ export default function Alerts() {
             lastReading: r.last_fetched_time ? toLocalFromReading({ last_fetched_time: r.last_fetched_time }, userTimeZone) : '—',
             lastFetchedTime: r.last_fetched_time, // Store original timestamp for status computation
             sensor_id: r.sensor_id,
+            device_id: r.device_id,
             unit,
             sensor_type: sensorType,
             access_role: r.access_role || 'viewer',
@@ -1396,7 +1498,7 @@ export default function Alerts() {
       }
     };
     load();
-  }, [userTimeZone]);
+  }, [userTimeZone, userTempScale]);
 
   /* ----- periodic refresh every 20 seconds ----- */
   useEffect(() => {
@@ -1469,7 +1571,7 @@ export default function Alerts() {
   };
 
   // Load alert preferences from database
-  const loadAlertPreferences = async (sensorId) => {
+  const loadAlertPreferences = useCallback(async (sensorId) => {
     try {
       console.log('Loading alert preferences for sensorId:', sensorId);
       const preferences = await apiClient.getAlertPreferences(sensorId);
@@ -1503,7 +1605,7 @@ export default function Alerts() {
       console.error('Error details:', error.message, error.stack);
       setError('Failed to load alert preferences: ' + error.message);
     }
-  };
+  }, []);
 
   // Save alert preferences to database
   const saveAlertPreferences = async (sensorId, preferences) => {
@@ -1537,7 +1639,7 @@ export default function Alerts() {
         loadAlertPreferences(sel.sensor_id);
       }
     }
-  }, [selectedId, streams]);
+  }, [selectedId, streams, loadAlertPreferences]);
 
   // Save sensor settings (name + metric)
   const saveSensorName = async () => {
@@ -1557,9 +1659,7 @@ export default function Alerts() {
     try {
       setSavingSensorName(true);
 
-      const updatePayload = {
-        updated_at: new Date().toISOString(),
-      };
+      const updatePayload = {};
       let hasChanges = false;
       
       if (nextName !== sel.name) {
@@ -1581,7 +1681,7 @@ export default function Alerts() {
         return;
       }
 
-      const data = await apiClient.updateAlertThresholds(sel.sensor_id, updatePayload);
+      const data = await apiClient.updateAlertThresholds(sel.sensor_id, updatePayload, sel.device_id);
 
       if (!data) {
         throw new Error('Update returned no row. Check RLS or sensor_id.');
@@ -1646,6 +1746,15 @@ export default function Alerts() {
         <div className="flex justify-between items-center">
           <div>
             <p className="font-semibold text-lg">{sensor.name}</p>
+            <span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full align-middle ${
+              sensor.access_role === 'owner'
+                ? 'bg-green-200 text-green-800'
+                : sensor.access_role === 'admin'
+                ? 'bg-yellow-200 text-yellow-800'
+                : 'bg-gray-200 text-gray-800'
+            }`}>
+              {sensor.access_role}
+            </span>
             <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
               <span className="mr-1">
                 {sensor.status === 'offline' ? '📡' : sensor.status === 'unknown' ? '❓' : '🕐'}
@@ -1685,6 +1794,19 @@ export default function Alerts() {
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-bold">Alerts</h2>
         <div className="flex items-center space-x-4">
+          <div className="flex items-center gap-2">
+            <label className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} text-sm`}>Role:</label>
+            <select
+              value={selectedRole}
+              onChange={(e) => setSelectedRole(e.target.value)}
+              className={`border rounded px-2 py-1 ${darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white border-gray-300'}`}
+            >
+              <option value="all">All</option>
+              <option value="owned">Owned</option>
+              <option value="admin">Admin</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </div>
           {error && <p className="text-red-500 text-sm">{error}</p>}
           <button
             onClick={() => {
@@ -1702,65 +1824,42 @@ export default function Alerts() {
       </div>
 
       <div className="space-y-6">
-        <SectionHeader icon="🚨" label="Alert" status="alert" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'alert').map((s) => (
-            <AlertCard key={`na-${s.id}`} sensor={s} />
-          ))}
-          {streams.filter((s) => s.status === 'alert').length === 0 && (
-            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              No sensors need attention
-            </div>
-          )}
-        </div>
-
-        <SectionHeader icon="⚠️" label="Warning" status="warning" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'warning').map((s) => (
-            <AlertCard key={`w-${s.id}`} sensor={s} />
-          ))}
-          {streams.filter((s) => s.status === 'warning').length === 0 && (
-            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              No warning alerts
-            </div>
-          )}
-        </div>
-
-        <SectionHeader icon="✅" label="OK" status="ok" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'ok').map((s) => (
-            <AlertCard key={`g-${s.id}`} sensor={s} />
-          ))}
-          {streams.filter((s) => s.status === 'ok').length === 0 && (
-            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              No sensors in good status
-            </div>
-          )}
-        </div>
-
-        <SectionHeader icon="📡" label="Sensor Offline" status="offline" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'offline').map((s) => (
-            <AlertCard key={`u-${s.id}`} sensor={s} />
-          ))}
-          {streams.filter((s) => s.status === 'offline').length === 0 && (
-            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              No offline sensors
-            </div>
-          )}
-        </div>
-
-        <SectionHeader icon="❓" label="Unknown" status="unknown" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {streams.filter((s) => s.status === 'unknown').map((s) => (
-            <AlertCard key={`unk-${s.id}`} sensor={s} />
-          ))}
-          {streams.filter((s) => s.status === 'unknown').length === 0 && (
-            <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-              No unknown status sensors
-            </div>
-          )}
-        </div>
+        {(() => {
+          const roleMatches = (s) => (
+            selectedRole === 'all' ||
+            (selectedRole === 'owned' && s.access_role === 'owner') ||
+            (selectedRole === 'admin' && s.access_role === 'admin') ||
+            (selectedRole === 'viewer' && s.access_role === 'viewer')
+          );
+          const filtered = streams.filter(roleMatches);
+          const inStatus = (status) => filtered.filter((s) => s.status === status);
+          const sections = [
+            { icon: '🚨', label: 'Alert', status: 'alert' },
+            { icon: '⚠️', label: 'Warning', status: 'warning' },
+            { icon: '✅', label: 'OK', status: 'ok' },
+            { icon: '📡', label: 'Sensor Offline', status: 'offline' },
+            { icon: '❓', label: 'Unknown', status: 'unknown' }
+          ];
+          return (
+            <>
+              {sections.map((sec) => (
+                <React.Fragment key={sec.status}>
+                  <SectionHeader icon={sec.icon} label={sec.label} status={sec.status} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {inStatus(sec.status).map((s) => (
+                      <AlertCard key={`${sec.status}-${s.id}`} sensor={s} />
+                    ))}
+                    {inStatus(sec.status).length === 0 && (
+                      <div className={`col-span-full p-4 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                        {selectedRole === 'all' ? 'No sensors' : 'No sensors for selected role'}
+                      </div>
+                    )}
+                  </div>
+                </React.Fragment>
+              ))}
+            </>
+          );
+        })()}
       </div>
     </main>
   );
@@ -1804,7 +1903,15 @@ export default function Alerts() {
         <div className="space-y-6">
           <div className={`${getStatusStyles(selected.status, darkMode).section} p-3 rounded flex items-center`}>
             <span className="mr-3 text-xl">
-              {selected.status === 'Needs Attention' ? '🚨' : selected.status === 'Warning' ? '⚠️' : selected.status === 'Good' ? '✅' : '🧩'}
+              {selected.status === 'alert'
+                ? '🚨'
+                : selected.status === 'warning'
+                ? '⚠️'
+                : selected.status === 'ok'
+                ? '✅'
+                : selected.status === 'offline'
+                ? '📡'
+                : '❓'}
             </span>
             {selected.status}
           </div>
@@ -1862,13 +1969,18 @@ export default function Alerts() {
                   {selected.sensor_type === 'humidity' ? 'Humidity History' : 'Temperature History'} (Last 30 Minutes)
                 </h3>
                 <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {selected.name} • {selected.sensor_type === 'humidity' ? '%' : 'F'} • 
+                  {selected.name} • Unit: {selected.sensor_type === 'humidity' ? '%' : `°${userTempScale}`}
                 </p>
               </div>
               <div className="text-sm">
-                {t.min !== null && t.max !== null ? (
-                  <>Limits: <strong>{t.min.toFixed(1)}{selected.sensor_type === 'humidity' ? '%' : '°F'}</strong> – <strong>{t.max.toFixed(1)}{selected.sensor_type === 'humidity' ? '%' : '°F'}</strong></>
-                ) : (
+                {t.min !== null && t.max !== null ? (() => {
+                  const lo = Math.min(t.min, t.max);
+                  const hi = Math.max(t.min, t.max);
+                  const unitLabel = selected.sensor_type === 'humidity' ? '%' : `°${userTempScale}`;
+                  return (
+                    <>Limits: <strong>{hi.toFixed(1)}{unitLabel}</strong> – <strong>{lo.toFixed(1)}{unitLabel}</strong></>
+                  );
+                })() : (
                   <>No limits set</>
                 )}
               </div>
@@ -1889,6 +2001,7 @@ export default function Alerts() {
                 userTempScale={userTempScale}
                 sensorType={selected.sensor_type}
                 timeZone={userTimeZone}
+                deviceId={selected.device_id}
               />
             </div>
             
@@ -1980,7 +2093,7 @@ export default function Alerts() {
             <h3 className="text-lg font-semibold mb-4">Last Reading</h3>
                           <div className="space-y-3">
                 <div className="flex justify-between">
-                  <span>{selected.status === 'Unconfigured' ? 'Status' : 'Time'}</span>
+                  <span>{(selected.status === 'offline' || selected.status === 'unknown') ? 'Status' : 'Time'}</span>
                   <span className="font-medium">
                     {selected.status === 'offline' || selected.status === 'unknown' 
                       ? getUnconfiguredReason(selected) 

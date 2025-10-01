@@ -101,7 +101,15 @@ export async function PUT(request) {
 
   } catch (error) {
     console.error('User preferences PUT error:', error);
-    return new Response(JSON.stringify({ error: 'Internal server error' }), { 
+    try {
+      console.error('Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+        meta: error?.meta
+      });
+    } catch {}
+    const message = error?.message || 'Internal server error';
+    return new Response(JSON.stringify({ error: message }), { 
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
