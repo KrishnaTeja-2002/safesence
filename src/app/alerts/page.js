@@ -156,8 +156,11 @@ function ThresholdChart({
   const [drag, setDrag] = useState(null); // 'min' | 'max' | null
 
   // Local data: prefer last 30 minutes if we can fetch them
-  const [localData, setLocalData] = useState(Array.isArray(data) ? data : []);
+  const [localData, setLocalData] = useState([]);
   const [localDataWithTimestamps, setLocalDataWithTimestamps] = useState([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(true);
 
   // Keep drafts in sync if parent values change while not editing
   useEffect(() => {
@@ -174,11 +177,19 @@ function ThresholdChart({
   // Fetch last 30 minutes of readings (and refresh periodically)
   const fetchRecent = useCallback(async () => {
     if (!sensorId) {
-      // fall back to prop data if available
+      // Only use prop data as fallback if no sensorId is provided
       setLocalData(Array.isArray(data) ? data : []);
       setLocalDataWithTimestamps([]);
+      setDataLoaded(true);
       return;
     }
+    
+    // Prevent duplicate API calls
+    if (isFetching) {
+      return;
+    }
+    
+    setIsFetching(true);
     try {
       const now = Date.now();
       const thirtyMinAgoISO = new Date(now - 30 * 60 * 1000).toISOString();
@@ -220,11 +231,17 @@ function ThresholdChart({
 
       setLocalData(vals.length ? vals : (Array.isArray(data) ? data : []));
       setLocalDataWithTimestamps(dataWithTimestamps);
+      setDataLoaded(true);
+      setInitialLoad(false); // Mark initial load as complete
     } catch (error) {
       console.error('Error fetching recent readings:', error);
       // keep existing data on error
+      setDataLoaded(true); // Still mark as loaded even on error to prevent infinite loading
+      setInitialLoad(false); // Mark initial load as complete even on error
+    } finally {
+      setIsFetching(false);
     }
-  }, [sensorId, unit, data, userTempScale, sensorType, localDataWithTimestamps]);
+  }, [sensorId, unit, data, userTempScale, sensorType, localDataWithTimestamps, isFetching]);
 
   useEffect(() => {
     fetchRecent();
@@ -547,11 +564,11 @@ function ThresholdChart({
       return;
     }
 
+    // Convert limits to sensor's metric units before saving to DB
+    let dbMin = nMin, dbMax = nMax, dbWarn = nWarn;
+    
     try {
       setSaveStatus('saving');
-      
-      // Convert limits to sensor's metric units before saving to DB
-      let dbMin = nMin, dbMax = nMax, dbWarn = nWarn;
       
       if (sensorType === 'temperature') {
         // Convert from user's preferred scale to sensor's metric unit
@@ -686,8 +703,24 @@ function ThresholdChart({
     (darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white text-gray-800 border-gray-300') +
     (isEditing ? '' : ' opacity-70 cursor-not-allowed');
 
-  // Show fallback message if no data
-  if (!Array.isArray(plotData) || plotData.length === 0) {
+  // Show loading state only during initial load
+  if (initialLoad && !dataLoaded) {
+    return (
+      <div ref={containerRef} className={containerStyles}>
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500 mx-auto mb-4"></div>
+            <div className={`text-sm ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+              Loading chart data...
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show fallback message if no data (only after initial load is complete)
+  if (dataLoaded && (!Array.isArray(plotData) || plotData.length === 0)) {
     return (
       <div ref={containerRef} className={containerStyles}>
         <div className="flex items-center justify-center h-full text-gray-500">
@@ -702,9 +735,9 @@ function ThresholdChart({
   }
 
   return (
-    <div ref={containerRef} className={containerStyles}>
+    <div ref={containerRef} className={`${containerStyles} relative`}>
       {/* Edit / Save / Cancel controls (top-right of the chart) */}
-      <div className="flex items-center gap-2 absolute right-0 -top-10 z-20">
+      <div className="flex items-center gap-3 absolute right-0 -top-12 z-20">
         {/* Edit controls - only visible when editable */}
         {editable && (
           <>
@@ -712,42 +745,42 @@ function ThresholdChart({
               <button
                 type="button"
                 onClick={startEdit}
-                className={`px-3 py-1.5 rounded text-sm font-medium border ${
+                className={`px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-all duration-200 shadow-lg hover:shadow-xl ${
                   darkMode
-                    ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
-                    : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
+                    ? 'bg-gradient-to-r from-slate-700 to-slate-800 text-white border-slate-600 hover:from-slate-600 hover:to-slate-700 hover:border-slate-500'
+                    : 'bg-gradient-to-r from-white to-slate-50 text-slate-800 border-slate-300 hover:from-slate-50 hover:to-white hover:border-slate-400'
                 }`}
                 title="Enable editing of limits"
               >
-                Edit limits
+                ✏️ Edit Limits
               </button>
             ) : (
               <>
                 <button
                   type="button"
                   onClick={cancelEdit}
-                  className={`px-3 py-1.5 rounded text-sm ${
-                    darkMode ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 shadow-lg hover:shadow-xl ${
+                    darkMode ? 'bg-gradient-to-r from-slate-600 to-slate-700 text-white hover:from-slate-500 hover:to-slate-600' : 'bg-gradient-to-r from-slate-200 to-slate-300 text-slate-800 hover:from-slate-100 hover:to-slate-200'
                   }`}
                 >
-                  Cancel
+                  ❌ Cancel
                 </button>
                 <button
                   type="button"
                   onClick={saveEdit}
                   disabled={!isValidLimits}
-                  className={`px-3 py-1.5 rounded text-sm font-semibold text-white ${
-                    darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all duration-200 shadow-lg hover:shadow-xl ${
+                    darkMode ? 'bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-500 hover:to-orange-600' : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-400 hover:to-orange-500'
                   } ${!isValidLimits ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
-                  {saveStatus === 'saving' ? 'Saving…' : 'Save'}
+                  {saveStatus === 'saving' ? '💾 Saving…' : '💾 Save'}
                 </button>
                 {/* Removed dev test buttons to keep UI DB-driven only */}
                 {saveStatus === 'error' && (
-                  <span className={darkMode ? 'text-red-300 text-xs' : 'text-red-600 text-xs'}>Save failed</span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${darkMode ? 'bg-red-900/50 text-red-300 border border-red-700' : 'bg-red-50 text-red-600 border border-red-200'}`}>❌ Save failed</span>
                 )}
                 {saveStatus === 'saved' && (
-                  <span className={darkMode ? 'text-green-300 text-xs' : 'text-green-600 text-xs'}>Saved</span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${darkMode ? 'bg-green-900/50 text-green-300 border border-green-700' : 'bg-green-50 text-green-600 border border-green-200'}`}>✅ Saved</span>
                 )}
               </>
             )}
@@ -756,7 +789,33 @@ function ThresholdChart({
       </div>
 
       <svg ref={svgRef} width={W} height={H} className="block">
-        <rect x={padL} y={padT} width={chartW} height={chartH} fill="#FFFFFF" stroke={strokeAxis} />
+        {/* Modern gradient background */}
+        <defs>
+          <linearGradient id="chartBg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={darkMode ? "#1e293b" : "#ffffff"} />
+            <stop offset="100%" stopColor={darkMode ? "#0f172a" : "#f8fafc"} />
+          </linearGradient>
+          <linearGradient id="gridLine" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={darkMode ? "#334155" : "#e2e8f0"} stopOpacity="0.3" />
+            <stop offset="50%" stopColor={darkMode ? "#475569" : "#cbd5e1"} stopOpacity="0.6" />
+            <stop offset="100%" stopColor={darkMode ? "#334155" : "#e2e8f0"} stopOpacity="0.3" />
+          </linearGradient>
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge> 
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+          <filter id="dataPointGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+            <feMerge> 
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+        <rect x={padL} y={padT} width={chartW} height={chartH} fill="url(#chartBg)" stroke={strokeAxis} strokeWidth="2" rx="8" ry="8" />
         
         {/* Grey shading for data gaps (2+ minutes without data) */}
         {dataGaps.map((gap, idx) => (
@@ -889,8 +948,8 @@ function ThresholdChart({
               }
               return ticks.map((t) => (
                 <g key={t}>
-                  <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
-                  <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
+                  <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={darkMode ? '#475569' : '#cbd5e1'} strokeWidth="1.5" />
+                  <text x={padL - 12} y={y(t) + 5} textAnchor="end" fontSize="13" fontWeight="500" fill={darkMode ? '#94a3b8' : '#64748b'}>
                     {t.toFixed(1)}%
                   </text>
                 </g>
@@ -922,8 +981,8 @@ function ThresholdChart({
               }
               return ticks.map((t) => (
                 <g key={t}>
-                  <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={strokeAxis} />
-                  <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="12" fill={tickText}>
+                  <line x1={padL - 6} x2={padL} y1={y(t)} y2={y(t)} stroke={darkMode ? '#475569' : '#cbd5e1'} strokeWidth="1.5" />
+                  <text x={padL - 12} y={y(t) + 5} textAnchor="end" fontSize="13" fontWeight="500" fill={darkMode ? '#94a3b8' : '#64748b'}>
                     {t.toFixed(1)}{userTempScale === 'C' ? '°C' : '°F'}
                   </text>
                 </g>
@@ -1002,11 +1061,11 @@ function ThresholdChart({
               return null;
             })()}
             
-            {/* Latest data point */}
+            {/* Latest data point with modern styling */}
             <circle 
               cx={getLatestX()} 
               cy={y(plotData[plotData.length - 1])} 
-              r="5" 
+              r="6" 
               fill={(() => {
                 const temp = plotData[plotData.length - 1];
                 if (min !== null && max !== null && warning !== null) {
@@ -1016,8 +1075,9 @@ function ThresholdChart({
                 }
                 return '#10B981'; // Green for good (default when no thresholds)
               })()}
-              stroke="#FFFFFF"
-              strokeWidth="1"
+              stroke={darkMode ? "#1f2937" : "#ffffff"}
+              strokeWidth="3"
+              filter="url(#dataPointGlow)"
             />
           </g>
         )}
@@ -1721,8 +1781,20 @@ export default function Alerts() {
   const SectionHeader = ({ icon, label, status }) => {
     const { section } = getStatusStyles(status, darkMode);
     return (
-      <div className={`${section} p-3 rounded flex items-center`}>
-        <span className="mr-3 text-xl">{icon}</span> {label}
+      <div className={`${section} p-4 rounded-2xl shadow-lg flex items-center justify-between`}>
+        <div className="flex items-center">
+          <span className="mr-3 text-xl">{icon}</span>
+          <span className="text-lg font-semibold">{label}</span>
+        </div>
+        <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+          status === 'alert' ? 'bg-red-100 text-red-800' :
+          status === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+          status === 'ok' ? 'bg-green-100 text-green-800' :
+          status === 'offline' ? 'bg-gray-100 text-gray-800' :
+          'bg-slate-100 text-slate-800'
+        }`}>
+          {status.toUpperCase()}
+        </div>
       </div>
     );
   };
@@ -1740,23 +1812,34 @@ export default function Alerts() {
     
     return (
       <div
-        className={`rounded-lg shadow p-4 border-l-4 ${cardClass(sensor.status, darkMode)} cursor-pointer hover:shadow-lg transition-shadow`}
+        className={`rounded-2xl shadow-xl p-6 border-l-4 ${cardClass(sensor.status, darkMode)} cursor-pointer hover:shadow-2xl transition-all duration-300 hover:scale-105`}
         onClick={() => handleAlertClick(sensor)}
       >
-        <div className="flex justify-between items-center">
-          <div>
-            <p className="font-semibold text-lg">{sensor.name}</p>
-            <span className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full align-middle ${
-              sensor.access_role === 'owner'
-                ? 'bg-green-200 text-green-800'
-                : sensor.access_role === 'admin'
-                ? 'bg-yellow-200 text-yellow-800'
-                : 'bg-gray-200 text-gray-800'
-            }`}>
-              {sensor.access_role}
-            </span>
-            <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-              <span className="mr-1">
+        <div className="flex justify-between items-start">
+          <div className="flex-1">
+            <h3 className="font-bold text-xl mb-2">{sensor.name}</h3>
+            <div className="flex items-center gap-2 mb-3">
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                sensor.access_role === 'owner'
+                  ? 'bg-green-100 text-green-800'
+                  : sensor.access_role === 'admin'
+                  ? 'bg-yellow-100 text-yellow-800'
+                  : 'bg-slate-100 text-slate-800'
+              }`}>
+                {sensor.access_role}
+              </span>
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                sensor.status === 'alert' ? 'bg-red-100 text-red-800' :
+                sensor.status === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                sensor.status === 'ok' ? 'bg-green-100 text-green-800' :
+                sensor.status === 'offline' ? 'bg-gray-100 text-gray-800' :
+                'bg-slate-100 text-slate-800'
+              }`}>
+                {sensor.status.toUpperCase()}
+              </span>
+            </div>
+            <p className={`text-sm flex items-center ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+              <span className="mr-2">
                 {sensor.status === 'offline' ? '📡' : sensor.status === 'unknown' ? '❓' : '🕐'}
               </span>
               {sensor.status === 'offline' && offlineReason 
@@ -1764,8 +1847,13 @@ export default function Alerts() {
                 : sensor.lastReading}
             </p>
           </div>
-          <div className="text-right">
-            <div className={`${value} text-xl mb-1 font-bold`}>{sensor.sensor_type === 'humidity' ? `💧 ${display}` : `🌡️ ${display}`}</div>
+          <div className="text-right ml-4">
+            <div className={`${value} text-2xl font-bold mb-1`}>
+              {sensor.sensor_type === 'humidity' ? `💧 ${display}` : `🌡️ ${display}`}
+            </div>
+            <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              {sensor.sensor_type === 'humidity' ? 'Humidity' : 'Temperature'}
+            </div>
           </div>
         </div>
       </div>
@@ -1790,16 +1878,27 @@ export default function Alerts() {
 
   /* -------------------- Views -------------------- */
   const renderAlertsView = () => (
-    <main className="flex-1 p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-bold">Alerts</h2>
+    <main className="flex-1 p-8 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800">
+      <div className="flex justify-between items-center mb-10">
+        <div>
+          <h1 className="text-5xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+            Alerts
+          </h1>
+          <p className={`text-xl mt-2 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+            Monitor and manage sensor alerts
+          </p>
+        </div>
         <div className="flex items-center space-x-4">
-          <div className="flex items-center gap-2">
-            <label className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} text-sm`}>Role:</label>
+          <div className="flex items-center space-x-3">
+            <span className={`text-sm font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>Filter by role:</span>
             <select
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
-              className={`border rounded px-2 py-1 ${darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white border-gray-300'}`}
+              className={`border rounded-xl px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                darkMode 
+                  ? 'bg-slate-800 text-slate-200 border-slate-600 hover:border-slate-500 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20' 
+                  : 'bg-white text-slate-800 border-slate-300 hover:border-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20'
+              }`}
             >
               <option value="all">All</option>
               <option value="owned">Owned</option>
@@ -1807,17 +1906,17 @@ export default function Alerts() {
               <option value="viewer">Viewer</option>
             </select>
           </div>
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {error && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <button
             onClick={() => {
               try { localStorage.removeItem('auth-token'); } catch {};
               router.push('/login');
             }}
-            className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
+            className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 shadow-lg hover:shadow-xl`}
           >
             Log out
           </button>
-          <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? 'bg-amber-700' : ''}`}>
+          <div className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg`}>
             {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
           </div>
         </div>
@@ -1834,15 +1933,23 @@ export default function Alerts() {
           const filtered = streams.filter(roleMatches);
           const inStatus = (status) => filtered.filter((s) => s.status === status);
           const sections = [
-            { icon: '🚨', label: 'Alert', status: 'alert' },
-            { icon: '⚠️', label: 'Warning', status: 'warning' },
-            { icon: '✅', label: 'OK', status: 'ok' },
-            { icon: '📡', label: 'Sensor Offline', status: 'offline' },
-            { icon: '❓', label: 'Unknown', status: 'unknown' }
+            { icon: '', label: 'Alert', status: 'alert' },
+            { icon: '', label: 'Warning', status: 'warning' },
+            { icon: '', label: 'OK', status: 'ok' },
+            { icon: '', label: 'Sensor Offline', status: 'offline' },
+            { icon: '', label: 'Unknown', status: 'unknown' }
           ];
+          
+          // Separate sections with alerts from those without
+          const sectionsWithAlerts = sections.filter(sec => inStatus(sec.status).length > 0);
+          const sectionsWithoutAlerts = sections.filter(sec => inStatus(sec.status).length === 0);
+          
+          // Combine: sections with alerts first, then sections without alerts
+          const orderedSections = [...sectionsWithAlerts, ...sectionsWithoutAlerts];
+          
           return (
             <>
-              {sections.map((sec) => (
+              {orderedSections.map((sec) => (
                 <React.Fragment key={sec.status}>
                   <SectionHeader icon={sec.icon} label={sec.label} status={sec.status} />
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1873,16 +1980,27 @@ export default function Alerts() {
 
 
     return (
-      <main className="flex-1 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
+      <main className="flex-1 p-8 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800">
+        <div className="flex items-center justify-between mb-10">
+          <div className="flex items-center gap-4">
             <button
               onClick={() => { setCurrentView('alerts'); setSelectedId(null); }}
-              className={`px-3 py-2 rounded border ${darkMode ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'}`}
+              className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 border ${
+                darkMode 
+                  ? 'bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-slate-500' 
+                  : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
+              }`}
             >
               ← Back
             </button>
-            <h2 className="text-3xl font-bold">Alert Detail</h2>
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+                Alert Detail
+              </h1>
+              <p className={`text-lg mt-2 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                {selected.name} - {selected.sensor_type}
+              </p>
+            </div>
           </div>
           <div className="flex items-center space-x-4">
             <button
@@ -1890,53 +2008,89 @@ export default function Alerts() {
                 try { localStorage.removeItem('auth-token'); } catch {};
                 router.push('/login');
               }}
-              className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
+              className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 shadow-lg hover:shadow-xl`}
             >
               Log out
             </button>
-            <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? 'bg-amber-700' : ''}`}>
+            <div className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg`}>
               {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
             </div>
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className={`${getStatusStyles(selected.status, darkMode).section} p-3 rounded flex items-center`}>
-            <span className="mr-3 text-xl">
-              {selected.status === 'alert'
-                ? '🚨'
-                : selected.status === 'warning'
-                ? '⚠️'
-                : selected.status === 'ok'
-                ? '✅'
-                : selected.status === 'offline'
-                ? '📡'
-                : '❓'}
-            </span>
-            {selected.status}
+        <div className="space-y-8">
+          {/* Status Header */}
+          <div className={`${getStatusStyles(selected.status, darkMode).section} p-6 rounded-2xl shadow-xl flex items-center justify-between`}>
+            <div className="flex items-center">
+              <span className="mr-4 text-2xl">
+                {selected.status === 'alert'
+                  ? '🚨'
+                  : selected.status === 'warning'
+                  ? '⚠️'
+                  : selected.status === 'ok'
+                  ? '✅'
+                  : selected.status === 'offline'
+                  ? '📡'
+                  : '❓'}
+              </span>
+              <div>
+                <h2 className="text-2xl font-bold">{selected.status.toUpperCase()}</h2>
+                <p className={`text-sm ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                  Sensor Status
+                </p>
+              </div>
+            </div>
+            <div className={`px-4 py-2 rounded-full text-sm font-medium ${
+              selected.status === 'alert' ? 'bg-red-100 text-red-800' :
+              selected.status === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+              selected.status === 'ok' ? 'bg-green-100 text-green-800' :
+              selected.status === 'offline' ? 'bg-gray-100 text-gray-800' :
+              'bg-slate-100 text-slate-800'
+            }`}>
+              {selected.status.toUpperCase()}
+            </div>
           </div>
 
-          <div className={`rounded-lg shadow p-4 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
-            <div className="flex justify-between items-center">
-                          <div>
-              <p className="font-semibold text-lg">{selected.name}</p>
-
-              <p className={`text-sm flex items-center mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                <span className="mr-1">
-                  {selected.status === 'offline' || selected.status === 'unknown' ? '⚠️' : '🕐'}
-                </span>
-                {(selected.status === 'offline' || selected.status === 'unknown') 
-                  ? getUnconfiguredReason(selected) 
-                  : selected.lastReading}
-              </p>
-            </div>
-              <div className="flex items-center gap-3">
-                <div className={`${getStatusStyles(selected.status, darkMode).value} text-xl mb-1 font-bold`}>
+          {/* Sensor Info Card */}
+          <div className={`rounded-2xl shadow-xl p-6 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'}`}>
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <h3 className="font-bold text-2xl mb-2">{selected.name}</h3>
+                <p className={`text-sm flex items-center mb-4 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                  <span className="mr-2">
+                    {selected.status === 'offline' || selected.status === 'unknown' ? '⚠️' : '🕐'}
+                  </span>
+                  {(selected.status === 'offline' || selected.status === 'unknown') 
+                    ? getUnconfiguredReason(selected) 
+                    : selected.lastReading}
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    selected.access_role === 'owner'
+                      ? 'bg-green-100 text-green-800'
+                      : selected.access_role === 'admin'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-slate-100 text-slate-800'
+                  }`}>
+                    {selected.access_role}
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    selected.sensor_type === 'humidity' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
+                  }`}>
+                    {selected.sensor_type}
+                  </span>
+                </div>
+              </div>
+              <div className="text-right ml-6">
+                <div className={`${getStatusStyles(selected.status, darkMode).value} text-3xl mb-2 font-bold`}>
                   {selected.status === 'offline' || selected.status === 'unknown'
                     ? 'NA'
                     : (selected.sensor_type === 'humidity'
                       ? `💧 ${selected.temp != null ? selected.temp.toFixed(1) : '—'}%`
                       : `🌡️ ${selected.temp != null ? convertForDisplay(selected.temp, userTempScale).toFixed(1) : '—'}°${userTempScale}`)}
+                </div>
+                <div className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Current Reading
                 </div>
                 {(selected.access_role === 'owner' || selected.access_role === 'admin') && (
                   <button
@@ -1947,10 +2101,10 @@ export default function Alerts() {
                       setNewSensorType(metric === '%' ? 'humidity' : 'temperature');
                       setShowSettings(true); 
                     }}
-                    className={`px-3 py-1.5 rounded text-sm font-medium border ${
+                    className={`mt-3 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
                       darkMode
-                        ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600'
-                        : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100'
+                        ? 'bg-slate-700 text-slate-200 border border-slate-600 hover:bg-slate-600'
+                        : 'bg-slate-100 text-slate-800 border border-slate-300 hover:bg-slate-200'
                     }`}
                     title="Open sensor settings"
                   >
@@ -1962,90 +2116,121 @@ export default function Alerts() {
           </div>
 
           {/* Chart */}
-          <div className={`rounded-lg shadow p-6 border-2 border-blue-400 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {selected.sensor_type === 'humidity' ? 'Humidity History' : 'Temperature History'} (Last 30 Minutes)
+          <div className={`rounded-3xl shadow-2xl p-10 border border-slate-200/50 backdrop-blur-sm ${darkMode ? 'bg-gradient-to-br from-slate-800/95 to-slate-900/95 text-white border-slate-700/50' : 'bg-gradient-to-br from-white/95 to-slate-50/95'}`}>
+            <div className="flex justify-between items-start mb-8">
+              <div className="space-y-2">
+                <h3 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  {selected.sensor_type === 'humidity' ? 'Humidity History' : 'Temperature History'}
                 </h3>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {selected.name} • Unit: {selected.sensor_type === 'humidity' ? '%' : `°${userTempScale}`}
+                <div className="flex items-center space-x-4">
+                  <p className={`text-lg font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                    Last 30 Minutes
+                  </p>
+                  <div className={`px-3 py-1 rounded-full text-sm font-semibold ${darkMode ? 'bg-slate-700/50 text-slate-200' : 'bg-slate-100 text-slate-700'}`}>
+                    {selected.name}
+                  </div>
+                </div>
+                <p className={`text-sm font-medium ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Unit: {selected.sensor_type === 'humidity' ? '%' : `°${userTempScale}`}
                 </p>
               </div>
-              <div className="text-sm">
-                {t.min !== null && t.max !== null ? (() => {
-                  const lo = Math.min(t.min, t.max);
-                  const hi = Math.max(t.min, t.max);
-                  const unitLabel = selected.sensor_type === 'humidity' ? '%' : `°${userTempScale}`;
-                  return (
-                    <>Limits: <strong>{hi.toFixed(1)}{unitLabel}</strong> – <strong>{lo.toFixed(1)}{unitLabel}</strong></>
-                  );
-                })() : (
-                  <>No limits set</>
-                )}
+              <div className={`text-right px-6 py-4 rounded-2xl shadow-lg border ${darkMode ? 'bg-slate-700/50 border-slate-600/50' : 'bg-white/80 border-slate-200/50'}`}>
+                <div className="text-sm font-semibold">
+                  {t.min !== null && t.max !== null ? (() => {
+                    const lo = Math.min(t.min, t.max);
+                    const hi = Math.max(t.min, t.max);
+                    const unitLabel = selected.sensor_type === 'humidity' ? '%' : `°${userTempScale}`;
+                    return (
+                      <div className="space-y-1">
+                        <div className="text-xs font-medium opacity-70">Threshold Range</div>
+                        <div className="text-base font-bold">
+                          <span className="text-red-500">{hi.toFixed(1)}{unitLabel}</span>
+                          <span className="mx-2 text-slate-400">–</span>
+                          <span className="text-blue-500">{lo.toFixed(1)}{unitLabel}</span>
+                        </div>
+                      </div>
+                    );
+                  })() : (
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium opacity-70">Threshold Range</div>
+                      <div className="text-base font-bold text-slate-500">No limits set</div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
-            <div className="flex justify-start">
-              <ThresholdChart
-                data={data}
-                min={t.min}
-                max={t.max}
-                warning={t.warning}
-                darkMode={darkMode}
-                onChange={({ min, max, warning }) => updateThresholdLocal(selected.sensor_id, { min, max, warning })}
-                onSave={refreshSensorData}
-                sensorId={selected.sensor_id}
-                unit={selected.unit}
-                editable={selected.access_role === 'owner' || selected.access_role === 'admin'}
-                userTempScale={userTempScale}
-                sensorType={selected.sensor_type}
-                timeZone={userTimeZone}
-                deviceId={selected.device_id}
-              />
+            <div className="relative">
+              <div className={`absolute inset-0 rounded-2xl ${darkMode ? 'bg-gradient-to-br from-slate-800/20 to-slate-900/20' : 'bg-gradient-to-br from-white/20 to-slate-50/20'} backdrop-blur-sm border border-slate-200/30`}></div>
+              <div className="relative z-10 p-6">
+                <ThresholdChart
+                  data={data}
+                  min={t.min}
+                  max={t.max}
+                  warning={t.warning}
+                  darkMode={darkMode}
+                  onChange={({ min, max, warning }) => updateThresholdLocal(selected.sensor_id, { min, max, warning })}
+                  onSave={refreshSensorData}
+                  sensorId={selected.sensor_id}
+                  unit={selected.unit}
+                  editable={selected.access_role === 'owner' || selected.access_role === 'admin'}
+                  userTempScale={userTempScale}
+                  sensorType={selected.sensor_type}
+                  timeZone={userTimeZone}
+                  deviceId={selected.device_id}
+                />
+              </div>
             </div>
             
             {/* Chart Legend */}
-            <div className="mt-4 flex flex-wrap gap-4 text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 bg-gray-400 opacity-30 rounded"></div>
-                <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                  No data
-                </span>
+            <div className={`mt-8 p-6 rounded-2xl border backdrop-blur-sm ${darkMode ? 'bg-slate-700/30 border-slate-600/30' : 'bg-slate-50/80 border-slate-200/50'}`}>
+              <h4 className={`text-sm font-bold mb-4 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+                Chart Legend
+              </h4>
+              <div className="flex flex-wrap gap-6 text-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 bg-gradient-to-r from-gray-400 to-gray-500 opacity-40 rounded-lg shadow-sm"></div>
+                  <span className={`font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                    No data
+                  </span>
+                </div>
+                {t.min !== null && t.max !== null && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 bg-gradient-to-r from-red-500 to-red-600 opacity-25 rounded-lg shadow-sm"></div>
+                      <span className={`font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                        Danger zone (outside limits)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 bg-gradient-to-r from-orange-500 to-yellow-500 opacity-20 rounded-lg shadow-sm"></div>
+                      <span className={`font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                        Warning zone
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
-              {t.min !== null && t.max !== null && (
-                <>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-red-500 opacity-22 rounded"></div>
-                    <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                      Danger zone (outside limits)
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 bg-orange-500 opacity-15 rounded"></div>
-                    <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                      Warning zone
-                    </span>
-                  </div>
-                </>
-              )}
             </div>
           </div>
 
           {/* Alert Message and Delivery Options */}
-          <div className={`${darkMode ? 'bg-gray-800 text-white' : 'bg-white'} rounded-lg shadow p-6`}>
-            <h3 className="text-lg font-semibold mb-4">Alert Message</h3>
-            <input
-              type="text"
-              value={(alertOptions[selected.id]?.message) ?? ''}
-              onChange={(e) => updateAlertOptionsLocal(selected.sensor_id, { message: e.target.value })}
-              placeholder="Ex: My (Sensor Name): Temperature above 50°F"
-              className={`border rounded px-3 py-3 w-full ${darkMode ? 'bg-gray-700 text-white border-gray-600 placeholder-gray-400 focus:border-orange-500' : 'bg-white border-gray-300 placeholder-gray-400 focus:border-orange-500'} focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
-            />
+          <div className={`${darkMode ? 'bg-slate-800 text-white' : 'bg-white'} rounded-2xl shadow-xl p-8`}>
+            <h3 className="text-2xl font-bold mb-6">Alert Configuration</h3>
+            <div className="mb-8">
+              <label className="block text-lg font-semibold mb-3">Alert Message</label>
+              <input
+                type="text"
+                value={(alertOptions[selected.id]?.message) ?? ''}
+                onChange={(e) => updateAlertOptionsLocal(selected.sensor_id, { message: e.target.value })}
+                placeholder="Ex: My (Sensor Name): Temperature above 50°F"
+                className={`border rounded-xl px-4 py-3 w-full text-lg ${darkMode ? 'bg-slate-700 text-white border-slate-600 placeholder-slate-400 focus:border-orange-500' : 'bg-white border-slate-300 placeholder-slate-400 focus:border-orange-500'} focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+              />
+            </div>
 
-            <div className="mt-8 space-y-8">
+            <div className="space-y-8">
               {/* Email toggle */}
-              <div className="flex items-center gap-6">
+              <div className="flex items-center gap-6 p-4 rounded-xl border border-slate-200">
                 <button
                   type="button"
                   onClick={async () => {
@@ -2056,19 +2241,19 @@ export default function Alerts() {
                     updateAlertOptionsLocal(selected.sensor_id, { email: newEmailValue });
                     await saveAlertPreferences(selected.sensor_id, { email_alert: newEmailValue });
                   }}
-                  className={`relative inline-flex items-center transition-colors rounded-full w-24 h-12 ${(alertOptions[selected.id]?.email) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-gray-600' : 'bg-gray-300')}`}
+                  className={`relative inline-flex items-center transition-all duration-200 rounded-full w-24 h-12 ${(alertOptions[selected.id]?.email) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-slate-600' : 'bg-slate-300')}`}
                   aria-pressed={(alertOptions[selected.id]?.email) ? true : false}
                 >
                   <span className={`inline-block w-8 h-8 bg-white rounded-full transform transition-transform ${(alertOptions[selected.id]?.email) ? 'translate-x-12' : 'translate-x-2'}`} />
                 </button>
                 <div>
-                  <div className="font-medium">Email Alerts</div>
-                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Receive email notifications when this sensor triggers alerts</div>
+                  <div className="font-semibold text-lg">Email Alerts</div>
+                  <div className={`${darkMode ? 'text-slate-300' : 'text-slate-600'} text-sm`}>Receive email notifications when this sensor triggers alerts</div>
                 </div>
               </div>
 
               {/* SMS toggle */}
-              <div className="flex items-center gap-6">
+              <div className="flex items-center gap-6 p-4 rounded-xl border border-slate-200">
                 <button
                   type="button"
                   onClick={async () => {
@@ -2076,43 +2261,45 @@ export default function Alerts() {
                     updateAlertOptionsLocal(selected.sensor_id, { sms: newSmsValue });
                     await saveAlertPreferences(selected.sensor_id, { mobile_alert: newSmsValue });
                   }}
-                  className={`relative inline-flex items-center transition-colors rounded-full w-24 h-12 ${(((alertOptions[selected.id]?.sms) ?? true)) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-gray-600' : 'bg-gray-300')}`}
+                  className={`relative inline-flex items-center transition-all duration-200 rounded-full w-24 h-12 ${(((alertOptions[selected.id]?.sms) ?? true)) ? (darkMode ? 'bg-orange-600' : 'bg-orange-500') : (darkMode ? 'bg-slate-600' : 'bg-slate-300')}`}
                   aria-pressed={(((alertOptions[selected.id]?.sms) ?? true)) ? true : false}
                 >
                   <span className={`inline-block w-8 h-8 bg-white rounded-full transform transition-transform ${(((alertOptions[selected.id]?.sms) ?? true)) ? 'translate-x-12' : 'translate-x-2'}`} />
                 </button>
                 <div>
-                  <div className="font-medium">Mobile Alerts</div>
-                  <div className={`${darkMode ? 'text-gray-400' : 'text-gray-500'} text-sm`}>Receive mobile/push notifications when this sensor triggers alerts</div>
+                  <div className="font-semibold text-lg">Mobile Alerts</div>
+                  <div className={`${darkMode ? 'text-slate-300' : 'text-slate-600'} text-sm`}>Receive mobile/push notifications when this sensor triggers alerts</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
-            <h3 className="text-lg font-semibold mb-4">Last Reading</h3>
-                          <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span>{(selected.status === 'offline' || selected.status === 'unknown') ? 'Status' : 'Time'}</span>
-                  <span className="font-medium">
-                    {selected.status === 'offline' || selected.status === 'unknown' 
-                      ? getUnconfiguredReason(selected) 
-                      : selected.lastReading}
-                  </span>
+          <div className={`rounded-2xl shadow-xl p-8 ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'}`}>
+            <h3 className="text-2xl font-bold mb-6">Sensor Details</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="text-sm font-medium text-slate-500 mb-1">{(selected.status === 'offline' || selected.status === 'unknown') ? 'Status' : 'Last Reading Time'}</div>
+                <div className="text-lg font-semibold">
+                  {selected.status === 'offline' || selected.status === 'unknown' 
+                    ? getUnconfiguredReason(selected) 
+                    : selected.lastReading}
                 </div>
-              <div className="flex justify-between">
-                <span>Threshold</span>
-                <span className="font-medium">
+              </div>
+              
+              <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="text-sm font-medium text-slate-500 mb-1">Threshold Range</div>
+                <div className="text-lg font-semibold">
                   {Number.isFinite(t.min) && Number.isFinite(t.max)
                     ? (selected.sensor_type === 'humidity'
                       ? `${t.min}% - ${t.max}%`
                       : `${convertForDisplay(t.min, userTempScale).toFixed(0)}°${userTempScale} - ${convertForDisplay(t.max, userTempScale).toFixed(0)}°${userTempScale}`)
                     : 'Not set'}
-                </span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span>{selected.sensor_type === 'humidity' ? 'Humidity' : 'Air Temperature'}</span>
-                <span className="font-medium">
+              
+              <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="text-sm font-medium text-slate-500 mb-1">{selected.sensor_type === 'humidity' ? 'Current Humidity' : 'Current Temperature'}</div>
+                <div className="text-lg font-semibold">
                   {selected.status === 'offline' || selected.status === 'unknown'
                     ? 'NA'
                     : (selected.temp != null
@@ -2120,11 +2307,12 @@ export default function Alerts() {
                         ? `${selected.temp.toFixed(1)}%`
                         : `${convertForDisplay(selected.temp, userTempScale).toFixed(1)}°${userTempScale}`)
                       : '—')}
-                </span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span>Sensor ID</span>
-                <span className="font-medium font-mono text-sm">{selected.sensor_id}</span>
+              
+              <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="text-sm font-medium text-slate-500 mb-1">Sensor ID</div>
+                <div className="text-lg font-semibold font-mono">{selected.sensor_id}</div>
               </div>
             </div>
           </div>
@@ -2132,83 +2320,91 @@ export default function Alerts() {
           {/* SETTINGS MODAL */}
           {showSettings && (
             <div className="fixed inset-0 z-50 flex items-center justify-center">
-              <div className="absolute inset-0 bg-black/40" onClick={() => setShowSettings(false)} />
-              <div className={`relative w-full max-w-lg mx-4 rounded-xl shadow-lg ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'} p-6`}>
-                <h3 className="text-lg font-semibold mb-4">Sensor Settings</h3>
+              <div className="absolute inset-0 bg-black/60" onClick={() => setShowSettings(false)} />
+              <div className={`relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'} p-8`}>
+                <h3 className="text-3xl font-bold mb-6">Sensor Settings</h3>
 
-                <label className="block text-sm font-medium mb-2">Sensor name</label>
-                <input
-                  type="text"
-                  value={newSensorName}
-                  onChange={(e) => setNewSensorName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') saveSensorName(); }}
-                  className={`border rounded px-3 py-2 w-full mb-4 ${
-                    darkMode
-                      ? 'bg-gray-700 text-white border-gray-600 focus:border-orange-500'
-                      : 'bg-white border-gray-300 focus:border-orange-500'
-                  } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
-                  placeholder="Enter sensor display name"
-                />
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-lg font-semibold mb-3">Sensor Name</label>
+                    <input
+                      type="text"
+                      value={newSensorName}
+                      onChange={(e) => setNewSensorName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveSensorName(); }}
+                      className={`border rounded-xl px-4 py-3 w-full text-lg ${
+                        darkMode
+                          ? 'bg-slate-700 text-white border-slate-600 focus:border-orange-500'
+                          : 'bg-white border-slate-300 focus:border-orange-500'
+                      } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+                      placeholder="Enter sensor display name"
+                    />
+                  </div>
 
-                <label className="block text-sm font-medium mb-2">Sensor Type</label>
-                <select
-                  value={newSensorType}
-                  onChange={(e) => {
-                    const type = e.target.value;
-                    setNewSensorType(type);
-                    // Auto-set metric based on sensor type
-                    if (type === 'humidity') {
-                      setNewMetric('%');
-                    } else {
-                      setNewMetric('F'); // Default to Fahrenheit for temperature
-                    }
-                  }}
-                  className={`border rounded px-3 py-2 w-full mb-4 ${
-                    darkMode
-                      ? 'bg-gray-700 text-white border-gray-600 focus:border-orange-500'
-                      : 'bg-white border-gray-300 focus:border-orange-500'
-                  } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
-                >
-                  <option value="temperature">Temperature</option>
-                  <option value="humidity">Humidity</option>
-                </select>
+                  <div>
+                    <label className="block text-lg font-semibold mb-3">Sensor Type</label>
+                    <select
+                      value={newSensorType}
+                      onChange={(e) => {
+                        const type = e.target.value;
+                        setNewSensorType(type);
+                        // Auto-set metric based on sensor type
+                        if (type === 'humidity') {
+                          setNewMetric('%');
+                        } else {
+                          setNewMetric('F'); // Default to Fahrenheit for temperature
+                        }
+                      }}
+                      className={`border rounded-xl px-4 py-3 w-full text-lg ${
+                        darkMode
+                          ? 'bg-slate-700 text-white border-slate-600 focus:border-orange-500'
+                          : 'bg-white border-slate-300 focus:border-orange-500'
+                      } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+                    >
+                      <option value="temperature">Temperature</option>
+                      <option value="humidity">Humidity</option>
+                    </select>
+                  </div>
 
-                <label className="block text-sm font-medium mb-2">Metric (sensor unit)</label>
-                <select
-                  value={newMetric}
-                  onChange={(e) => {
-                    const metric = e.target.value;
-                    setNewMetric(metric);
-                    // Auto-set sensor type based on metric
-                    setNewSensorType(metric === '%' ? 'humidity' : 'temperature');
-                  }}
-                  className={`border rounded px-3 py-2 w-full mb-2 ${
-                    darkMode
-                      ? 'bg-gray-700 text-white border-gray-600 focus:border-orange-500'
-                      : 'bg-white border-gray-300 focus:border-orange-500'
-                  } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
-                >
-                  {newSensorType === 'humidity' ? (
-                    <option value="%">Percentage (%)</option>
-                  ) : (
-                    <>
-                      <option value="F">Fahrenheit (°F)</option>
-                      <option value="C">Celsius (°C)</option>
-                    </>
-                  )}
-                </select>
-                <p className={`text-xs mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  {newSensorType === 'humidity' 
-                    ? 'Humidity sensors measure moisture levels in percentage.'
-                    : 'The dashboard always displays temperatures in °F. If your sensor reports in °C, we\'ll convert to °F for display.'
-                  }
-                </p>
+                  <div>
+                    <label className="block text-lg font-semibold mb-3">Metric (sensor unit)</label>
+                    <select
+                      value={newMetric}
+                      onChange={(e) => {
+                        const metric = e.target.value;
+                        setNewMetric(metric);
+                        // Auto-set sensor type based on metric
+                        setNewSensorType(metric === '%' ? 'humidity' : 'temperature');
+                      }}
+                      className={`border rounded-xl px-4 py-3 w-full text-lg ${
+                        darkMode
+                          ? 'bg-slate-700 text-white border-slate-600 focus:border-orange-500'
+                          : 'bg-white border-slate-300 focus:border-orange-500'
+                      } focus:outline-none focus:ring-2 focus:ring-orange-500/20`}
+                    >
+                      {newSensorType === 'humidity' ? (
+                        <option value="%">Percentage (%)</option>
+                      ) : (
+                        <>
+                          <option value="F">Fahrenheit (°F)</option>
+                          <option value="C">Celsius (°C)</option>
+                        </>
+                      )}
+                    </select>
+                    <p className={`text-sm mt-2 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                      {newSensorType === 'humidity' 
+                        ? 'Humidity sensors measure moisture levels in percentage.'
+                        : 'The dashboard always displays temperatures in °F. If your sensor reports in °C, we\'ll convert to °F for display.'
+                      }
+                    </p>
+                  </div>
+                </div>
 
-                <div className="flex justify-end gap-3">
+                <div className="flex justify-end gap-4 mt-8">
                   <button
                     onClick={() => setShowSettings(false)}
-                    className={`px-4 py-2 rounded ${
-                      darkMode ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                    className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 ${
+                      darkMode ? 'bg-slate-600 text-white hover:bg-slate-700' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'
                     }`}
                   >
                     Cancel
@@ -2219,9 +2415,9 @@ export default function Alerts() {
                       savingSensorName ||
                       !newSensorName.trim()
                     }
-                    className={`px-4 py-2 rounded font-semibold text-white ${
-                      darkMode ? 'bg-orange-700 hover:bg-orange-800 disabled:bg-gray-600'
-                               : 'bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300'
+                    className={`px-6 py-3 rounded-xl font-semibold text-white transition-all duration-200 ${
+                      darkMode ? 'bg-orange-700 hover:bg-orange-800 disabled:bg-slate-600'
+                               : 'bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300'
                     }`}
                   >
                     {savingSensorName ? 'Saving…' : 'Save'}
@@ -2238,7 +2434,41 @@ export default function Alerts() {
   /* -------------------- Render -------------------- */
   return (
     <ErrorBoundary darkMode={darkMode}>
-      <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-800'}`}>
+      <style jsx global>{`
+        /* Modern scrollbar styling */
+        ::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+          background: ${darkMode ? '#1e293b' : '#f1f5f9'};
+          border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+          background: linear-gradient(45deg, ${darkMode ? '#475569' : '#94a3b8'}, ${darkMode ? '#64748b' : '#cbd5e1'});
+          border-radius: 10px;
+          border: 2px solid ${darkMode ? '#1e293b' : '#f1f5f9'};
+          transition: all 0.3s ease;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+          background: linear-gradient(45deg, ${darkMode ? '#64748b' : '#cbd5e1'}, ${darkMode ? '#94a3b8' : '#e2e8f0'});
+          transform: scale(1.1);
+        }
+        
+        ::-webkit-scrollbar-corner {
+          background: ${darkMode ? '#1e293b' : '#f1f5f9'};
+        }
+        
+        /* Firefox scrollbar styling */
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: ${darkMode ? '#475569 #1e293b' : '#94a3b8 #f1f5f9'};
+        }
+      `}</style>
+      <div className={`flex min-h-screen ${darkMode ? 'bg-slate-900 text-white' : 'bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800'} scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800`}>
         <Sidebar darkMode={darkMode} activeKey="alerts" />
         {currentView === 'alerts' && renderAlertsView()}
         {currentView === 'alertDetail' && renderAlertDetailView()}

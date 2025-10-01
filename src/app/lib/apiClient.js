@@ -132,14 +132,25 @@ class ApiClient {
   }
 
   async updateAlertThresholds(sensorId, thresholds, deviceId) {
-    return this.request('/alerts', {
-      method: 'PUT',
-      body: JSON.stringify({
-        sensor_id: sensorId,
-        device_id: deviceId ?? thresholds?.device_id,
-        ...thresholds
-      })
-    });
+    console.log('updateAlertThresholds called with:', { sensorId, thresholds, deviceId });
+    const requestBody = {
+      sensor_id: sensorId,
+      device_id: deviceId ?? thresholds?.device_id,
+      ...thresholds
+    };
+    console.log('Request body:', requestBody);
+    
+    try {
+      const result = await this.request('/alerts', {
+        method: 'PUT',
+        body: JSON.stringify(requestBody)
+      });
+      console.log('updateAlertThresholds success:', result);
+      return result;
+    } catch (error) {
+      console.error('updateAlertThresholds error:', error);
+      throw error;
+    }
   }
 
   // Sharing API

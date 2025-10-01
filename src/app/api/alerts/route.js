@@ -50,8 +50,10 @@ export async function PUT(request) {
     const { db, user } = authResult;
     const body = await request.json();
     console.log('Request body:', body);
+    console.log('Request headers:', Object.fromEntries(request.headers.entries()));
 
     const { sensor_id, device_id, min_limit, max_limit, warning_limit, sensor_name, metric, sensor_type } = body;
+    console.log('Extracted parameters:', { sensor_id, device_id, min_limit, max_limit, warning_limit, sensor_name, metric, sensor_type });
 
     if (!sensor_id || !device_id) {
       console.error('Missing sensor_id');
@@ -71,7 +73,8 @@ export async function PUT(request) {
     }
 
     // Check write permissions
-    const canWrite = await db.canUserWriteToSensor(user.id, sensor_id, device_id);
+    const userEmail = (user.email || '').toLowerCase();
+    const canWrite = await db.canUserWriteToSensor(user.id, sensor_id, device_id, userEmail);
     if (!canWrite) {
       return new Response(JSON.stringify({ error: 'Forbidden: insufficient permissions' }), {
         status: 403,
