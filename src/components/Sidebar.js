@@ -12,7 +12,7 @@ export default function Sidebar() {
   const menuItems = [
     { icon: Home, label: 'Dashboard', path: '/dashboard' },
     { icon: AlertTriangle, label: 'Alerts', path: '/alerts' },
-    { icon: Radio, label: 'Sensors', path: '/sensors' },
+    { icon: Radio, label: 'Devices', path: '/devices' },
     { icon: Clock, label: 'History', path: '/history' },
     { icon: Users, label: 'Team', path: '/teams' },
     { icon: Settings, label: 'Account', path: '/account' },

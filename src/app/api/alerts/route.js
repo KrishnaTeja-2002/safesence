@@ -50,19 +50,21 @@ export async function PUT(request) {
     const { db, user } = authResult;
     const body = await request.json();
     console.log('Request body:', body);
+    console.log('Request headers:', Object.fromEntries(request.headers.entries()));
 
-    const { sensor_id, min_limit, max_limit, warning_limit, sensor_name, metric, sensor_type, updated_at } = body;
+    const { sensor_id, device_id, min_limit, max_limit, warning_limit, sensor_name, metric, sensor_type } = body;
+    console.log('Extracted parameters:', { sensor_id, device_id, min_limit, max_limit, warning_limit, sensor_name, metric, sensor_type });
 
-    if (!sensor_id) {
+    if (!sensor_id || !device_id) {
       console.error('Missing sensor_id');
-      return new Response(JSON.stringify({ error: 'sensor_id is required' }), { 
+      return new Response(JSON.stringify({ error: 'sensor_id and device_id are required' }), { 
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
     // Check if sensor exists
-    const sensor = await db.getSensorById(sensor_id);
+    const sensor = await db.getSensorById(sensor_id, device_id);
     if (!sensor) {
       return new Response(JSON.stringify({ error: 'Sensor not found' }), {
         status: 404,
@@ -71,7 +73,8 @@ export async function PUT(request) {
     }
 
     // Check write permissions
-    const canWrite = await db.canUserWriteToSensor(user.id, sensor_id);
+    const userEmail = (user.email || '').toLowerCase();
+    const canWrite = await db.canUserWriteToSensor(user.id, sensor_id, device_id, userEmail);
     if (!canWrite) {
       return new Response(JSON.stringify({ error: 'Forbidden: insufficient permissions' }), {
         status: 403,
@@ -86,12 +89,12 @@ export async function PUT(request) {
     if (warning_limit !== undefined) updateData.warningLimit = warning_limit;
     if (sensor_name !== undefined) updateData.sensorName = sensor_name;
     if (metric !== undefined) updateData.metric = metric;
-    if (sensor_type !== undefined) updateData.sensorType = sensor_type;
-    if (updated_at !== undefined) updateData.updatedAt = new Date(updated_at);
+    // Avoid updating sensor_type via Prisma to prevent enum/string mismatch errors
+    // Do not set updatedAt; column does not exist on sensors table in Prisma schema
 
     console.log('Updating sensor with data:', { sensor_id, updateData });
 
-    const updatedSensor = await db.updateSensorThresholds(sensor_id, updateData);
+    const updatedSensor = await db.updateSensorThresholds(sensor_id, device_id, updateData);
 
     console.log('Update successful:', updatedSensor);
     return new Response(JSON.stringify(updatedSensor), { 

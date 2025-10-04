@@ -19,9 +19,12 @@ export async function POST(request) {
       );
     }
 
-    // Check if sensor exists using raw SQL
+    // Check if sensor exists and resolve owner via device
     const sensorResult = await prisma.$queryRaw`
-      SELECT sensor_id, owner_id FROM public.sensors WHERE sensor_id = ${sensor_id}
+      SELECT s.sensor_id, d.owner_id
+      FROM public.sensors s
+      JOIN public.devices d ON s.device_id = d.device_id
+      WHERE s.sensor_id = ${sensor_id}
     `;
 
     if (!sensorResult || sensorResult.length === 0) {
@@ -61,7 +64,7 @@ export async function POST(request) {
         email,
         role: roleLabel,
         status: 'pending',
-        inviterId: sensor.owner_id, // Use sensor owner as inviter
+        inviterId: sensor.owner_id, // Device owner is inviter
         sensorId: sensor_id,
         inviteLink: acceptLink
       }
@@ -101,11 +104,12 @@ export async function GET(request) {
       );
     }
 
-    // Load sensor and owner using raw SQL to avoid type conversion issues
+    // Load sensor and owner via device join
     const sensorResult = await prisma.$queryRaw`
-      SELECT s.sensor_id, s.sensor_name, s.owner_id, u.email as owner_email
+      SELECT s.sensor_id, s.sensor_name, d.owner_id, u.email as owner_email
       FROM public.sensors s
-      LEFT JOIN auth.users u ON s.owner_id = u.id
+      JOIN public.devices d ON s.device_id = d.device_id
+      LEFT JOIN auth.users u ON d.owner_id = u.id
       WHERE s.sensor_id = ${sensor_id}
     `;
 
@@ -186,7 +190,10 @@ export async function DELETE(request) {
     }
 
     const sensorResult = await prisma.$queryRaw`
-      SELECT sensor_id, owner_id FROM public.sensors WHERE sensor_id = ${sensor_id}
+      SELECT s.sensor_id, d.owner_id
+      FROM public.sensors s
+      JOIN public.devices d ON s.device_id = d.device_id
+      WHERE s.sensor_id = ${sensor_id}
     `;
 
     if (!sensorResult || sensorResult.length === 0) {

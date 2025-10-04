@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Component } from 'react';
+import { useState, useEffect, Component, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
@@ -20,7 +20,7 @@ class ErrorBoundary extends Component {
   }
 }
 
-export default function Team() {
+function TeamContent() {
   const { darkMode } = useDarkMode();
   const [members, setMembers] = useState([]);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -105,30 +105,37 @@ export default function Team() {
         // Determine current user from verified session state
         const currentUserId = currentUser?.id || null;
         
-        const mapped = (rows || []).map(r => {
-          // Determine role based on owner_id and current user
-          let access_role = 'viewer';
-          if (currentUserId && r.owner_id === currentUserId) {
-            access_role = 'owner';
-          } else if (r.access_role && r.access_role !== 'viewer') {
-            access_role = r.access_role;
+        const mapped = (rows || []).map(r => ({
+          id: r.sensor_id,
+          name: r.sensor_name || r.sensor_id,
+          access_role: r.access_role, // no default role
+        })).sort((a,b) => (a?.name || '').localeCompare(b?.name || ''));
+        
+        // Set myRole based on the selected sensor's access_role from API
+        if (mapped.length > 0 && activeSensorId) {
+          const selectedSensor = mapped.find(s => s.id === activeSensorId);
+          if (selectedSensor) {
+            setMyRole(selectedSensor.access_role);
           }
-          
-          return {
-            id: r.sensor_id,
-            name: r.sensor_name || r.sensor_id,
-            access_role: access_role,
-          };
-        }).sort((a,b) => (a?.name || '').localeCompare(b?.name || ''));
+        }
         
         setSensors(mapped);
-        if (mapped.length && !activeSensorId) setActiveSensorId(mapped[0].id);
       } catch (e) {
         setError('Failed to load sensors: ' + (e?.message || String(e)));
       }
     };
     if (isAuthed) loadSensors();
   }, [activeSensorId, isAuthed]);
+
+  // Update myRole when activeSensorId changes
+  useEffect(() => {
+    if (activeSensorId && sensors.length > 0) {
+      const selectedSensor = sensors.find(s => s.id === activeSensorId);
+      if (selectedSensor) {
+        setMyRole(selectedSensor.access_role);
+      }
+    }
+  }, [activeSensorId, sensors]);
 
   // Load shares for the selected sensor
   useEffect(() => {
@@ -149,46 +156,7 @@ export default function Team() {
           unique.push(a);
         }
         setShares(unique);
-        // set my role from list
-        // Resolve current user via token verification
-        let uid = null;
-        let userEmail = null;
-        try {
-          const token = typeof window !== 'undefined' ? localStorage.getItem('auth-token') : null;
-          if (token) {
-            const resp = await fetch('/api/verify-token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token })
-            });
-            if (resp.ok) {
-              const { user } = await resp.json();
-              uid = user?.id || null;
-              userEmail = user?.email || null;
-            }
-          }
-        } catch {}
-        
-        // Try to find current user by user_id first, then by email as fallback
-        let me = arr.find(a => a.user_id === uid);
-        if (!me && userEmail) {
-          me = arr.find(a => a.email && a.email.toLowerCase() === userEmail.toLowerCase());
-        }
-        
-        const owner = arr.find(a => a.role === 'owner' && (a.user_id === uid || (a.email && userEmail && a.email.toLowerCase() === userEmail.toLowerCase())));
-        console.log('Debug - uid:', uid, 'userEmail:', userEmail, 'me:', me, 'owner:', owner, 'arr:', arr);
-        console.log('Debug - me.role:', me?.role, 'typeof me.role:', typeof me?.role);
-        if (owner) {
-          console.log('Setting myRole to owner');
-          setMyRole('owner');
-        } else if (me) {
-          const roleToSet = me.role || 'viewer';
-          console.log('Setting myRole to:', roleToSet);
-          setMyRole(roleToSet);
-        } else {
-          console.log('Setting myRole to viewer (default)');
-          setMyRole('viewer');
-        }
+        // myRole is now set based on the API's access_role in the useEffect above
       } catch (e) {
         setError('Failed to load access list: ' + (e?.message || String(e)));
         setShares([]);
@@ -379,54 +347,27 @@ export default function Team() {
           {error && <p className="text-red-500 text-center mb-4">{error}</p>}
 
           <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-gray-800 text-white' : 'bg-white'}`}>
-            {/* Sensor selector as button grid */}
-            <div className="mb-6">
-              <p className={`text-sm mb-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Your sensors</p>
-              <div className="flex flex-wrap gap-3">
+            <p className={`text-sm mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Your sensors</p>
+            <div className="space-y-3">
                 {sensors.map((s) => (
+                <div key={s.id} className={`rounded border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                  <div className={`px-4 py-3 flex items-center justify-between ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
                   <button
-                    key={s.id}
-                    onClick={() => setActiveSensorId(s.id)}
-                    className={`px-4 py-2 rounded border text-sm ${
-                      activeSensorId === s.id
-                        ? (darkMode ? 'bg-blue-700 text-white border-blue-600' : 'bg-blue-500 text-white border-blue-500')
-                        : (darkMode ? 'bg-gray-700 text-white border-gray-600 hover:bg-gray-600' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-100')
-                    }`}
-                    title={`Role: ${activeSensorId === s.id ? myRole : (s.access_role || 'viewer')}`}
+                      type="button"
+                      onClick={() => setActiveSensorId(activeSensorId === s.id ? null : s.id)}
+                      className={`${darkMode ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'} font-medium`}
+                      title={`Role: ${s.access_role || 'viewer'}`}
                   >
                     {s.name}
-                    {(() => {
-                      const roleBadge = activeSensorId === s.id ? myRole : (s.access_role || 'viewer');
-                      const badgeClass =
-                        roleBadge === 'owner'
-                          ? 'bg-green-200 text-green-800'
-                          : roleBadge === 'admin'
-                            ? 'bg-yellow-200 text-yellow-800'
-                            : 'bg-gray-200 text-gray-800';
-                      return (
-                        <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${badgeClass}`}>
-                          {roleBadge}
-                        </span>
-                      );
-                    })()}
                   </button>
-                ))}
-                {sensors.length === 0 && (
-                  <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>No sensors available</span>
-                )}
+                    <span className={`px-2 py-0.5 rounded-full text-xs ${s.access_role === 'owner' ? 'bg-green-200 text-green-800' : s.access_role === 'admin' ? 'bg-yellow-200 text-yellow-800' : 'bg-gray-200 text-gray-800'}`}>{s.access_role || '—'}</span>
               </div>
-            </div>
-
-            {/* Shares list for active sensor */}
-            {activeSensorId && (
-              <div className="space-y-6">
+                  {activeSensorId === s.id && (
+                    <div className="p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">Access for sensor: {sensors.find(s => s.id === activeSensorId)?.name}</h3>
+                        <h3 className="text-lg font-semibold">Access for sensor: {s.name}</h3>
                   <span className={`px-2 py-1 rounded-full text-xs ${myRole === 'owner' ? 'bg-green-200 text-green-800' : myRole === 'admin' ? 'bg-yellow-200 text-yellow-800' : 'bg-gray-200 text-gray-800'}`}>Your role: {myRole}</span>
-                  {console.log('Render - myRole:', myRole, 'activeSensorId:', activeSensorId, 'currentUser:', currentUser, 'myRole === admin:', myRole === 'admin', 'myRole === owner:', myRole === 'owner')}
                 </div>
-
-                {/* Invite / share form (owners & admins) */}
                 {(myRole === 'owner' || myRole === 'admin') && (
                   <div className="flex items-center gap-3">
                     <input
@@ -448,9 +389,9 @@ export default function Team() {
                       onClick={async () => {
                         try {
                           if (!inviteEmail) throw new Error('Email is required');
-                          await apiClient.shareSensor({ sensorId: activeSensorId, role: inviteRole, email: inviteEmail });
+                                await apiClient.shareSensor({ sensorId: s.id, role: inviteRole, email: inviteEmail });
                           setInviteEmail('');
-                          const res = await apiClient.getSensorShares(activeSensorId);
+                                const res = await apiClient.getSensorShares(s.id);
                           setShares(res?.access || []);
                         } catch (e) {
                           setError(e?.message || String(e));
@@ -462,8 +403,6 @@ export default function Team() {
                   </button>
                 </div>
                 )}
-
-                {/* Access table */}
                 <div className="overflow-x-auto">
                   <table className={`w-full text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                     <thead>
@@ -479,7 +418,6 @@ export default function Team() {
                         const badgeRole = u.role || 'viewer';
                         const isInvited = u.status === 'invited' && !u.user_id;
                         const isAcceptedPendingUserId = u.status === 'accepted' && !u.user_id;
-                        console.log('Rendering user:', { displayName, badgeRole, user_id: u.user_id, email: u.email, status: u.status, myRole }); // accepted but user_id not set
                         return (
                           <tr key={u.user_id || u.email} className={`${darkMode ? 'border-gray-700' : 'border-gray-200'} border-b`}>
                             <td className="px-3 py-2">{displayName}</td>
@@ -488,133 +426,7 @@ export default function Team() {
                                 {badgeRole}{isInvited ? ' • invited' : isAcceptedPendingUserId ? ' • accepted' : ''}
                               </span>
                             </td>
-                            <td className="px-3 py-2 text-right">
-                              {(() => {
-                                const canManageOthers = myRole === 'owner' || myRole === 'admin';
-                                const isOwnerRow = badgeRole === 'owner';
-                                const isCurrentUser =
-                                  (u.user_id && String(currentUser.id) === String(u.user_id)) ||
-                                  (u.email &&
-                                   currentUser.email &&
-                                   currentUser.email.toLowerCase() === u.email.toLowerCase());
-
-                                const showCancelInvite = canManageOthers && isInvited;
-                                const showRevoke = canManageOthers && !isOwnerRow && !isInvited && !isCurrentUser && (u.user_id || u.email);
-                                const showLeave = isCurrentUser && !isOwnerRow;
-
-                                return (
-                                  <>
-                                    {showCancelInvite && (
-                                      <button
-                                        onClick={async () => {
-                                          try {
-                                            await apiClient.cancelInvite({ sensorId: activeSensorId, email: u.email });
-                                            const res = await apiClient.getSensorShares(activeSensorId);
-                                            setShares(res?.access || []);
-                                          } catch (e) { setError(e?.message || String(e)); }
-                                        }}
-                                        className={`px-3 py-1 rounded text-white ${darkMode ? 'bg-gray-600 hover:bg-gray-700' : 'bg-gray-500 hover:bg-gray-600'}`}
-                                      >
-                                        Cancel invite
-                                      </button>
-                                    )}
-                                    {showRevoke && (
-                                      <button
-                                        onClick={async () => {
-                                          try {
-                                            if (u.user_id) await apiClient.revokeShare({ sensorId: activeSensorId, userId: u.user_id });
-                                            else if (u.email) await apiClient.cancelInvite({ sensorId: activeSensorId, email: u.email });
-                                            const res = await apiClient.getSensorShares(activeSensorId);
-                                            setShares(res?.access || []);
-                                          } catch (e) { setError(e?.message || String(e)); }
-                                        }}
-                                        className={`ml-2 px-3 py-1 rounded text-white ${darkMode ? 'bg-red-700 hover:bg-red-800' : 'bg-red-500 hover:bg-red-600'}`}
-                                      >
-                                        Revoke
-                                      </button>
-                                    )}
-                                    {showLeave && (
-                  <button
-                                        onClick={async () => {
-                                          if (isLeaving) return; // Prevent multiple clicks
-                                          
-                                          try {
-                                            setIsLeaving(true);
-                                            console.log('Leaving sensor:', { sensorId: activeSensorId, userId: u.user_id, email: u.email });
-                                            
-                                            // Always use email-based approach for "Leave sensor" since user_id might be null
-                                            if (u.email) {
-                                              await apiClient.cancelInvite({ sensorId: activeSensorId, email: u.email });
-                                            } else if (u.user_id) {
-                                              await apiClient.revokeShare({ sensorId: activeSensorId, userId: u.user_id });
-                                            } else {
-                                              throw new Error('Cannot leave: no user_id or email available');
-                                            }
-                                            
-                                            console.log('Successfully left sensor, refreshing page...');
-                                            
-                                            // Clear any previous errors first
-                                            setError('');
-                                            
-                                            // Try to refresh the sensors list first (this is the most important update)
-                                            try {
-                                              console.log('Refreshing sensors list...');
-                                              const sensorsRes = await apiClient.getSensors();
-                                              console.log('Sensors response:', sensorsRes);
-                                              setSensors(sensorsRes?.map(r => ({
-                                                id: r.sensor_id,
-                                                name: r.sensor_name || r.sensor_id,
-                                                access_role: r.access_role || 'viewer',
-                                              })).sort((a,b) => (a?.name || '').localeCompare(b?.name)) || []);
-                                              
-                                              // Check if the current sensor is still accessible
-                                              const stillHasAccess = sensorsRes?.some(s => s.sensor_id === activeSensorId);
-                                              if (!stillHasAccess) {
-                                                console.log('No longer have access to this sensor, clearing selection');
-                                                setActiveSensorId(null);
-                                                setShares([]);
-                                              } else {
-                                                // If still has access, refresh the access list
-                                                console.log('Still has access, refreshing access list...');
-                                                const res = await apiClient.getSensorShares(activeSensorId);
-                                                console.log('Access list response:', res);
-                                                setShares(res?.access || []);
-                                              }
-                                            } catch (refreshError) {
-                                              console.error('Error refreshing page:', refreshError);
-                                              // Even if refresh fails, clear the selection since we know the user left
-                                              setActiveSensorId(null);
-                                              setShares([]);
-                                              
-                                              // Show a message to the user that they can refresh manually
-                                              setError('Left sensor successfully. Please refresh the page to see updated sensor list.');
-                                            }
-                                            
-                                            console.log('Page update completed');
-                                          } catch (e) { 
-                                            console.error('Leave sensor error:', e);
-                                            console.error('Error details:', {
-                                              message: e?.message,
-                                              status: e?.status,
-                                              response: e?.response,
-                                              stack: e?.stack
-                                            });
-                                            setError(e?.message || String(e)); 
-                                          } finally {
-                                            setIsLeaving(false);
-                                          }
-                                        }}
-                                        className={`ml-2 px-3 py-1 rounded text-white ${isLeaving ? 'opacity-50 cursor-not-allowed' : ''} ${darkMode ? 'bg-red-700 hover:bg-red-800' : 'bg-red-500 hover:bg-red-600'}`}
-                                        disabled={isLeaving}
-                                      >
-                                        {isLeaving ? 'Leaving...' : 'Leave sensor'}
-                  </button>
-                                    )}
-                                    {!showCancelInvite && !showRevoke && !showLeave && <span>—</span>}
-                                  </>
-                                );
-                              })()}
-                            </td>
+                                  <td className="px-3 py-2 text-right">—</td>
                           </tr>
                         );
                       })}
@@ -628,6 +440,12 @@ export default function Team() {
             </div>
               </div>
             )}
+                </div>
+              ))}
+              {sensors.length === 0 && (
+                <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>No sensors available</span>
+              )}
+            </div>
           </div>
           {showPopup && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
@@ -641,6 +459,16 @@ export default function Team() {
           )}
         </main>
       </div>
+    </ErrorBoundary>
+  );
+}
+
+export default function Team() {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<div className="p-6">Loading…</div>}>
+        <TeamContent />
+      </Suspense>
     </ErrorBoundary>
   );
 }

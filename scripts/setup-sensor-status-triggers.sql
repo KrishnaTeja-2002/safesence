@@ -21,7 +21,7 @@ BEGIN
     END IF;
 END $$;
 
--- Function to calculate sensor status based on value and limits
+-- Function to calculate sensor status based on value and limits (CORRECTED - Range-based calculation)
 CREATE OR REPLACE FUNCTION calculate_sensor_status(
     sensor_value DECIMAL(10,2),
     min_limit DECIMAL(10,2),
@@ -29,8 +29,13 @@ CREATE OR REPLACE FUNCTION calculate_sensor_status(
     warning_limit INTEGER DEFAULT 10
 ) RETURNS TEXT AS $$
 DECLARE
-    status TEXT := 'ok';
-    threshold_percent DECIMAL(5,2);
+    range_size DECIMAL(10,2);
+    warning_offset DECIMAL(10,2);
+    lower_warning_end DECIMAL(10,2);
+    upper_warning_start DECIMAL(10,2);
+    normalized_min DECIMAL(10,2);
+    normalized_max DECIMAL(10,2);
+    clamped_warning DECIMAL(10,2);
 BEGIN
     -- If no value, return offline
     IF sensor_value IS NULL THEN
@@ -42,32 +47,84 @@ BEGIN
         RETURN 'ok';
     END IF;
     
-    -- Check min limit
-    IF min_limit IS NOT NULL THEN
-        IF sensor_value < min_limit THEN
-            RETURN 'alert';
-        END IF;
-        
-        -- Check warning threshold (within 10% of min limit)
-        threshold_percent := (min_limit * warning_limit / 100);
-        IF sensor_value < (min_limit + threshold_percent) THEN
-            RETURN 'warning';
-        END IF;
+    -- Normalize min/max (ensure min <= max)
+    normalized_min := LEAST(COALESCE(min_limit, 0), COALESCE(max_limit, 0));
+    normalized_max := GREATEST(COALESCE(min_limit, 0), COALESCE(max_limit, 0));
+    
+    -- Clamp warning percentage to [0, 49.999] to ensure safe zone exists
+    clamped_warning := GREATEST(0, LEAST(COALESCE(warning_limit, 0), 49.999));
+    
+    -- Check for alerts first (most critical)
+    IF sensor_value < normalized_min OR sensor_value > normalized_max THEN
+        RETURN 'alert';
     END IF;
     
-    -- Check max limit
-    IF max_limit IS NOT NULL THEN
-        IF sensor_value > max_limit THEN
-            RETURN 'alert';
-        END IF;
-        
-        -- Check warning threshold (within 10% of max limit)
-        threshold_percent := (max_limit * warning_limit / 100);
-        IF sensor_value > (max_limit - threshold_percent) THEN
-            RETURN 'warning';
-        END IF;
+    -- Calculate range-based warning zones
+    range_size := normalized_max - normalized_min;
+    warning_offset := (range_size * clamped_warning / 100);
+    lower_warning_end := normalized_min + warning_offset;
+    upper_warning_start := normalized_max - warning_offset;
+    
+    -- Check if value is in warning zones
+    IF sensor_value < lower_warning_end OR sensor_value > upper_warning_start THEN
+        RETURN 'warning';
     END IF;
     
+    -- If we get here, status is ok
+    RETURN 'ok';
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to calculate sensor status (simple version with same corrected logic)
+CREATE OR REPLACE FUNCTION calculate_sensor_status_simple(
+    sensor_value DECIMAL(10,2),
+    min_limit DECIMAL(10,2),
+    max_limit DECIMAL(10,2),
+    warning_percentage INTEGER DEFAULT 10
+) RETURNS TEXT AS $$
+DECLARE
+    range_size DECIMAL(10,2);
+    warning_offset DECIMAL(10,2);
+    lower_warning_end DECIMAL(10,2);
+    upper_warning_start DECIMAL(10,2);
+    normalized_min DECIMAL(10,2);
+    normalized_max DECIMAL(10,2);
+    clamped_warning DECIMAL(10,2);
+BEGIN
+    -- If no value, return offline
+    IF sensor_value IS NULL THEN
+        RETURN 'offline';
+    END IF;
+    
+    -- If no limits set, return ok
+    IF min_limit IS NULL AND max_limit IS NULL THEN
+        RETURN 'ok';
+    END IF;
+    
+    -- Normalize min/max (ensure min <= max)
+    normalized_min := LEAST(COALESCE(min_limit, 0), COALESCE(max_limit, 0));
+    normalized_max := GREATEST(COALESCE(min_limit, 0), COALESCE(max_limit, 0));
+    
+    -- Clamp warning percentage to [0, 49.999] to ensure safe zone exists
+    clamped_warning := GREATEST(0, LEAST(COALESCE(warning_percentage, 0), 49.999));
+    
+    -- Check for alerts first (most critical)
+    IF sensor_value < normalized_min OR sensor_value > normalized_max THEN
+        RETURN 'alert';
+    END IF;
+    
+    -- Calculate range-based warning zones
+    range_size := normalized_max - normalized_min;
+    warning_offset := (range_size * clamped_warning / 100);
+    lower_warning_end := normalized_min + warning_offset;
+    upper_warning_start := normalized_max - warning_offset;
+    
+    -- Check if value is in warning zones
+    IF sensor_value < lower_warning_end OR sensor_value > upper_warning_start THEN
+        RETURN 'warning';
+    END IF;
+    
+    -- If we get here, status is ok
     RETURN 'ok';
 END;
 $$ LANGUAGE plpgsql;
@@ -117,8 +174,8 @@ BEGIN
         final_status := value_status;
     END IF;
     
-    -- Update the status
-    NEW.status := final_status;
+    -- Update the status with proper type casting
+    NEW.status := final_status::sensor_status;
     
     -- Update last_fetched_time if we have new data
     IF NEW.latest_temp IS NOT NULL THEN
@@ -204,4 +261,8 @@ SELECT
     COUNT(CASE WHEN status = 'alert' THEN 1 END) as alert_sensors,
     COUNT(CASE WHEN status = 'offline' THEN 1 END) as offline_sensors
 FROM public.sensors;
+
+
+
+
 

@@ -24,14 +24,10 @@ class ApiClient {
       }
     }
     
-    if (!token) {
-      throw new Error('No authentication token found');
-    }
-    
-    return {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    };
+    // Always return headers; include Authorization only if we actually found a token.
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
   }
 
   async request(endpoint, options = {}) {
@@ -44,6 +40,7 @@ class ApiClient {
       
       const response = await fetch(url, {
         ...options,
+        credentials: 'include',
         headers: {
           ...headers,
           ...options.headers
@@ -102,6 +99,9 @@ class ApiClient {
   async getSensors() {
     return this.request('/sensors');
   }
+  async getDevices() {
+    return this.request('/devices');
+  }
 
   async updateSensorThresholds(sensorId, thresholds) {
     return this.request('/sensors', {
@@ -131,14 +131,26 @@ class ApiClient {
     return this.request('/alerts');
   }
 
-  async updateAlertThresholds(sensorId, thresholds) {
-    return this.request('/alerts', {
-      method: 'PUT',
-      body: JSON.stringify({
-        sensor_id: sensorId,
-        ...thresholds
-      })
-    });
+  async updateAlertThresholds(sensorId, thresholds, deviceId) {
+    console.log('updateAlertThresholds called with:', { sensorId, thresholds, deviceId });
+    const requestBody = {
+      sensor_id: sensorId,
+      device_id: deviceId ?? thresholds?.device_id,
+      ...thresholds
+    };
+    console.log('Request body:', requestBody);
+    
+    try {
+      const result = await this.request('/alerts', {
+        method: 'PUT',
+        body: JSON.stringify(requestBody)
+      });
+      console.log('updateAlertThresholds success:', result);
+      return result;
+    } catch (error) {
+      console.error('updateAlertThresholds error:', error);
+      throw error;
+    }
   }
 
   // Sharing API

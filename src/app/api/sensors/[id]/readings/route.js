@@ -27,62 +27,47 @@ export async function GET(request, context) {
     const prisma = new PrismaClient();
     
     try {
-      // Build the SQL query with proper time filtering
-      let whereClause = 'WHERE sensor_id = $1';
-      let params = [sensorId];
-      let paramIndex = 2;
-      
-      if (startTime) {
-        whereClause += ` AND fetched_at >= $${paramIndex}`;
-        params.push(new Date(startTime));
-        paramIndex++;
-      }
-      
-      if (endTime) {
-        whereClause += ` AND fetched_at <= $${paramIndex}`;
-        params.push(new Date(endTime));
-        paramIndex++;
-      }
-      
-      const query = `
+      // Build common parts
+      const orderBy = (startTime || endTime) ? 'ASC' : 'DESC';
+
+      // We only use mqtt_consumer. Columns: time, sensor_id (composite), mqtt_topic, reading_value
+      // Match rows where sensor_id starts with `${sensorId}/` OR ends with `/${sensorId}`
+      let idx = 1;
+      const whereParts = [`(sensor_id ILIKE $${idx++} OR sensor_id ILIKE $${idx++})`];
+      const params = [`${sensorId}/%`, `%/${sensorId}`];
+      if (startTime) { whereParts.push(`time >= $${idx++}`); params.push(new Date(startTime)); }
+      if (endTime) { whereParts.push(`time <= $${idx++}`); params.push(new Date(endTime)); }
+
+      const q = `
         SELECT 
-          id,
           sensor_id,
           reading_value,
-          fetched_at,
-          approx_time,
-          timestamp
-        FROM raw_readings_v2 
-        ${whereClause}
-        ORDER BY fetched_at DESC
-        LIMIT $${paramIndex}
+          time
+        FROM mqtt_consumer
+        WHERE ${whereParts.join(' AND ')}
+        ORDER BY time ${orderBy}
+        LIMIT $${idx}
       `;
-      
       params.push(limit);
-      
-      
-      const results = await prisma.$queryRawUnsafe(query, ...params);
-      
-      // Convert BigInt to string for JSON serialization
-      const processedResults = results.map(record => ({
-        id: record.id.toString(),
-        sensor_id: record.sensor_id,
-        reading_value: record.reading_value,
-        fetched_at: record.fetched_at?.toISOString(),
-        approx_time: record.approx_time?.toISOString(),
-        timestamp: record.timestamp?.toString()
+
+      const results = await prisma.$queryRawUnsafe(q, ...params);
+
+      const processed = (results || []).map(r => ({
+        sensor_id: r.sensor_id,
+        reading_value: r.reading_value,
+        fetched_at: r.time ? new Date(r.time).toISOString() : null
       }));
-      
-      
-      return new Response(JSON.stringify(processedResults), {
+
+      return new Response(JSON.stringify(processed), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
       
     } catch (error) {
       console.error('Database query error:', error);
-      return new Response(JSON.stringify({ error: 'Failed to fetch sensor readings' }), {
-        status: 500,
+      // Return empty array instead of 500 to avoid UI error noise
+      return new Response(JSON.stringify([]), {
+        status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
     } finally {

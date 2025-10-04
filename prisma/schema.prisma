@@ -95,10 +95,6 @@ model TeamInvitation {
   inviteLink    String?  @map("invite_link")
   emailAlert    Boolean? @default(false) @map("email_alert")
   mobileAlert   Boolean? @default(false) @map("mobile_alert")
-  acceptedName  String?  @map("accepted_name") // Name used when accepting
-  acceptedRole  String?  @map("accepted_role") // Role used when accepting
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @default(now()) @updatedAt
   deviceId      String?  @map("device_id")
 
   // Relations

@@ -63,13 +63,12 @@ export default function Dashboard() {
   const { darkMode, toggleDarkMode } = useDarkMode();
 
   const [username, setUsername] = useState("User");
+  const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [error, setError] = useState("");
+  const [loadingData, setLoadingData] = useState(true);
 
-  // Mounted timestamp for hydration-safe "Last updated" display
-  const [nowTs, setNowTs] = useState(null);
-  useEffect(() => {
-    setNowTs(Date.now());
-  }, []);
+  // Last update timestamp for "Last updated" display
+  const [lastUpdateTs, setLastUpdateTs] = useState(null);
 
   // Preferences (from user_preferences)
   const [prefs, setPrefs] = useState({
@@ -129,6 +128,7 @@ export default function Dashboard() {
 
         const { user } = await response.json();
         setUsername(user?.email?.split("@")[0] || "User");
+        setCurrentUserEmail(user?.email || null);
 
         // Get user preferences using API client
         try {
@@ -170,7 +170,7 @@ export default function Dashboard() {
           id: id++,
           title: `${statusDisplay.label} (${it.name})`,
           description: it.kind === "humidity" ? `Humidity: ${it.displayValue}` : `Temperature: ${it.displayValue}`,
-          date: fmtDate(nowTs || Date.now(), tz, false),
+          date: fmtDate(lastUpdateTs || Date.now(), tz, false),
           type: it.status === "alert" ? "error" : "warning",
           sensorId: it.sensor_id,
         });
@@ -179,11 +179,11 @@ export default function Dashboard() {
     return list;
   };
 
-  /* ===== Fetch sensors + latest readings ===== */
-  useEffect(() => {
-    (async () => {
-      try {
-        const sensorRows = await apiClient.getSensors();
+  /* ===== Data loading function ===== */
+  const loadDashboardData = async (showLoading = true) => {
+    try {
+      if (showLoading) setLoadingData(true);
+      const sensorRows = await apiClient.getSensors();
 
         // No need to store thresholds - using database status directly
 
@@ -270,8 +270,24 @@ export default function Dashboard() {
           disconnected: filtered.filter((t) => t.value == null).length,
         };
 
-        // Users KPI from DB (null when not available)
-        const usersCount = null;
+        // Users KPI: unique users across all sensors' access lists (dedup by user_id/email)
+        let usersCount = 0;
+        try {
+          const uniq = new Set();
+          await Promise.all((sensorRows || []).map(async (r) => {
+            try {
+              const res = await apiClient.getSensorShares(r.sensor_id);
+              const arr = res?.access || [];
+              for (const a of arr) {
+                const key = a.user_id ? String(a.user_id) : (a.email ? String(a.email).toLowerCase() : null);
+                if (key) uniq.add(key);
+              }
+            } catch {}
+          }));
+          // Exclude current user by email if present
+          if (currentUserEmail) uniq.delete(String(currentUserEmail).toLowerCase());
+          usersCount = uniq.size;
+        } catch {}
 
         const notificationsList = buildNotifications(filtered, prefs.tz);
 
@@ -282,12 +298,28 @@ export default function Dashboard() {
           sensors: sensorsKPI,
           notificationsList,
         });
+        setLastUpdateTs(Date.now()); // Update timestamp on successful data load
+        setLoadingData(false);
       } catch (err) {
         setError("Failed to fetch sensor data: " + (err?.message || String(err)));
+        setLoadingData(false);
       }
-    })();
+    };
+
+  /* ===== Fetch sensors + latest readings ===== */
+  useEffect(() => {
+    // Initial load with loading indicator
+    loadDashboardData(true);
+    
+    // Set up 15-second interval for seamless updates
+    const interval = setInterval(() => {
+      loadDashboardData(false); // Background updates without loading indicator
+    }, 15000);
+    
+    // Cleanup interval on unmount
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole]);
+  }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedType, selectedRole, currentUserEmail]);
 
   // Realtime updates removed (no Supabase client). Consider polling if needed.
 
@@ -354,8 +386,22 @@ export default function Dashboard() {
   // Items to plot (respect prefs in ALL)
   const chartItems = itemsVisible;
 
+  if (loadingData) {
+    return (
+      <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
+        <Sidebar />
+        <main className="flex-1 p-8 flex items-center justify-center">
+          <div className="text-center">
+            <div className={`animate-spin h-16 w-16 rounded-full border-4 border-slate-200 border-t-blue-500 mx-auto ${darkMode ? 'border-slate-700 border-t-blue-400' : ''}`}></div>
+            <p className={`mt-6 text-lg font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>Loading dashboard…</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
      return (
-     <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-white" : "bg-white text-gray-800"}`}>
+     <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
                <style jsx>{`
           @keyframes customBounce {
             0%, 50%, 100% {
@@ -367,14 +413,18 @@ export default function Dashboard() {
           }
         `}</style>
        <Sidebar />
-       <main className="flex-1 p-6">
+       <main className="flex-1 p-8">
         {/* Header */}
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-10">
           <div>
-            <h2 className="text-3xl font-bold">Dashboard</h2>
-            <p className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Hi {username}</p>
+            <h1 className="text-5xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+              Dashboard
+            </h1>
+            <p className={`text-xl mt-2 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+              Welcome back, <span className="font-semibold text-blue-600">{username}</span>
+            </p>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-4">
             <button
               onClick={async () => {
                 try {
@@ -382,11 +432,11 @@ export default function Dashboard() {
                 } catch {}
                 router.push("/login");
               }}
-              className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${darkMode ? "bg-red-600 hover:bg-red-700" : ""}`}
+              className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 shadow-lg hover:shadow-xl`}
             >
               Log out
             </button>
-            <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? "bg-amber-700" : ""}`}>
+            <div className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg`}>
               {getInitials(username)}
             </div>
           </div>
@@ -395,31 +445,39 @@ export default function Dashboard() {
         {error && <p className="text-red-500 text-center mb-4">{error}</p>}
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+          {loadingData && (
+            <div className={`rounded-2xl p-8 shadow-xl text-center col-span-full ${darkMode ? 'bg-slate-800 text-white' : 'bg-white shadow-2xl'}`}>
+              <div className="flex items-center justify-center">
+                <div className={`animate-spin h-12 w-12 rounded-full border-4 border-slate-200 border-t-blue-500 ${darkMode ? 'border-slate-700 border-t-blue-400' : ''}`}></div>
+              </div>
+              <p className={`mt-4 text-lg font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>Loading latest data…</p>
+            </div>
+          )}
           {prefs.showAlerts && (
-            <div className={`rounded-lg p-6 shadow text-center relative ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
+            <div className={`rounded-2xl p-8 shadow-xl text-center relative transition-all duration-300 hover:shadow-2xl hover:scale-105 z-20 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}>
               <div className="cursor-pointer" onClick={() => setShowNotifications(!showNotifications)} ref={notificationCardRef}>
-                                 <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
-                   <span className="text-2xl">🔔</span>
+                <div className={`flex items-center justify-center w-20 h-20 bg-gradient-to-r from-green-400 to-emerald-500 rounded-2xl mb-6 mx-auto shadow-lg`}>
+                  <span className="text-3xl">🔔</span>
                  </div>
-                <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Notifications</p>
-                <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{data.notifications}</p>
+                <p className={`text-slate-600 text-lg font-medium mb-2 ${darkMode ? "text-slate-300" : ""}`}>Notifications</p>
+                <p className={`text-4xl font-bold text-slate-800 mb-2 ${darkMode ? "text-white" : ""}`}>{data.notifications}</p>
                 <div className="flex items-center justify-center">
-                  <div className={`w-2 h-2 bg-red-500 rounded-full mr-2 ${darkMode ? "bg-red-400" : ""}`}></div>
-                  <span className={`text-red-500 text-sm ${darkMode ? "text-red-400" : ""}`}>{data.notifications > 0 ? "Unread" : "All Clear"}</span>
+                  <div className={`w-3 h-3 bg-red-500 rounded-full mr-2 ${darkMode ? "bg-red-400" : ""}`}></div>
+                  <span className={`text-red-500 text-sm font-medium ${darkMode ? "text-red-400" : ""}`}>{data.notifications > 0 ? "Unread" : "All Clear"}</span>
                 </div>
               </div>
                              {showNotifications && (
-                 <div ref={popupRef} className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 w-80 bg-white rounded-lg shadow-lg z-50 border border-gray-200 ${darkMode ? "bg-gray-800 border-gray-700 text-white" : ""}`}>
-                  <div className="p-4">
-                    <h4 className={`font-semibold text-gray-800 mb-3 ${darkMode ? "text-white" : ""}`}>Notifications</h4>
+                 <div ref={popupRef} className={`absolute top-full left-1/2 -translate-x-1/2 mt-4 w-96 bg-white rounded-2xl shadow-2xl z-[999999] border border-slate-200 ${darkMode ? "bg-slate-800 border-slate-700 text-white" : ""}`}>
+                  <div className="p-6">
+                    <h4 className={`font-bold text-xl text-slate-800 mb-4 ${darkMode ? "text-white" : ""}`}>Notifications</h4>
                     {data.notificationsList.length ? (
                       data.notificationsList.map((n) => (
-                        <div key={n.id} className={`flex items-start justify-between p-3 mb-2 bg-gray-50 rounded-md ${darkMode ? "bg-gray-700 text-white" : ""} ${n.type === "error" ? "border-l-4 border-red-500" : "border-l-4 border-yellow-500"}`}>
+                        <div key={n.id} className={`flex items-start justify-between p-4 mb-3 bg-slate-50 rounded-xl ${darkMode ? "bg-slate-700 text-white" : ""} ${n.type === "error" ? "border-l-4 border-red-500" : "border-l-4 border-yellow-500"} shadow-sm`}>
                           <div className="flex-1">
-                            <p className={`text-gray-700 text-sm font-medium ${darkMode ? "text-white" : ""}`}>{n.title}</p>
-                            {n.description && <p className={`text-gray-600 text-xs ${darkMode ? "text-gray-300" : ""}`}>{n.description}</p>}
-                            <p className={`text-gray-500 text-xs ${darkMode ? "text-gray-400" : ""}`}>{n.date}</p>
+                            <p className={`text-slate-700 text-base font-semibold ${darkMode ? "text-white" : ""}`}>{n.title}</p>
+                            {n.description && <p className={`text-slate-600 text-sm ${darkMode ? "text-slate-300" : ""}`}>{n.description}</p>}
+                            <p className={`text-slate-500 text-xs ${darkMode ? "text-slate-400" : ""}`}>{n.date}</p>
                           </div>
                           <button
                             onClick={(e) => {
@@ -427,14 +485,14 @@ export default function Dashboard() {
                               const rest = data.notificationsList.filter((x) => x.id !== n.id);
                               setData((prev) => ({ ...prev, notificationsList: rest, notifications: rest.length }));
                             }}
-                            className={`text-gray-400 hover:text-gray-600 ml-3 ${darkMode ? "text-gray-300 hover:text-gray-200" : ""}`}
+                            className={`text-slate-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50 transition-all duration-200 ml-3 ${darkMode ? "hover:text-red-400 hover:bg-red-900" : ""}`}
                           >
                             ✕
                           </button>
                         </div>
                       ))
                     ) : (
-                      <p className={`text-gray-500 text-sm text-center ${darkMode ? "text-gray-300" : ""}`}>No new notifications.</p>
+                      <p className={`text-slate-500 text-base text-center py-8 ${darkMode ? "text-slate-400" : ""}`}>No new notifications.</p>
                     )}
                   </div>
                 </div>
@@ -443,44 +501,44 @@ export default function Dashboard() {
           )}
 
           {prefs.showSensors && (
-            <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-                             <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
-                 <span className="text-2xl">📶</span>
+            <div className={`rounded-2xl p-8 shadow-xl text-center transition-all duration-300 hover:shadow-2xl hover:scale-105 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}>
+              <div className={`flex items-center justify-center w-20 h-20 bg-gradient-to-r from-blue-400 to-cyan-500 rounded-2xl mb-6 mx-auto shadow-lg`}>
+                <span className="text-3xl">📶</span>
                </div>
-              <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Sensors</p>
+              <p className={`text-slate-600 text-lg font-medium mb-2 ${darkMode ? "text-slate-300" : ""}`}>Sensors</p>
               {(() => {
                 const kpiItems = itemsVisible;
                 return (
                   <>
-                    <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{kpiItems.length}</p>
-                    <div className="flex items-center justify-center space-x-3 text-sm">
+                    <p className={`text-4xl font-bold text-slate-800 mb-4 ${darkMode ? "text-white" : ""}`}>{kpiItems.length}</p>
+                    <div className="flex items-center justify-center space-x-4 text-sm">
                       <div className="flex items-center">
-                        <div className={`w-2 h-2 bg-red-500 rounded-full mr-1 ${darkMode ? "bg-red-400" : ""}`}></div>
-                        <span className={`text-red-500 font-medium ${darkMode ? "text-red-400" : ""}`}>
+                        <div className={`w-3 h-3 bg-red-500 rounded-full mr-2 ${darkMode ? "bg-red-400" : ""}`}></div>
+                        <span className={`text-red-500 font-semibold ${darkMode ? "text-red-400" : ""}`}>
                           {kpiItems.filter((t) => t.status === "alert").length}
                         </span>
                       </div>
                       <div className="flex items-center">
-                        <div className={`w-2 h-2 bg-yellow-500 rounded-full mr-1 ${darkMode ? "bg-yellow-400" : ""}`}></div>
-                        <span className={`text-yellow-500 font-medium ${darkMode ? "text-yellow-400" : ""}`}>
+                        <div className={`w-3 h-3 bg-yellow-500 rounded-full mr-2 ${darkMode ? "bg-yellow-400" : ""}`}></div>
+                        <span className={`text-yellow-500 font-semibold ${darkMode ? "text-yellow-400" : ""}`}>
                           {kpiItems.filter((t) => t.status === "warning").length}
                         </span>
                       </div>
                       <div className="flex items-center">
-                        <div className={`w-2 h-2 bg-green-500 rounded-full mr-1 ${darkMode ? "bg-green-400" : ""}`}></div>
-                        <span className={`text-green-500 font-medium ${darkMode ? "text-green-400" : ""}`}>
+                        <div className={`w-3 h-3 bg-green-500 rounded-full mr-2 ${darkMode ? "bg-green-400" : ""}`}></div>
+                        <span className={`text-green-500 font-semibold ${darkMode ? "text-green-400" : ""}`}>
                           {kpiItems.filter((t) => t.status === "ok").length}
                         </span>
                       </div>
                       <div className="flex items-center">
-                        <div className={`w-2 h-2 bg-gray-500 rounded-full mr-1 ${darkMode ? "bg-gray-400" : ""}`}></div>
-                        <span className={`text-gray-500 font-medium ${darkMode ? "text-gray-400" : ""}`}>
+                        <div className={`w-3 h-3 bg-slate-500 rounded-full mr-2 ${darkMode ? "bg-slate-400" : ""}`}></div>
+                        <span className={`text-slate-500 font-semibold ${darkMode ? "text-slate-400" : ""}`}>
                           {kpiItems.filter((t) => t.status === "offline" || t.status === "unknown").length}
                         </span>
                       </div>
                       <div className="flex items-center">
-                        <span className={`mr-1 text-xs ${darkMode ? "text-gray-300" : "text-gray-500"}`}>✖</span>
-                        <span className={`${darkMode ? "text-gray-300" : "text-gray-500"}`}>
+                        <span className={`mr-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>✖</span>
+                        <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                           {kpiItems.filter((t) => t.value == null).length}
                         </span>
                       </div>
@@ -492,34 +550,34 @@ export default function Dashboard() {
           )}
 
           {prefs.showUsers && data.users != null && (
-            <div className={`rounded-lg p-6 shadow text-center ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-                             <div className={`flex items-center justify-center w-16 h-16 bg-green-50 rounded-full mb-4 mx-auto ${darkMode ? "bg-green-800" : ""}`}>
-                 <span className="text-2xl">👥</span>
+            <div className={`rounded-2xl p-8 shadow-xl text-center transition-all duration-300 hover:shadow-2xl hover:scale-105 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}>
+              <div className={`flex items-center justify-center w-20 h-20 bg-gradient-to-r from-purple-400 to-pink-500 rounded-2xl mb-6 mx-auto shadow-lg`}>
+                <span className="text-3xl">👥</span>
                </div>
-              <p className={`text-gray-600 text-sm mb-1 ${darkMode ? "text-gray-300" : ""}`}>Users</p>
-              <p className={`text-3xl font-bold text-gray-900 mb-2 ${darkMode ? "text-white" : ""}`}>{data.users}</p>
+              <p className={`text-slate-600 text-lg font-medium mb-2 ${darkMode ? "text-slate-300" : ""}`}>Users</p>
+              <p className={`text-4xl font-bold text-slate-800 mb-2 ${darkMode ? "text-white" : ""}`}>{data.users}</p>
             </div>
           )}
         </div>
 
         {/* Chart + Table card */}
-        <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
-          <div className="flex justify-between items-center mb-6">
-            <h3 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>
+        <div className={`rounded-2xl shadow-2xl p-8 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
+          <div className="flex justify-between items-center mb-8">
+            <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
               {selectedType === "all"
                 ? "All Sensors (respects Preferences)"
                 : selectedType === "humidity"
                 ? axisHum.title
                 : axisTemp.title}
             </h3>
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-slate-500 bg-slate-100 px-3 py-2 rounded-lg">Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span></div>
             <div className="flex items-center gap-3">
-              <div className="text-sm text-gray-500">Last updated: <span suppressHydrationWarning>{nowTs ? fmtDate(nowTs, prefs.tz, true) : "—"}</span></div>
-              <div className="flex items-center gap-2">
-                <label className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>Filter:</label>
+                <label className={`text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Filter:</label>
                 <select
                   value={selectedType}
                   onChange={(e) => setSelectedType(e.target.value)}
-                  className={`border rounded px-2 py-1 ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"}`}
+                  className={`border-2 rounded-xl px-4 py-2 font-medium transition-all duration-200 ${darkMode ? "bg-slate-700 text-white border-slate-600 hover:border-slate-500" : "bg-white border-slate-200 hover:border-slate-300 shadow-sm"}`}
                 >
                   <option value="all">All</option>
                   {prefs.showTemp && <option value="temperature">Temperature</option>}
@@ -528,7 +586,7 @@ export default function Dashboard() {
                 <select
                   value={selectedRole}
                   onChange={(e) => setSelectedRole(e.target.value)}
-                  className={`border rounded px-2 py-1 ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"}`}
+                  className={`border-2 rounded-xl px-4 py-2 font-medium transition-all duration-200 ${darkMode ? "bg-slate-700 text-white border-slate-600 hover:border-slate-500" : "bg-white border-slate-200 hover:border-slate-300 shadow-sm"}`}
                 >
                   <option value="all">All</option>
                   <option value="owned">Owned</option>
@@ -543,12 +601,12 @@ export default function Dashboard() {
           <div className="relative">
             <div className="flex items-start">
               {/* Left Y-axis */}
-              <div className="flex flex-col w-16 mr-3">
+              <div className="flex flex-col w-20 mr-4">
                 <div className="h-6"></div>
                 <div className="relative h-80">
-                  <div className="absolute inset-0 flex flex-col justify-between text-xs text-gray-600 items-end pr-3 font-medium">
+                  <div className="absolute inset-0 flex flex-col justify-between text-sm text-slate-600 items-end pr-3 font-semibold">
                     {ticks(leftAxis).map((t, i) => (
-                      <span key={i} className="transform -translate-y-1/2 bg-white px-1 rounded">
+                      <span key={i} className="transform -translate-y-1/2">
                         {t}
                       </span>
                     ))}
@@ -559,20 +617,20 @@ export default function Dashboard() {
               {/* Main plot */}
               <div className="flex-1 relative">
                 {/* Grid */}
-                <div className="absolute inset-0 h-80">
+                <div className="absolute inset-0 h-80 bg-gradient-to-b from-slate-50 to-white rounded-xl border border-slate-200 shadow-inner">
                   <div className="h-full flex flex-col justify-between">
                     {[...Array(11)].map((_, i) => (
                       <div
                         key={i}
                         className={`border-t w-full ${
-                          i === 0 || i === 10 ? "border-gray-400 border-t-2" : i === 5 ? "border-gray-300 border-t-2" : "border-gray-200"
-                        } ${darkMode ? "border-gray-600" : ""}`}
+                          i === 0 ? "border-slate-600 border-t-2" : i === 5 ? "border-slate-400 border-t-2" : i === 10 ? "border-slate-600 border-t-2" : "border-slate-200"
+                        } ${darkMode ? "border-slate-600" : ""}`}
                       />
                     ))}
                   </div>
                   <div className="absolute inset-0">
-                    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? "bg-gray-500" : ""}`}></div>
-                    <div className={`absolute right-0 top-0 bottom-0 w-1 bg-gray-400 ${darkMode ? "bg-gray-500" : ""}`}></div>
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 bg-slate-400 ${darkMode ? "bg-slate-500" : ""}`}></div>
+                    <div className={`absolute right-0 top-0 bottom-0 w-1 bg-slate-400 ${darkMode ? "bg-slate-500" : ""}`}></div>
                   </div>
                 </div>
 
@@ -580,9 +638,9 @@ export default function Dashboard() {
 
                 {/* Bars (or empty) */}
                 <div className="relative h-80">
-                  <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full px-6">
+                  <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full px-8">
                     {chartItems.length === 0 ? (
-                      <div className="text-center w-full text-sm text-gray-500 mt-20 opacity-75">No sensors to display.</div>
+                      <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No sensors to display.</div>
                     ) : (
                       chartItems.map((it, i) => {
                         const h = toHeight(it);
@@ -593,21 +651,21 @@ export default function Dashboard() {
                           <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
                             {(it.status === "offline" || it.status === "unknown" || it.value != null) && (
                               <div
-                                className={`absolute text-sm font-bold px-3 py-2 rounded-lg shadow-lg z-20 transition-all duration-300 group-hover:scale-110 ${
+                                className={`absolute text-sm font-bold px-4 py-3 rounded-xl shadow-2xl z-10 transition-all duration-300 group-hover:scale-110 group-hover:shadow-3xl ${
                                   it.status === "alert"
-                                    ? "bg-red-500 text-white border-2 border-red-600"
+                                    ? "bg-gradient-to-r from-red-500 to-red-600 text-white border-2 border-red-700"
                                     : it.status === "warning"
-                                    ? "bg-yellow-500 text-white border-2 border-yellow-600"
+                                    ? "bg-gradient-to-r from-yellow-400 to-yellow-500 text-white border-2 border-yellow-600"
                                     : it.status === "offline" || it.status === "unknown"
-                                    ? "bg-gray-500 text-white border-2 border-gray-600"
-                                    : "bg-green-500 text-white border-2 border-green-600"
+                                    ? "bg-gradient-to-r from-slate-500 to-slate-600 text-white border-2 border-slate-700"
+                                    : "bg-gradient-to-r from-green-500 to-green-600 text-white border-2 border-green-700"
                                 }`}
                                 style={{
-                                  bottom: `${h + 12}px`,
+                                  bottom: `${h + 16}px`,
                                   left: "50%",
                                   transform: "translateX(-50%)",
                                   whiteSpace: "nowrap",
-                                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                                  boxShadow: "0 8px 25px rgba(0,0,0,0.25)",
                                   animation: (it.status === "alert" || it.status === "warning") ? "customBounce 2s infinite" : "none",
                                 }}
                               >
@@ -617,28 +675,27 @@ export default function Dashboard() {
                             )}
                             {it.value != null ? (
                               <div
-                                className={`relative w-16 rounded-t-lg shadow-xl transition-all duration-500 group-hover:w-20 ${it.color} ${
+                                className={`relative w-16 rounded-t-lg shadow-2xl transition-all duration-500 group-hover:w-20 group-hover:shadow-3xl ${it.color} ${
                                   it.status === "alert" ? "animate-pulse" : ""
                                 }`}
                                 style={{
-                                  height: `${Math.max(h, 8)}px`,
+                                  height: `${Math.max(h, 4)}px`,
                                                                      background:
                                      it.status === "alert"
-                                       ? "linear-gradient(to top, #dc2626, #ef4444)"
+                                      ? "linear-gradient(to top, #dc2626, #ef4444, #f87171)"
                                        : it.status === "warning"
-                                       ? "linear-gradient(to top, #fef08a, #fef3c7)"
+                                      ? "linear-gradient(to top, #fbbf24, #fcd34d, #fde68a)"
                                        : it.status === "offline" || it.status === "unknown"
-                                       ? "linear-gradient(to top, #6b7280, #9ca3af)"
-                                       : "linear-gradient(to top, #bbf7d0, #dcfce7)",
-                                  boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                                      ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
+                                      : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
+                                  boxShadow: "0 8px 25px rgba(0,0,0,0.3)",
                                 }}
                                 title={`${it.name}: ${label} (${it.status})`}
                               >
-                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 rounded-t-lg"></div>
                               </div>
                             ) : (
-                              <div className="bg-gray-400 w-16 rounded-t-lg opacity-50" style={{ height: "8px" }} title={`${it.name}: No data`}>
-                                <div className="text-xs text-center text-gray-600 mt-1">No Data</div>
+                              <div className="bg-gradient-to-t from-slate-400 to-slate-300 w-16 rounded-t-lg opacity-60 shadow-lg" style={{ height: "4px" }} title={`${it.name}: No data`}>
+                                <div className="text-xs text-center text-slate-600 mt-1 font-medium">No Data</div>
                               </div>
                             )}
                           </div>
@@ -649,43 +706,43 @@ export default function Dashboard() {
                 </div>
 
                 {/* Labels below bars */}
-                <div className={`flex justify-around mt-4 pt-3 px-6 ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
+                <div className={`flex justify-around mt-6 pt-4 px-8 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                   {chartItems.map((it, i) => (
                     <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                      <p className="text-sm font-bold truncate group-hover:text-blue-600 transition-colors">{it.name}</p>
+                      <p className="text-base font-bold truncate group-hover:text-orange-600 transition-colors duration-200">{it.name}</p>
                                                                       <p
-                           className={`text-xs font-semibold px-2 py-1 rounded-full mt-1 ${
+                        className={`text-sm font-semibold px-3 py-2 rounded-full mt-2 shadow-lg ${
                              it.status === "alert"
-                               ? "bg-red-100 text-red-700 animate-bounce"
+                            ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
                                : it.status === "warning"
-                               ? "bg-yellow-200 text-yellow-800"
+                            ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
                                : it.status === "offline" || it.status === "unknown"
-                               ? "bg-gray-100 text-gray-700"
-                               : "bg-green-200 text-green-800"
+                            ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                            : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
                            }`}
                          >
                          {it.status}
                        </p>
-                      <p className="text-xs text-gray-500 mt-1">{it.kind}</p>
+                      <p className="text-sm text-slate-500 mt-2 font-medium">{it.kind}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Right Y-axis: humidity ticks when visible alongside temp */}
-              <div className="flex flex-col w-16 ml-3">
+              <div className="flex flex-col w-20 ml-4">
                 <div className="h-6"></div>
                 <div className="relative h-80">
-                  <div className="absolute inset-0 flex flex-col justify-between text-xs text-gray-500 items-start pl-3">
+                  <div className="absolute inset-0 flex flex-col justify-between text-sm text-slate-500 items-start pl-3 font-semibold">
                     {rightAxis
                       ? ticks(rightAxis).map((t, i) => (
-                          <span key={i} className="bg-white px-1 rounded">
+                          <span key={i} className="transform -translate-y-1/2">
                             {t}
                           </span>
                         ))
                       : ["Critical", "Hot", "Warm", "Room", "Cool", "Ideal", "Cold", "Very Cold", "Freezing", "Ice", "Frozen"].map(
                           (t, i) => (
-                            <span key={i} className="bg-gray-100 px-1 rounded text-gray-700">
+                            <span key={i} className="transform -translate-y-1/2 text-slate-700">
                               {t}
                             </span>
                           )
@@ -696,80 +753,80 @@ export default function Dashboard() {
             </div>
 
             {/* Legend */}
-                         <div className="flex justify-center mt-4 space-x-6 text-xs">
+            <div className="flex justify-center mt-8 space-x-8 text-sm">
                <div className="flex items-center">
-                 <div className="w-3 h-3 bg-green-200 rounded mr-2"></div>
-                 <span>Normal (Good)</span>
+                <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
+                <span className="font-semibold text-slate-700">Normal (Good)</span>
                </div>
                <div className="flex items-center">
-                 <div className="w-3 h-3 bg-yellow-200 rounded mr-2"></div>
-                 <span>Warning</span>
+                <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
+                <span className="font-semibold text-slate-700">Warning</span>
                </div>
               <div className="flex items-center">
-                <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
-                <span>Critical (Needs Attention)</span>
+                <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
+                <span className="font-semibold text-slate-700">Critical (Needs Attention)</span>
               </div>
               <div className="flex items-center">
-                <div className="w-3 h-3 bg-gray-500 rounded mr-2"></div>
-                <span>Unconfigured</span>
+                <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
+                <span className="font-semibold text-slate-700">Unconfigured</span>
               </div>
             </div>
 
             {/* Table */}
-            <div className="mt-6">
-              <h4 className={`text-md font-semibold mb-3 ${darkMode ? "text-white" : "text-gray-900"}`}>Sensor Details</h4>
-              <div className="overflow-x-auto">
-                <table className={`w-full text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
-                  <thead>
-                    <tr className={`border-b ${darkMode ? "border-gray-700" : "border-gray-200"}`}>
-                      <th className="text-left py-2">Sensor</th>
-                      <th className="text-left py-2">Type</th>
-                      <th className="text-left py-2">Reading</th>
-                      <th className="text-left py-2">Status</th>
-                      <th className="text-left py-2">Last Updated</th>
+            <div className="mt-8">
+              <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Sensor Details</h4>
+              <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-lg">
+                <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                  <thead className="bg-slate-50">
+                    <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
+                      <th className="text-left py-4 px-6 font-bold text-slate-800">Sensor</th>
+                      <th className="text-left py-4 px-6 font-bold text-slate-800">Type</th>
+                      <th className="text-left py-4 px-6 font-bold text-slate-800">Reading</th>
+                      <th className="text-left py-4 px-6 font-bold text-slate-800">Status</th>
+                      <th className="text-left py-4 px-6 font-bold text-slate-800">Last Updated</th>
                     </tr>
                   </thead>
                   <tbody>
                     {itemsVisible.map((it, i) => (
-                      <tr key={i} className={`border-b ${darkMode ? "border-gray-700" : "border-gray-100"}`}>
-                        <td className="py-2 font-medium">
-                          <span>{it.name}</span>
-                          <span className={`ml-2 text-[10px] px-2 py-0.5 rounded-full align-middle ${
+                      <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
+                        <td className="py-4 px-6 font-semibold">
+                          <span className="text-slate-800">{it.name}</span>
+                          <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
                             it.access_role === 'owner'
-                              ? 'bg-green-200 text-green-800'
+                              ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
                               : it.access_role === 'admin'
-                              ? 'bg-yellow-200 text-yellow-800'
-                              : 'bg-gray-200 text-gray-800'
+                              ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300'
+                              : 'bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300'
                           }`}>
                             {it.access_role}
                           </span>
                         </td>
-                        <td className="py-2 capitalize">{it.kind}</td>
-                                                 <td className="py-2">
+                        <td className="py-4 px-6 capitalize font-medium text-slate-700">{it.kind}</td>
+                        <td className="py-4 px-6">
                            <span
-                             className={`font-bold ${
-                               it.status === "alert" ? "text-red-500" : it.status === "warning" ? "text-yellow-500" : it.status === "offline" || it.status === "unknown" ? "text-gray-500" : "text-green-500"
+                            className={`text-lg font-bold ${
+                              it.status === "alert" ? "text-red-600" : it.status === "warning" ? "text-yellow-600" : it.status === "offline" || it.status === "unknown" ? "text-slate-500" : "text-green-600"
                              }`}
                            >
                              {it.status === "offline" || it.status === "unknown" ? "NA" : (it.kind === "humidity" ? (it.value != null ? `${it.value.toFixed(1)}%` : "--%") : it.displayValue)}
                            </span>
                          </td>
-                        <td className="py-2">
+                        <td className="py-4 px-6">
                                                      <span
-                             className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            className={`px-3 py-2 rounded-full text-sm font-semibold shadow-sm ${
                                it.status === "alert"
-                                 ? "bg-red-100 text-red-800"
+                                ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 border border-red-300"
                                  : it.status === "warning"
-                                 ? "bg-yellow-200 text-yellow-800"
+                                ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
                                  : it.status === "offline" || it.status === "unknown"
-                                 ? "bg-gray-100 text-gray-800"
-                                 : "bg-green-200 text-green-800"
-                             } ${darkMode ? "bg-gray-700 text-white" : ""}`}
+                                ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                                : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
+                            }`}
                            >
                             {it.status}
                           </span>
                         </td>
-                                                 <td className="py-2">{
+                        <td className="py-4 px-6 text-slate-600 font-medium">{
                            it.lastFetchedTime
                              ? fmtDate(it.lastFetchedTime, prefs.tz, true)
                              : "No data"
