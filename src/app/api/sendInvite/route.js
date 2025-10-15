@@ -38,10 +38,21 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    // Verify the token and get user info
+    // Verify the JWT token first
+    const jwt = await import('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+    
+    let decodedToken;
+    try {
+      decodedToken = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    }
+
+    // Get user info using the decoded user ID
     const userResult = await prisma.$queryRaw`
       SELECT id, email FROM auth.users 
-      WHERE id = ${token}::uuid 
+      WHERE id = ${decodedToken.id}::uuid 
       AND deleted_at IS NULL 
       LIMIT 1
     `;
@@ -110,33 +121,6 @@ export async function POST(request) {
       });
     }
 
-    // Generate token and create invitation
-    const inviteToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-
-    await prisma.teamInvitation.create({
-      data: {
-        email,
-        role,
-        token: inviteToken,
-        sensorId,
-        inviterId,
-        deviceId: sensorWithDevice[0].device_id,
-        status: 'pending'
-      }
-    });
-
-    // Send email
-    const transporter = nodemailer.createTransporter({
-      service: 'gmail',
-      auth: {
-        user: 'safesencewinwinlabs@gmail.com',
-        pass: 'tprw plda fxec pzqt',
-      },
-      secure: false,
-      port: 587,
-      requireTLS: true,
-    });
-
     // Generate app URL - works for both local development and Coolify production
     let appUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL;
     
@@ -182,6 +166,38 @@ export async function POST(request) {
     }
     
     console.log('Final app URL for invite link:', appUrl);
+    
+    // Generate token and create invitation
+    const inviteToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+    await prisma.teamInvitation.create({
+      data: {
+        email,
+        role,
+        token: inviteToken,
+        sensorId,
+        inviterId,
+        deviceId: sensorWithDevice[0].device_id,
+        status: 'pending',
+        inviteLink: `${appUrl}/api/sendInvite?token=${inviteToken}`
+      }
+    });
+
+    // Send email
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: 'safesencewinwinlabs@gmail.com',
+        pass: 'tprw plda fxec pzqt',
+      },
+      secure: false,
+      port: 587,
+      requireTLS: true,
+      tls: {
+        rejectUnauthorized: false
+      }
+    });
+
     const acceptLink = `${appUrl}/api/sendInvite?token=${inviteToken}`;
     const mailOptions = {
       from: {
@@ -191,6 +207,12 @@ export async function POST(request) {
       replyTo: 'safesense@winwinlabs.org',
       to: email,
       subject: 'Team Invitation - SafeSense',
+      headers: {
+        'X-Mailer': 'SafeSense',
+        'X-Priority': '3',
+        'X-MSMail-Priority': 'Normal',
+        'Importance': 'Normal'
+      },
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <div style="text-align: center; margin-bottom: 30px;">
@@ -229,9 +251,15 @@ export async function POST(request) {
       `,
     };
 
+    console.log('Verifying SMTP connection...');
     await transporter.verify();
-    await transporter.sendMail(mailOptions);
-    console.log(`Email sent to ${email} with token ${token}`);
+    console.log('SMTP connection verified successfully');
+    
+    console.log(`Sending email to ${email}...`);
+    const emailResult = await transporter.sendMail(mailOptions);
+    console.log(`Email sent successfully to ${email}`);
+    console.log('Message ID:', emailResult.messageId);
+    console.log('Response:', emailResult.response);
     
     return NextResponse.json({ 
       success: true, 
@@ -255,6 +283,29 @@ export async function GET(request) {
   const action = searchParams.get('action');
   const name = searchParams.get('name');
   const role = searchParams.get('role');
+
+  // Generate app URL for redirects
+  let appUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL;
+  
+  if (!appUrl) {
+    // Auto-detect URL from request headers
+    const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+    const protocol = request.headers.get('x-forwarded-proto') || 'http';
+    
+    if (host && !host.includes('postgres') && !host.includes('database') && !host.includes('161.97.170.64:5401')) {
+      appUrl = `${protocol}://${host}`;
+    } else {
+      // Fallback: use the request URL to extract the domain
+      try {
+        const requestUrl = new URL(request.url);
+        appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
+      } catch (error) {
+        appUrl = process.env.NODE_ENV === 'production' 
+          ? 'https://your-coolify-domain.com'
+          : 'http://localhost:3000';
+      }
+    }
+  }
 
   // Handle accept/reject actions
   if (action === 'accept' || action === 'reject') {
@@ -289,9 +340,7 @@ export async function GET(request) {
           where: { token },
           data: { 
             status: 'accepted', 
-            userId: targetUserId,
-            acceptedName: name,
-            acceptedRole: role
+            userId: targetUserId
           }
         });
 

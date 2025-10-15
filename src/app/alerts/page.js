@@ -480,7 +480,7 @@ function ThresholdChart({
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };
-  }, [drag, isEditing, draftMin, draftMax, onChange, chartH]); // no posToTemp dep
+  }, [drag, isEditing, draftMin, draftMax, onChange, chartH, yMaxScale, yMinScale]); // no posToTemp dep
 
   // Positions for inline inputs (absolute, next to the track)
   const containerStyles = 'relative w-full max-w-4xl overflow-visible';

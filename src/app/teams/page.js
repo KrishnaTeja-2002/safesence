@@ -125,7 +125,7 @@ function TeamContent() {
       }
     };
     if (isAuthed) loadSensors();
-  }, [activeSensorId, isAuthed]);
+  }, [activeSensorId, isAuthed, currentUser?.id]);
 
   // Update myRole when activeSensorId changes
   useEffect(() => {
@@ -137,32 +137,34 @@ function TeamContent() {
     }
   }, [activeSensorId, sensors]);
 
+  // Function to load shares for the selected sensor
+  const loadShares = async () => {
+    if (!activeSensorId) return;
+    try {
+      const res = await apiClient.getSensorShares(activeSensorId);
+      console.log('Shares response:', res);
+      const arr = res?.access || [];
+      console.log('Access array:', arr);
+      // Deduplicate by user_id or email to avoid duplicate keys
+      const seen = new Set();
+      const unique = [];
+      for (const a of arr) {
+        const key = a.user_id || `email:${(a.email || '').toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(a);
+      }
+      setShares(unique);
+      // myRole is now set based on the API's access_role in the useEffect above
+    } catch (e) {
+      setError('Failed to load access list: ' + (e?.message || String(e)));
+      setShares([]);
+    }
+  };
+
   // Load shares for the selected sensor
   useEffect(() => {
-    const run = async () => {
-      if (!activeSensorId) return;
-      try {
-        const res = await apiClient.getSensorShares(activeSensorId);
-        console.log('Shares response:', res);
-        const arr = res?.access || [];
-        console.log('Access array:', arr);
-        // Deduplicate by user_id or email to avoid duplicate keys
-        const seen = new Set();
-        const unique = [];
-        for (const a of arr) {
-          const key = a.user_id || `email:${(a.email || '').toLowerCase()}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          unique.push(a);
-        }
-        setShares(unique);
-        // myRole is now set based on the API's access_role in the useEffect above
-      } catch (e) {
-        setError('Failed to load access list: ' + (e?.message || String(e)));
-        setShares([]);
-      }
-    };
-    if (isAuthed) run();
+    if (isAuthed) loadShares();
   }, [activeSensorId, isAuthed]);
 
   // Handle invitation acceptance/rejection from URL params
@@ -302,6 +304,44 @@ function TeamContent() {
     }
   };
 
+  // Handle removing a user from sensor access
+  const handleRemoveUser = async (user) => {
+    if (!activeSensorId) {
+      alert('Please select a sensor first');
+      return;
+    }
+
+    const confirmMessage = user.user_id 
+      ? `Are you sure you want to remove ${user.username || user.email} from this sensor?`
+      : `Are you sure you want to cancel the invitation for ${user.email}?`;
+    
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    try {
+      if (user.user_id) {
+        // Remove accepted user
+        await apiClient.revokeShare({ 
+          sensorId: activeSensorId, 
+          userId: user.user_id 
+        });
+      } else {
+        // Cancel pending invitation
+        await apiClient.cancelInvite({ 
+          sensorId: activeSensorId, 
+          email: user.email 
+        });
+      }
+      
+      // Refresh the shares list
+      await loadShares();
+    } catch (err) {
+      console.error('Remove user error:', err);
+      alert(`Failed to remove user: ${err.message}`);
+    }
+  };
+
   // Handle sign-out
   const handleSignOut = async () => {
     try {
@@ -426,7 +466,21 @@ function TeamContent() {
                                 {badgeRole}{isInvited ? ' • invited' : isAcceptedPendingUserId ? ' • accepted' : ''}
                               </span>
                             </td>
-                                  <td className="px-3 py-2 text-right">—</td>
+                                  <td className="px-3 py-2 text-right">
+                              {(myRole === 'owner' || myRole === 'admin') && u.role !== 'owner' && (
+                                <button
+                                  onClick={() => handleRemoveUser(u)}
+                                  className={`px-2 py-1 text-xs rounded ${
+                                    darkMode 
+                                      ? 'bg-red-600 text-white hover:bg-red-700' 
+                                      : 'bg-red-500 text-white hover:bg-red-600'
+                                  }`}
+                                  title={u.user_id ? 'Remove user' : 'Cancel invitation'}
+                                >
+                                  {u.user_id ? 'Remove' : 'Cancel'}
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
