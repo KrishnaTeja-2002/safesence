@@ -2,11 +2,11 @@ export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { PrismaClient } from '@prisma/client';
+import { prisma, ensurePrismaConnected } from '../../../../lib/prismaClient.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 
-const prisma = new PrismaClient();
+await ensurePrismaConnected();
 
 function buildTransport() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
@@ -98,6 +98,17 @@ export async function POST(request) {
     const fromName = process.env.SMTP_FROM_NAME || 'SafeSense Team';
     const fromAddr = process.env.SMTP_FROM || (process.env.SMTP_USER || 'safesencewinwinlabs@gmail.com');
 
+    // Prepare three-number verification challenge
+    const generateOptions = () => {
+      const set = new Set();
+      while (set.size < 3) {
+        set.add(Math.floor(10 + Math.random() * 90)); // 10-99
+      }
+      return Array.from(set);
+    };
+    const options = generateOptions();
+    const correct = options[Math.floor(Math.random() * options.length)];
+
     // Create account directly in auth.users table
     let verifyToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     try {
@@ -117,7 +128,8 @@ export async function POST(request) {
           aud,
           role,
           is_sso_user,
-          is_anonymous
+          is_anonymous,
+          raw_user_meta_data
         ) VALUES (
           ${userId}::uuid,
           ${email},
@@ -129,7 +141,8 @@ export async function POST(request) {
           'authenticated',
           'authenticated',
           false,
-          false
+          false,
+          ${JSON.stringify({ emailVerificationChallenge: { options, correct } })}::jsonb
         )
       `;
       
@@ -140,8 +153,11 @@ export async function POST(request) {
     }
 
     // 1) Send verification link to the user
-    const verificationUrl = `${appUrl}/api/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}`;
-    console.log('Verification URL:', verificationUrl);
+    const buildLink = (n) => `${appUrl}/api/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}&choice=${encodeURIComponent(n)}`;
+    const [n1, n2, n3] = options;
+    const link1 = buildLink(n1);
+    const link2 = buildLink(n2);
+    const link3 = buildLink(n3);
     
     const userMail = {
       from: { name: fromName, address: fromAddr },
@@ -150,8 +166,12 @@ export async function POST(request) {
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h2 style="margin: 0 0 16px;">Welcome, ${username || 'there'} 👋</h2>
-          <p style="margin: 0 0 12px; color: #374151;">Please verify your email to activate your account.</p>
-          <p style="margin: 0 0 24px;"><a href="${verificationUrl}" style="background:#10b981;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Verify Email</a></p>
+          <p style="margin: 0 0 12px; color: #374151;">Verify your email by clicking the number shown in the app.</p>
+          <div style="display:flex; gap:12px; margin: 16px 0;">
+            <a href="${link1}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n1}</a>
+            <a href="${link2}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n2}</a>
+            <a href="${link3}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n3}</a>
+          </div>
           <p style="margin:0; color:#6b7280; font-size: 12px;">If you didn't request this, you can ignore this email.</p>
         </div>
       `,
@@ -172,7 +192,7 @@ export async function POST(request) {
       transporter.sendMail(adminMail),
     ]);
 
-    return NextResponse.json({ success: true, message: 'Verification email sent. Please verify to sign in.' });
+    return NextResponse.json({ success: true, message: 'Verification email sent. Please verify to sign in.', challengeCorrect: correct });
   } catch (error) {
     return NextResponse.json({ success: false, message: error.message || 'Signup failed' }, { status: 500 });
   }

@@ -2,10 +2,10 @@ export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { PrismaClient } from '@prisma/client';
+import { prisma, ensurePrismaConnected } from '../../../../lib/prismaClient.js';
 import crypto from 'crypto';
 
-const prisma = new PrismaClient();
+await ensurePrismaConnected();
 
 function buildTransport() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
@@ -102,17 +102,24 @@ export async function POST(request) {
     const fromName = process.env.SMTP_FROM_NAME || 'SafeSense Team';
     const fromAddr = process.env.SMTP_FROM || (process.env.SMTP_USER || 'safesencewinwinlabs@gmail.com');
 
-    // Generate new verification token
+    // Generate new verification token and three-number challenge
     const verifyToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    const options = (() => {
+      const set = new Set();
+      while (set.size < 3) set.add(Math.floor(10 + Math.random() * 90));
+      return Array.from(set);
+    })();
+    const correct = options[Math.floor(Math.random() * options.length)];
     const username = email.split('@')[0];
 
     try {
-      // Update verification token in auth.users table
+      // Update verification token and store challenge in auth.users table
       await prisma.$executeRaw`
         update auth.users 
         set confirmation_token = ${verifyToken},
             confirmation_sent_at = now(),
-            updated_at = now()
+            updated_at = now(),
+            raw_user_meta_data = coalesce(raw_user_meta_data, '{}'::jsonb) || ${JSON.stringify({ emailVerificationChallenge: { options, correct } })}::jsonb
         where lower(email) = lower(${email}) 
         and deleted_at is null
       `;
@@ -123,8 +130,11 @@ export async function POST(request) {
     }
 
     // Send verification email
-    const verificationUrl = `${appUrl}/api/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}`;
-    console.log('Resend verification URL:', verificationUrl);
+    const buildLink = (n) => `${appUrl}/api/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}&choice=${encodeURIComponent(n)}`;
+    const [n1, n2, n3] = options;
+    const link1 = buildLink(n1);
+    const link2 = buildLink(n2);
+    const link3 = buildLink(n3);
     
     const userMail = {
       from: { name: fromName, address: fromAddr },
@@ -133,8 +143,12 @@ export async function POST(request) {
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h2 style="margin: 0 0 16px;">Welcome back, ${username} 👋</h2>
-          <p style="margin: 0 0 12px; color: #374151;">Please verify your email to activate your account.</p>
-          <p style="margin: 0 0 24px;"><a href="${verificationUrl}" style="background:#10b981;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Verify Email</a></p>
+          <p style="margin: 0 0 12px; color: #374151;">Verify your email by clicking the number shown in the app.</p>
+          <div style="display:flex; gap:12px; margin: 16px 0;">
+            <a href="${link1}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n1}</a>
+            <a href="${link2}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n2}</a>
+            <a href="${link3}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n3}</a>
+          </div>
           <p style="margin:0; color:#6b7280; font-size: 12px;">If you didn't request this, you can ignore this email.</p>
         </div>
       `,

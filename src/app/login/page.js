@@ -159,13 +159,16 @@ export default function Home() {
       
       console.log('Signup successful:', data);
       
-      // Store token and redirect
+      // Show verification challenge number (if provided)
+      if (typeof data.challengeCorrect !== 'undefined' && data.challengeCorrect !== null) {
+        setSignupMessage(`Account created! Open your email and tap ${data.challengeCorrect} to verify.`);
+      } else {
+        setSignupMessage('Account created! Check your email to verify your account.');
+      }
+      
+      // If backend also returns a token, you can optionally log user in
       if (data.token) {
         localStorage.setItem('auth-token', data.token);
-        setSignupMessage('Account created successfully! Redirecting...');
-        setTimeout(() => router.push('/dashboard'), 1000);
-      } else {
-        setSignupMessage('Account created successfully! Please log in.');
       }
     } catch (error) {
       console.error('Signup error:', error.message);
