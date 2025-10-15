@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, Component } from "react";
+import { useEffect, useMemo, useRef, useState, Component, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
@@ -388,7 +388,7 @@ export default function History() {
         setFetchProgress({ percentage: 0, current: 0, total: 0 });
       }
     })();
-  }, [activeSensorId, rangeHours, metric, tempScale]);
+  }, [activeSensorId, rangeHours, metric, tempScale, activeSensor, rangeKey]);
 
   // Realtime removed; consider client-side polling if desired
   // useEffect(() => { const id = setInterval(() => {/* re-fetch */}, 30000); return () => clearInterval(id); }, []);
@@ -401,10 +401,10 @@ export default function History() {
   const visibleMs   = domainEnd - domainStart;
 
 
-  const scaleXTime = (ms) => {
+  const scaleXTime = useCallback((ms) => {
     const t = (ms - domainStart) / Math.max(1, visibleMs);
     return Math.max(0, Math.min(1, t)) * W;
-  };
+  }, [domainStart, visibleMs]);
 
   // Y bounds adapt to data and unit
   const yBounds = useMemo(() => {
@@ -427,11 +427,11 @@ export default function History() {
     return { min, max };
   }, [rows, metric, tempScale]);
 
-  const scaleY = (v) => {
+  const scaleY = useCallback((v) => {
     const { min, max } = yBounds;
     const clamped = Math.max(min, Math.min(v, max));
     return H - ((clamped - min) / (max - min)) * H;
-  };
+  }, [yBounds]);
 
   // Positioned points within current domain
   const points = useMemo(() => {
@@ -444,7 +444,7 @@ export default function History() {
     
     
     return mapped;
-  }, [rows, domainStart, domainEnd, yBounds]);
+  }, [rows, domainStart, domainEnd, scaleXTime, scaleY]);
 
   // Gap detection (≥ 5 minutes)
   const GAP_MS = 5 * 60 * 1000;
@@ -480,7 +480,7 @@ export default function History() {
     }
 
     return { segments: segs, gaps: grey };
-  }, [points, domainStart, domainEnd]);
+  }, [points, domainStart, domainEnd, GAP_MS, scaleXTime]);
 
   // Ticks based on *visible* domain; more ticks when zoomed very tight
   const tickCount = visibleMs <= 6 * 60 * 1000 ? 8 : 6;
@@ -588,7 +588,7 @@ export default function History() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [visibleMs, domainStart, domainEnd, nowMs, fullStartMs]);
+  }, [visibleMs, domainStart, domainEnd, nowMs, fullStartMs, isDragging, isPanning]);
 
   /* ===== UI helpers ===== */
   const RangeButtons = () => (

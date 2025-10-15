@@ -10,6 +10,22 @@ const prisma = new PrismaClient();
 // Body: { sensor_id: string, email: string, role: 'viewer'|'admin' }
 export async function POST(request) {
   try {
+    // Get authentication token from headers
+    const authHeader = request.headers.get('authorization');
+    const cookieHeader = request.headers.get('cookie');
+    
+    let authToken = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      authToken = authHeader.substring(7);
+    } else if (cookieHeader) {
+      const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+        const [key, value] = cookie.trim().split('=');
+        acc[key] = value;
+        return acc;
+      }, {});
+      authToken = cookies['auth-token'];
+    }
+
     const { sensor_id, email, role } = await request.json();
 
     if (!sensor_id || !role || !email) {
@@ -36,7 +52,7 @@ export async function POST(request) {
 
     const sensor = sensorResult[0];
 
-    // Check for existing pending invitation
+    // Check for existing pending invitation and expire it
     const existingInvitation = await prisma.teamInvitation.findFirst({
       where: {
         sensorId: sensor_id,
@@ -46,10 +62,12 @@ export async function POST(request) {
     });
 
     if (existingInvitation) {
-      return NextResponse.json(
-        { invited: false, reason: 'already_pending' },
-        { status: 409 }
-      );
+      // Expire the old invitation
+      await prisma.teamInvitation.update({
+        where: { id: existingInvitation.id },
+        data: { status: 'expired' }
+      });
+      console.log('Expired old invitation for', email);
     }
 
     // Create invitation
@@ -61,7 +79,7 @@ export async function POST(request) {
     const invitation = await prisma.teamInvitation.create({
       data: {
         token,
-        email,
+        email: email,
         role: roleLabel,
         status: 'pending',
         inviterId: sensor.owner_id, // Device owner is inviter
@@ -70,13 +88,88 @@ export async function POST(request) {
       }
     });
 
-    // Send email via internal route
+    // Send email directly using nodemailer
     try {
-      await fetch(`${origin}/api/sendInvite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, role: roleLabel, token, sensorId: sensor_id })
+      console.log('Sending invitation email directly...');
+      
+      // Import nodemailer
+      const nodemailer = await import('nodemailer');
+      
+      // Create transporter
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: 'safesencewinwinlabs@gmail.com',
+          pass: 'tprw plda fxec pzqt',
+        },
+        secure: false,
+        port: 587,
+        requireTLS: true,
+        tls: {
+          rejectUnauthorized: false
+        }
       });
+
+      // Verify connection
+      await transporter.verify();
+      console.log('SMTP connection verified successfully');
+
+      // Send email
+      const mailOptions = {
+        from: {
+          name: 'SafeSense Team',
+          address: 'safesencewinwinlabs@gmail.com'
+        },
+        replyTo: 'safesense@winwinlabs.org',
+        to: email,
+        subject: 'Team Invitation - SafeSense',
+        headers: {
+          'X-Mailer': 'SafeSense',
+          'X-Priority': '3',
+          'X-MSMail-Priority': 'Normal',
+          'Importance': 'Normal'
+        },
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="color: #1f2937; margin-bottom: 10px;">SafeSense</h1>
+              <p style="color: #6b7280; margin: 0;">Team Invitation</p>
+            </div>
+            
+            <div style="background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+              <h2 style="color: #1f2937; margin-top: 0;">You're Invited!</h2>
+              <p style="color: #374151; line-height: 1.6;">
+                You have been invited to join a SafeSense sensor monitoring team with the role: <strong>${roleLabel}</strong>.
+              </p>
+              <div style="background-color: white; padding: 15px; border-radius: 6px; border-left: 4px solid #10b981; margin-top: 15px;">
+                <p style="margin: 0; color: #374151; font-weight: 500;">Sensor ID: ${sensor_id}</p>
+                <p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">Role: ${roleLabel}</p>
+              </div>
+            </div>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${acceptLink}" 
+                 style="background-color: #10b981; color: white; padding: 12px 30px; 
+                        text-decoration: none; border-radius: 6px; font-weight: 500;
+                        display: inline-block;">
+                Accept Invitation
+              </a>
+            </div>
+            
+            <div style="border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 30px;">
+              <p style="color: #6b7280; font-size: 14px; text-align: center; margin: 0;">
+                This invitation was sent by SafeSense Team<br>
+                If you have any questions, please reply to this email.
+              </p>
+            </div>
+          </div>
+        `,
+      };
+
+      const emailResult = await transporter.sendMail(mailOptions);
+      console.log('Email sent successfully to', email);
+      console.log('Message ID:', emailResult.messageId);
+      
     } catch (error) {
       console.error('Failed to send invitation email:', error);
     }
