@@ -55,15 +55,23 @@ export default function DevicesPage() {
       if (next == null) return; // cancelled
       const trimmed = next.trim();
       if (!trimmed || trimmed === currentName) return;
+      
+      console.log('Renaming device:', { deviceId: device.device_id, currentName, newName: trimmed });
+      
       setSavingId(device.device_id);
-      await apiClient.updateDevice(device.device_id, { deviceName: trimmed });
+      setError(''); // Clear any previous errors
+      
+      const result = await apiClient.updateDevice(device.device_id, { deviceName: trimmed });
+      console.log('Device rename result:', result);
+      
       setDevices((prev) => prev.map((d) => (
         d.device_id === device.device_id ? { ...d, device_name: trimmed } : d
       )));
       setSavingId('');
     } catch (e) {
+      console.error('Device rename error:', e);
       setSavingId('');
-      setError(e?.message || 'Failed to rename device');
+      setError(e?.message || 'Failed to rename device. Please try again.');
     }
   };
 
@@ -116,7 +124,7 @@ export default function DevicesPage() {
 
   if (loading) {
     return (
-      <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-800'}`}>
+      <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
         <Sidebar darkMode={darkMode} />
         <main className="flex-1 p-6 flex items-center justify-center">Loading…</main>
       </div>
@@ -124,7 +132,7 @@ export default function DevicesPage() {
   }
 
   return (
-    <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-800'}`}>
+    <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
       <Sidebar darkMode={darkMode} />
       <main className="flex-1 p-6">
         <div className="flex items-center justify-between mb-6">
@@ -142,14 +150,14 @@ export default function DevicesPage() {
         </div>
 
         {devices.length === 0 ? (
-          <div className={`rounded-lg shadow p-12 text-center ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
+          <div className={`rounded-lg shadow p-12 text-center ${darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white shadow-2xl border border-slate-100'}`}>
             <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>No devices found.</div>
           </div>
         ) : (
           <div className="space-y-3">
             {devices.map((d) => (
-              <div key={d.device_id} className={`rounded border ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                <div className={`px-4 py-3 flex items-start justify-between ${darkMode ? 'bg-gray-900' : 'bg-gray-50'}`}>
+              <div key={d.device_id} className={`rounded border ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                <div className={`px-4 py-3 flex items-start justify-between ${darkMode ? 'bg-slate-900' : 'bg-slate-50'}`}>
                   <div className="min-w-0">
                     <button
                       type="button"

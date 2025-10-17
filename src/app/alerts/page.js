@@ -74,14 +74,14 @@ const getStatusStyles = (status, darkMode) => {
       };
     case 'offline':
       return {
-        section: `${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-800'}`,
+        section: `${darkMode ? 'bg-slate-700 text-white' : 'bg-gray-200 text-gray-800'}`,
         border: 'border-gray-500',
         value: 'text-gray-600',
       };
     case 'unknown':
     default:
       return {
-        section: `${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-800'}`,
+        section: `${darkMode ? 'bg-slate-700 text-white' : 'bg-gray-200 text-gray-800'}`,
         border: 'border-gray-400',
         value: 'text-gray-500',
       };
@@ -103,16 +103,16 @@ const CARD_STYLES = {
   },
   offline: {
     light: 'bg-gray-50 border-gray-400 text-gray-800',
-    dark: 'bg-gray-900/40 border-gray-500 text-gray-100',
+    dark: 'bg-slate-700 border-slate-600 text-white',
   },
   unknown: {
     light: 'bg-gray-50 border-gray-300 text-gray-800',
-    dark: 'bg-gray-900/40 border-gray-500 text-gray-100',
+    dark: 'bg-slate-700 border-slate-600 text-white',
   },
 };
 const cardClass = (status, darkMode) =>
   (darkMode ? CARD_STYLES[status]?.dark : CARD_STYLES[status]?.light) ||
-  (darkMode ? 'bg-gray-800 border-gray-500 text-white' : 'bg-white border-gray-300 text-gray-800');
+  (darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-800');
 
 
 
@@ -1878,7 +1878,7 @@ export default function Alerts() {
 
   /* -------------------- Views -------------------- */
   const renderAlertsView = () => (
-    <main className="flex-1 p-8 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800">
+    <main className="flex-1 p-8 overflow-y-auto">
       <div className="flex justify-between items-center mb-10">
         <div>
           <h1 className="text-5xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
@@ -1896,7 +1896,7 @@ export default function Alerts() {
               onChange={(e) => setSelectedRole(e.target.value)}
               className={`border rounded-xl px-4 py-2 text-sm font-medium transition-all duration-200 ${
                 darkMode 
-                  ? 'bg-slate-800 text-slate-200 border-slate-600 hover:border-slate-500 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20' 
+                  ? 'bg-slate-700 text-white border-slate-500 hover:border-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20' 
                   : 'bg-white text-slate-800 border-slate-300 hover:border-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20'
               }`}
             >
@@ -1916,9 +1916,12 @@ export default function Alerts() {
           >
             Log out
           </button>
-          <div className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg`}>
+          <button
+            onClick={() => router.push('/account')}
+            className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105`}
+          >
             {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
-          </div>
+          </button>
         </div>
       </div>
 
@@ -1987,7 +1990,7 @@ export default function Alerts() {
               onClick={() => { setCurrentView('alerts'); setSelectedId(null); }}
               className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 border ${
                 darkMode 
-                  ? 'bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700 hover:border-slate-500' 
+                  ? 'bg-slate-700 text-white border-slate-500 hover:bg-slate-600 hover:border-slate-400' 
                   : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
               }`}
             >
@@ -2012,9 +2015,12 @@ export default function Alerts() {
             >
               Log out
             </button>
-            <div className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg`}>
+            <button
+              onClick={() => router.push('/account')}
+              className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105`}
+            >
               {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
-            </div>
+            </button>
           </div>
         </div>
 
@@ -2052,7 +2058,7 @@ export default function Alerts() {
           </div>
 
           {/* Sensor Info Card */}
-          <div className={`rounded-2xl shadow-xl p-6 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'}`}>
+          <div className={`rounded-2xl shadow-xl p-6 border-l-4 ${getStatusStyles(selected.status, darkMode).border} ${darkMode ? 'bg-slate-700 text-white' : 'bg-white'}`}>
             <div className="flex justify-between items-start">
               <div className="flex-1">
                 <h3 className="font-bold text-2xl mb-2">{selected.name}</h3>
@@ -2215,7 +2221,7 @@ export default function Alerts() {
           </div>
 
           {/* Alert Message and Delivery Options */}
-          <div className={`${darkMode ? 'bg-slate-800 text-white' : 'bg-white'} rounded-2xl shadow-xl p-8`}>
+          <div className={`${darkMode ? 'bg-slate-700 text-white' : 'bg-white'} rounded-2xl shadow-xl p-8`}>
             <h3 className="text-2xl font-bold mb-6">Alert Configuration</h3>
             <div className="mb-8">
               <label className="block text-lg font-semibold mb-3">Alert Message</label>
@@ -2274,7 +2280,7 @@ export default function Alerts() {
             </div>
           </div>
 
-          <div className={`rounded-2xl shadow-xl p-8 ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'}`}>
+          <div className={`rounded-2xl shadow-xl p-8 ${darkMode ? 'bg-slate-700 text-white' : 'bg-white'}`}>
             <h3 className="text-2xl font-bold mb-6">Sensor Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className={`p-4 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
@@ -2321,7 +2327,7 @@ export default function Alerts() {
           {showSettings && (
             <div className="fixed inset-0 z-50 flex items-center justify-center">
               <div className="absolute inset-0 bg-black/60" onClick={() => setShowSettings(false)} />
-              <div className={`relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'} p-8`}>
+              <div className={`relative w-full max-w-2xl mx-4 rounded-2xl shadow-2xl ${darkMode ? 'bg-slate-700 text-white' : 'bg-white'} p-8`}>
                 <h3 className="text-3xl font-bold mb-6">Sensor Settings</h3>
 
                 <div className="space-y-6">
@@ -2468,7 +2474,7 @@ export default function Alerts() {
           scrollbar-color: ${darkMode ? '#475569 #1e293b' : '#94a3b8 #f1f5f9'};
         }
       `}</style>
-      <div className={`flex min-h-screen ${darkMode ? 'bg-slate-900 text-white' : 'bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800'} scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800`}>
+      <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
         <Sidebar darkMode={darkMode} activeKey="alerts" />
         {currentView === 'alerts' && renderAlertsView()}
         {currentView === 'alertDetail' && renderAlertDetailView()}

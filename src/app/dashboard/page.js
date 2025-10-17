@@ -446,11 +446,6 @@ export default function Dashboard() {
         </div>
 
         {error && <p className="text-red-500 text-center mb-4">{error}</p>}
-        
-        {/* Debug info - remove this after testing */}
-        <div className="fixed top-4 right-4 bg-blue-500 text-white p-2 rounded text-xs z-50">
-          Dark Mode: {darkMode ? 'ON' : 'OFF'} | Init: {isInitialized ? 'YES' : 'NO'}
-        </div>
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">

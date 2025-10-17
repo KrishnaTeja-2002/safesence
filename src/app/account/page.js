@@ -205,7 +205,7 @@ export default function Account() {
     borderRadius: "50%",
   };
 
-  const pageShellClass = `flex min-h-screen ${darkMode ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-800"}`;
+  const pageShellClass = `flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`;
 
   const DASH_CHECKS = [
     "Temperature Monitoring System",
@@ -249,7 +249,7 @@ export default function Account() {
           <div className="mb-4 rounded border border-red-400 bg-red-50 px-4 py-3 text-red-700">{error}</div>
         )}
 
-        <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 text-white" : "bg-white"}`}>
+        <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}>
           <h3 className="text-xl font-semibold mb-6">Preferences</h3>
 
           {loading ? (

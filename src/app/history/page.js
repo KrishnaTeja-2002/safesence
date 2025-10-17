@@ -666,7 +666,7 @@ export default function History() {
   /* ===== Render ===== */
   return (
     <ErrorBoundary darkMode={darkMode}>
-      <div className={`flex min-h-screen ${darkMode ? "bg-gray-800 text-gray-200" : "bg-gray-100 text-gray-800"}`}>
+      <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
         <Sidebar activeKey="history" darkMode={darkMode} />
         <main className="flex-1 p-6">
           {/* Header */}
@@ -680,12 +680,17 @@ export default function History() {
               >
                 Log out
               </button>
-              <div className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold ${darkMode ? "bg-amber-700" : ""}`}>{getInitials(username)}</div>
+              <button
+                onClick={() => router.push('/account')}
+                className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold hover:bg-amber-700 transition-all duration-200 hover:scale-105 ${darkMode ? "bg-amber-700 hover:bg-amber-800" : ""}`}
+              >
+                {getInitials(username)}
+              </button>
             </div>
           </div>
 
           {/* Card */}
-          <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-gray-800 border-blue-700" : "bg-white border-blue-300"} border`}>
+          <div className={`rounded-lg shadow p-6 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white shadow-2xl border-slate-100"} border`}>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
               <div>
                 <h3 className="text-xl font-semibold">Sensor History</h3>

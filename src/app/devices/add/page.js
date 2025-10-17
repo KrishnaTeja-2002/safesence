@@ -262,7 +262,7 @@ export default function AddDevice() {
   };
 
   return (
-    <div className={`flex min-h-screen ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-800'}`}>
+    <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
       <Sidebar activeKey="devices" darkMode={darkMode} />
       <main className="flex-1 p-6">
         <div className="flex justify-between items-center mb-6">
