@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Component, Suspense } from 'react';
+import { useState, useEffect, useCallback, Component, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
@@ -138,7 +138,7 @@ function TeamContent() {
   }, [activeSensorId, sensors]);
 
   // Function to load shares for the selected sensor
-  const loadShares = async () => {
+  const loadShares = useCallback(async () => {
     if (!activeSensorId) return;
     try {
       const res = await apiClient.getSensorShares(activeSensorId);
@@ -160,12 +160,12 @@ function TeamContent() {
       setError('Failed to load access list: ' + (e?.message || String(e)));
       setShares([]);
     }
-  };
+  }, [activeSensorId]);
 
   // Load shares for the selected sensor
   useEffect(() => {
     if (isAuthed) loadShares();
-  }, [activeSensorId, isAuthed]);
+  }, [activeSensorId, isAuthed, loadShares]);
 
   // Handle invitation acceptance/rejection from URL params
   useEffect(() => {

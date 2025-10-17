@@ -22,28 +22,37 @@ export async function GET(request, context) {
       });
     }
 
-    // Query real data from raw_readings_v2 table
+    // Query real data from mqtt_consumer_test (with replay support) or fallback to mqtt_consumer
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
+    
+    // Check if we should include replay data (default: false for live data only)
+    const includeReplay = searchParams.get('include_replay') === 'true';
     
     try {
       // Build common parts
       const orderBy = (startTime || endTime) ? 'ASC' : 'DESC';
 
-      // We only use mqtt_consumer. Columns: time, sensor_id (composite), mqtt_topic, reading_value
+      // Try mqtt_consumer_test first (has replay field and deduplication)
       // Match rows where sensor_id starts with `${sensorId}/` OR ends with `/${sensorId}`
       let idx = 1;
       const whereParts = [`(sensor_id ILIKE $${idx++} OR sensor_id ILIKE $${idx++})`];
       const params = [`${sensorId}/%`, `%/${sensorId}`];
       if (startTime) { whereParts.push(`time >= $${idx++}`); params.push(new Date(startTime)); }
       if (endTime) { whereParts.push(`time <= $${idx++}`); params.push(new Date(endTime)); }
+      
+      // Add replay filter unless explicitly requested
+      if (!includeReplay) {
+        whereParts.push('COALESCE(replay, false) = false');
+      }
 
       const q = `
         SELECT 
           sensor_id,
           reading_value,
-          time
-        FROM mqtt_consumer
+          time,
+          COALESCE(replay, false) as is_replay
+        FROM public.mqtt_consumer_test
         WHERE ${whereParts.join(' AND ')}
         ORDER BY time ${orderBy}
         LIMIT $${idx}

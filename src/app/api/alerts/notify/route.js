@@ -103,15 +103,13 @@ export async function POST(request) {
           data: { sensor_id: String(s.sensor_id), status: 'alert', category: 'value', stint_start: new Date(), notified_at: new Date() }
         }).catch(() => {});
       } catch (e) {
-        // Continue other emails
-        // eslint-disable-next-line no-console
+        // Continue other emails on error
         console.error('Failed to send alert email for sensor', s.sensor_id, e?.message || e);
       }
     }
 
     return new Response(JSON.stringify({ sent: sentCount }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   } catch (error) {
-    // eslint-disable-next-line no-console
     console.error('alerts notify error:', error);
     return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }

@@ -440,9 +440,11 @@ model mqtt_consumer_test_base {
   sensor_id     String
   mqtt_topic    String?
   reading_value Float?
+  replay        Boolean? @default(false)
 
   @@unique([sensor_id, time], map: "uq_mqtt_consumer_test")
   @@index([time(sort: Desc)], map: "idx_mqtt_consumer_test_time")
+  @@index([sensor_id, time(sort: Desc)], map: "idx_mqtt_consumer_test_sensor_time")
   @@schema("public")
 }
 
