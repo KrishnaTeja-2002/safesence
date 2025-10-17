@@ -53,6 +53,23 @@ export default function Home() {
 
   const router = useRouter();
 
+  // Prevent scrolling issues on login page
+  useEffect(() => {
+    // Prevent body scroll and fix viewport
+    document.body.style.overflow = 'hidden';
+    document.body.style.height = '100vh';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    
+    // Cleanup on unmount
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.height = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+    };
+  }, []);
+
   // Redirect logged-in users
   useEffect(() => {
     const checkSession = async () => {
@@ -490,8 +507,27 @@ export default function Home() {
 }
 
 const styles = {
-  main: { display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', fontFamily: 'Arial' },
-  contentWrapper: { display: 'flex', width: '80%', maxWidth: '1000px', boxShadow: '0 0 15px rgba(0,0,0,0.1)' },
+  main: { 
+    display: 'flex', 
+    flexDirection: 'column', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    height: '100vh', 
+    width: '100vw',
+    fontFamily: 'Arial',
+    overflow: 'hidden',
+    position: 'fixed',
+    top: 0,
+    left: 0
+  },
+  contentWrapper: { 
+    display: 'flex', 
+    width: '80%', 
+    maxWidth: '1000px', 
+    boxShadow: '0 0 15px rgba(0,0,0,0.1)',
+    overflow: 'auto',
+    maxHeight: '90vh'
+  },
   welcomeText: { flex: 1, backgroundColor: '#F3F4F6', padding: '3rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   card: { flex: 1, backgroundColor: '#fff', padding: '2rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
   logo: { display: 'flex', alignItems: 'center', marginBottom: '1rem' },
