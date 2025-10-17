@@ -71,6 +71,60 @@ body {
   }
 }
 
+/* Dark mode using .dark class */
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+/* Ensure text is visible in dark mode */
+.dark body {
+  color: #ededed !important;
+}
+
+.dark * {
+  color: inherit;
+}
+
+/* Force text visibility in dark mode for all elements */
+.dark {
+  color: #ededed !important;
+}
+
+.dark p, .dark span, .dark div, .dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6 {
+  color: inherit !important;
+}
+
+/* Specific fixes for dashboard elements */
+.dark .text-slate-800 {
+  color: #ededed !important;
+}
+
+.dark .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+.dark .text-slate-700 {
+  color: #e2e8f0 !important;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-color: #1e293b;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.dark ::-webkit-scrollbar-corner {
+  background: #1e293b;
+}
+
 /* Firefox scrollbar */
 * {
   scrollbar-width: thin;
@@ -81,4 +135,8 @@ body {
   * {
     scrollbar-color: #475569 #1e293b;
   }
+}
+
+.dark * {
+  scrollbar-color: #475569 #1e293b;
 }

@@ -60,7 +60,7 @@ const visibleItems = (items, selectedType, selectedRole, prefs) =>
 
 export default function Dashboard() {
   const router = useRouter();
-  const { darkMode, toggleDarkMode } = useDarkMode();
+  const { darkMode, toggleDarkMode, isInitialized } = useDarkMode();
 
   const [username, setUsername] = useState("User");
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
@@ -420,8 +420,8 @@ export default function Dashboard() {
             <h1 className="text-5xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
               Dashboard
             </h1>
-            <p className={`text-xl mt-2 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-              Welcome back, <span className="font-semibold text-blue-600">{username}</span>
+            <p className={`text-xl mt-2 ${darkMode ? "text-white" : "text-slate-600"}`}>
+              Welcome back, <span className={`font-semibold ${darkMode ? "text-blue-400" : "text-blue-600"}`}>{username}</span>
             </p>
           </div>
           <div className="flex items-center space-x-4">
@@ -436,13 +436,21 @@ export default function Dashboard() {
             >
               Log out
             </button>
-            <div className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg`}>
+            <button
+              onClick={() => router.push('/account')}
+              className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105`}
+            >
               {getInitials(username)}
-            </div>
+            </button>
           </div>
         </div>
 
         {error && <p className="text-red-500 text-center mb-4">{error}</p>}
+        
+        {/* Debug info - remove this after testing */}
+        <div className="fixed top-4 right-4 bg-blue-500 text-white p-2 rounded text-xs z-50">
+          Dark Mode: {darkMode ? 'ON' : 'OFF'} | Init: {isInitialized ? 'YES' : 'NO'}
+        </div>
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
@@ -501,7 +509,10 @@ export default function Dashboard() {
           )}
 
           {prefs.showSensors && (
-            <div className={`rounded-2xl p-8 shadow-xl text-center transition-all duration-300 hover:shadow-2xl hover:scale-105 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}>
+            <div 
+              className={`rounded-2xl p-8 shadow-xl text-center transition-all duration-300 hover:shadow-2xl hover:scale-105 cursor-pointer ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}
+              onClick={() => router.push('/alerts')}
+            >
               <div className={`flex items-center justify-center w-20 h-20 bg-gradient-to-r from-blue-400 to-cyan-500 rounded-2xl mb-6 mx-auto shadow-lg`}>
                 <span className="text-3xl">📶</span>
                </div>
@@ -571,7 +582,7 @@ export default function Dashboard() {
                 : axisTemp.title}
             </h3>
             <div className="flex items-center gap-4">
-              <div className="text-sm text-slate-500 bg-slate-100 px-3 py-2 rounded-lg">Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span></div>
+              <div className={`text-sm px-3 py-2 rounded-lg ${darkMode ? "text-slate-300 bg-slate-700" : "text-slate-500 bg-slate-100"}`}>Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span></div>
             <div className="flex items-center gap-3">
                 <label className={`text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Filter:</label>
                 <select
