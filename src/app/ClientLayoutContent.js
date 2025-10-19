@@ -1,6 +1,7 @@
 "use client";
 
 import { useDarkMode } from './DarkModeContext';
+import ChatBot from '../components/ChatBot';
 
 export default function ClientLayoutContent({ children }) {
   const { darkMode } = useDarkMode();
@@ -46,6 +47,9 @@ export default function ClientLayoutContent({ children }) {
       <footer style={styles.footer}>
         © {new Date().getFullYear()} Safe Sense. All rights reserved.
       </footer>
+
+      {/* AI Chatbot - Available on all pages */}
+      <ChatBot />
     </>
   );
 }
