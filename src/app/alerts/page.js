@@ -1336,6 +1336,9 @@ export default function Alerts() {
   
   const [savingSensorName, setSavingSensorName] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  
+  // Add Alert modal state
+  const [showAddAlert, setShowAddAlert] = useState(false);
 
   const makeKey = (sensor_id) => `${sensor_id}`;
 
@@ -1906,6 +1909,17 @@ export default function Alerts() {
               <option value="viewer">Viewer</option>
             </select>
           </div>
+          <button
+            onClick={() => setShowAddAlert(true)}
+            className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${
+              darkMode
+                ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-500 hover:to-emerald-500'
+                : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600'
+            }`}
+          >
+            <span className="text-xl">+</span>
+            Add Alert
+          </button>
           {error && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <button
             onClick={() => {
@@ -2478,6 +2492,115 @@ export default function Alerts() {
         <Sidebar darkMode={darkMode} activeKey="alerts" />
         {currentView === 'alerts' && renderAlertsView()}
         {currentView === 'alertDetail' && renderAlertDetailView()}
+        
+        {/* ADD ALERT MODAL - Global, accessible from any view */}
+        {showAddAlert && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setShowAddAlert(false)} />
+            <div className={`relative w-full max-w-4xl mx-4 rounded-2xl shadow-2xl ${darkMode ? 'bg-slate-800 text-white' : 'bg-white'} p-8 max-h-[90vh] overflow-y-auto`}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-3xl font-bold">Configure Sensor Alerts</h3>
+                <button
+                  onClick={() => setShowAddAlert(false)}
+                  className={`p-2 rounded-lg transition-all ${
+                    darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+                  }`}
+                >
+                  <span className="text-2xl">×</span>
+                </button>
+              </div>
+
+              <p className={`mb-6 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                Select a sensor below and click on it to configure alert thresholds and notification preferences.
+              </p>
+
+              {streams.length === 0 ? (
+                <div className={`text-center py-12 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <p className="text-lg mb-4">No sensors available</p>
+                  <p className="text-sm">Add sensors from the Devices page first.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {streams.map((sensor) => {
+                    const statusStyles = getStatusStyles(sensor.status, darkMode);
+                    const hasAlert = sensor.status === 'alert' || sensor.status === 'warning';
+                    
+                    return (
+                      <div
+                        key={sensor.id}
+                        onClick={() => {
+                          setSelectedId(sensor.id);
+                          setCurrentView('alertDetail');
+                          setShowAddAlert(false);
+                        }}
+                        className={`p-6 rounded-xl border-2 cursor-pointer transition-all duration-200 hover:shadow-lg ${
+                          darkMode
+                            ? 'bg-slate-700 border-slate-600 hover:border-orange-500'
+                            : 'bg-white border-slate-200 hover:border-orange-500'
+                        } ${hasAlert ? 'ring-2 ring-red-500/50' : ''}`}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <h4 className="text-lg font-bold">{sensor.name}</h4>
+                            <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                              {sensor.sensor_type === 'humidity' ? '💧 Humidity' : '🌡️ Temperature'}
+                            </p>
+                          </div>
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              sensor.status === 'alert'
+                                ? 'bg-red-100 text-red-800 border border-red-300'
+                                : sensor.status === 'warning'
+                                ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                                : sensor.status === 'ok'
+                                ? 'bg-green-100 text-green-800 border border-green-300'
+                                : 'bg-slate-100 text-slate-800 border border-slate-300'
+                            }`}
+                          >
+                            {sensor.status}
+                          </span>
+                        </div>
+                        
+                        <div className={`text-2xl font-bold mb-2 ${statusStyles.value}`}>
+                          {sensor.status === 'offline' || sensor.status === 'unknown'
+                            ? 'N/A'
+                            : sensor.temp != null
+                            ? (sensor.sensor_type === 'humidity'
+                              ? `${sensor.temp.toFixed(1)}%`
+                              : `${convertForDisplay(sensor.temp, userTempScale).toFixed(1)}°${userTempScale}`)
+                            : '—'}
+                        </div>
+                        
+                        <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                          {sensor.lastFetchedTime ? toLocalFromReading({ last_fetched_time: sensor.lastFetchedTime }, userTimeZone) : 'No data'}
+                        </div>
+                        
+                        {(sensor.status === 'offline' || sensor.status === 'unknown') && (
+                          <div className={`mt-3 text-xs px-3 py-2 rounded-lg ${
+                            darkMode ? 'bg-slate-600 text-slate-300' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {getUnconfiguredReason(sensor)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-4 mt-8">
+                <button
+                  onClick={() => setShowAddAlert(false)}
+                  className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 ${
+                    darkMode ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'
+                  }`}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </ErrorBoundary>
   );
