@@ -38,6 +38,17 @@ function TeamContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isAuthed, setIsAuthed] = useState(false);
+  // Sensor groups and batch assignment
+  const [sensorGroups, setSensorGroups] = useState([]);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [selectedSensorsForGroup, setSelectedSensorsForGroup] = useState([]);
+  const [editingGroup, setEditingGroup] = useState(null);
+  // Batch assignment state
+  const [batchSelectAll, setBatchSelectAll] = useState(false);
+  const [batchSelectedGroups, setBatchSelectedGroups] = useState([]);
+  const [batchSelectedSensors, setBatchSelectedSensors] = useState([]);
+  const [showBatchAssignment, setShowBatchAssignment] = useState(false);
 
   // Get initials for avatar
   const getInitials = (name) => {
@@ -167,6 +178,21 @@ function TeamContent() {
     if (isAuthed) loadShares();
   }, [activeSensorId, isAuthed, loadShares]);
 
+  // Load sensor groups
+  useEffect(() => {
+    const loadSensorGroups = async () => {
+      if (isAuthed && currentUser?.id) {
+        try {
+          const res = await apiClient.getSensorGroups();
+          setSensorGroups(res?.groups || []);
+        } catch (e) {
+          console.error('Failed to load sensor groups:', e);
+        }
+      }
+    };
+    loadSensorGroups();
+  }, [isAuthed, currentUser?.id]);
+
   // Handle invitation acceptance/rejection from URL params
   useEffect(() => {
     const accepted = searchParams.get('accepted');
@@ -254,54 +280,170 @@ function TeamContent() {
     }
   }, [searchParams]);
 
-  // Handle sending invitation
+  // Handle sending invitation (single sensor - legacy)
   const handleSendInvite = async () => {
     if (!inviteEmail) {
       alert('Please enter an email address.');
       return;
     }
 
+    if (!activeSensorId) {
+      alert('Please select a sensor first.');
+        return;
+      }
+      
     try {
-      // Use API to send invitation
-      const response = await fetch('/api/sendInvite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          email: inviteEmail, 
-          role: inviteRole,
-          sensorId: activeSensorId 
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to send invitation');
-      }
-
-      const result = await response.json();
-      
-      if (result.alreadyMember) {
-        alert(`${inviteEmail} is already a team member.`);
-        return;
-      }
-
-      if (result.pendingInvite) {
-        alert(`There's already a pending invitation for ${inviteEmail}.`);
-        return;
-      }
-      
-      if (result.success) {
-        console.log('Invite sent successfully to:', inviteEmail);
+      await apiClient.shareSensor({ sensorId: activeSensorId, role: inviteRole, email: inviteEmail });
         alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
         setInviteEmail('');
-      } else {
-        throw new Error(result.error || 'Failed to send invitation');
-      }
+      await loadShares();
     } catch (err) {
       console.error('Send invite error:', err);
       setError(`Failed to send invitation: ${err.message}`);
       alert(`Failed to send invitation: ${err.message}`);
     }
+  };
+
+  // Handle batch assignment
+  const handleBatchAssign = async () => {
+    if (!inviteEmail) {
+      alert('Please enter an email address.');
+      return;
+    }
+
+    if (!batchSelectAll && batchSelectedGroups.length === 0 && batchSelectedSensors.length === 0) {
+      alert('Please select at least one sensor, group, or "Select All".');
+      return;
+    }
+
+    try {
+      // Filter out sensors that are already in selected groups to avoid duplicates
+      const sensorsInSelectedGroups = getSensorsFromGroups();
+      const filteredSensorIds = batchSelectedSensors.filter(id => !sensorsInSelectedGroups.includes(id));
+
+      const result = await apiClient.batchAssignAccess({
+        email: inviteEmail,
+        role: inviteRole,
+        selectAll: batchSelectAll,
+        groupIds: batchSelectedGroups,
+        sensorIds: filteredSensorIds
+      });
+
+      alert(`Batch invitation sent to ${inviteEmail} for ${result.sensorCount || 0} sensor(s) with role: ${inviteRole}`);
+      setInviteEmail('');
+      setBatchSelectAll(false);
+      setBatchSelectedGroups([]);
+      setBatchSelectedSensors([]);
+      setShowBatchAssignment(false);
+      
+      // Refresh shares if a sensor is selected
+      if (activeSensorId) {
+        await loadShares();
+      }
+    } catch (err) {
+      console.error('Batch assign error:', err);
+      setError(`Failed to send batch invitation: ${err.message}`);
+      alert(`Failed to send batch invitation: ${err.message}`);
+    }
+  };
+
+  // Sensor group management handlers
+  const handleCreateGroup = async () => {
+    if (!groupName.trim()) {
+      alert('Please enter a group name.');
+      return;
+    }
+
+    if (selectedSensorsForGroup.length === 0) {
+      alert('Please select at least one sensor for the group.');
+      return;
+    }
+
+    try {
+      if (editingGroup) {
+        await apiClient.updateSensorGroup({
+          id: editingGroup.id,
+          name: groupName.trim(),
+          sensorIds: selectedSensorsForGroup
+        });
+        alert('Sensor group updated successfully');
+      } else {
+        await apiClient.createSensorGroup({
+          name: groupName.trim(),
+          sensorIds: selectedSensorsForGroup
+        });
+        alert('Sensor group created successfully');
+      }
+      
+      // Reload groups
+      const res = await apiClient.getSensorGroups();
+      setSensorGroups(res?.groups || []);
+      
+      // Reset form
+      setGroupName('');
+      setSelectedSensorsForGroup([]);
+      setEditingGroup(null);
+      setShowGroupModal(false);
+    } catch (err) {
+      console.error('Create/update group error:', err);
+      alert(`Failed to ${editingGroup ? 'update' : 'create'} group: ${err.message}`);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    if (!confirm('Are you sure you want to delete this sensor group?')) {
+      return;
+    }
+
+    try {
+      await apiClient.deleteSensorGroup(groupId);
+      alert('Sensor group deleted successfully');
+      
+      // Reload groups
+      const res = await apiClient.getSensorGroups();
+      setSensorGroups(res?.groups || []);
+    } catch (err) {
+      console.error('Delete group error:', err);
+      alert(`Failed to delete group: ${err.message}`);
+    }
+  };
+
+  const handleEditGroup = (group) => {
+    setEditingGroup(group);
+    setGroupName(group.name);
+    setSelectedSensorsForGroup(group.sensors.map(s => s.sensorId));
+    setShowGroupModal(true);
+  };
+
+  // Get owned sensors (for group creation)
+  const ownedSensors = sensors.filter(s => s.access_role === 'owner');
+
+  // Handle batch checkbox changes
+  const handleBatchGroupToggle = (groupId) => {
+    setBatchSelectedGroups(prev => 
+      prev.includes(groupId) 
+        ? prev.filter(id => id !== groupId)
+        : [...prev, groupId]
+    );
+  };
+
+  const handleBatchSensorToggle = (sensorId) => {
+    setBatchSelectedSensors(prev => 
+      prev.includes(sensorId)
+        ? prev.filter(id => id !== sensorId)
+        : [...prev, sensorId]
+    );
+  };
+
+  // Get sensors from selected groups
+  const getSensorsFromGroups = () => {
+    const groupSensorIds = new Set();
+    sensorGroups
+      .filter(g => batchSelectedGroups.includes(g.id))
+      .forEach(g => {
+        g.sensors.forEach(s => groupSensorIds.add(s.sensorId));
+      });
+    return Array.from(groupSensorIds);
   };
 
   // Handle removing a user from sensor access
@@ -386,6 +528,174 @@ function TeamContent() {
           </div>
 
           {error && <p className="text-red-500 text-center mb-4">{error}</p>}
+
+          {/* Sensor Groups Management Section */}
+          {ownedSensors.length > 0 && (
+            <div className={`rounded-lg shadow p-6 mb-6 ${darkMode ? 'bg-slate-800 text-white border border-slate-700' : 'bg-white shadow-2xl border border-slate-100'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Sensor Groups</h3>
+                <button
+                  onClick={() => {
+                    setEditingGroup(null);
+                    setGroupName('');
+                    setSelectedSensorsForGroup([]);
+                    setShowGroupModal(true);
+                  }}
+                  className={`px-4 py-2 rounded text-white ${darkMode ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-500 hover:bg-blue-600'}`}
+                >
+                  Create Group
+                </button>
+              </div>
+              
+              {sensorGroups.length > 0 ? (
+                <div className="space-y-2">
+                  {sensorGroups.map(group => (
+                    <div key={group.id} className={`flex items-center justify-between p-3 rounded ${darkMode ? 'bg-slate-700' : 'bg-gray-50'}`}>
+                      <div>
+                        <span className="font-medium">{group.name}</span>
+                        <span className={`ml-2 text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                          ({group.sensors?.length || 0} sensors)
+                        </span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleEditGroup(group)}
+                          className={`px-2 py-1 text-xs rounded ${darkMode ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-500 hover:bg-blue-600'} text-white`}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteGroup(group.id)}
+                          className={`px-2 py-1 text-xs rounded ${darkMode ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'} text-white`}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                  No sensor groups yet. Create one to organize your sensors.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Batch Assignment Section */}
+          {ownedSensors.length > 0 && (
+            <div className={`rounded-lg shadow p-6 mb-6 ${darkMode ? 'bg-slate-800 text-white border border-slate-700' : 'bg-white shadow-2xl border border-slate-100'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">Batch Assign Access</h3>
+                <button
+                  onClick={() => {
+                    setShowBatchAssignment(!showBatchAssignment);
+                    if (!showBatchAssignment) {
+                      setBatchSelectAll(false);
+                      setBatchSelectedGroups([]);
+                      setBatchSelectedSensors([]);
+                    }
+                  }}
+                  className={`px-4 py-2 rounded text-white ${darkMode ? 'bg-green-600 hover:bg-green-700' : 'bg-green-500 hover:bg-green-600'}`}
+                >
+                  {showBatchAssignment ? 'Hide' : 'Assign Access'}
+                </button>
+              </div>
+
+              {showBatchAssignment && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="email"
+                      placeholder="Invite user by email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      className={`flex-grow border rounded px-3 py-2 ${darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white border-gray-300'}`}
+                    />
+                    <select
+                      value={inviteRole}
+                      onChange={(e) => setInviteRole(e.target.value)}
+                      className={`border rounded px-3 py-2 ${darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white border-gray-300'}`}
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <button
+                      onClick={handleBatchAssign}
+                      className={`px-4 py-2 rounded text-white ${darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'}`}
+                    >
+                      Send Invitation
+                    </button>
+                  </div>
+
+                  <div className={`border rounded p-4 ${darkMode ? 'border-slate-600' : 'border-gray-300'}`}>
+                    <div className="space-y-3">
+                      {/* Select All */}
+                      <label className="flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={batchSelectAll}
+                          onChange={(e) => {
+                            setBatchSelectAll(e.target.checked);
+                            if (e.target.checked) {
+                              setBatchSelectedGroups([]);
+                              setBatchSelectedSensors([]);
+                            }
+                          }}
+                          className="mr-2 h-4 w-4"
+                        />
+                        <span className="font-semibold">Select All Sensors</span>
+                      </label>
+
+                      {/* Sensor Groups */}
+                      {sensorGroups.length > 0 && (
+                        <div className="ml-6 space-y-2">
+                          <p className={`text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Sensor Groups:</p>
+                          {sensorGroups.map(group => (
+                            <label key={group.id} className="flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={batchSelectedGroups.includes(group.id)}
+                                onChange={() => handleBatchGroupToggle(group.id)}
+                                disabled={batchSelectAll}
+                                className="mr-2 h-4 w-4"
+                              />
+                              <span>{group.name} ({group.sensors?.length || 0} sensors)</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Individual Sensors */}
+                      <div className="ml-6 space-y-2">
+                        <p className={`text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Individual Sensors:</p>
+                        <div className="max-h-48 overflow-y-auto space-y-2">
+                          {ownedSensors.map(sensor => {
+                            const isInSelectedGroup = getSensorsFromGroups().includes(sensor.id);
+                            return (
+                              <label key={sensor.id} className="flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={batchSelectedSensors.includes(sensor.id) || batchSelectAll}
+                                  onChange={() => handleBatchSensorToggle(sensor.id)}
+                                  disabled={batchSelectAll || isInSelectedGroup}
+                                  className="mr-2 h-4 w-4"
+                                />
+                                <span className={isInSelectedGroup ? 'text-gray-400 line-through' : ''}>
+                                  {sensor.name}
+                                  {isInSelectedGroup && ' (in selected group)'}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className={`rounded-lg shadow p-6 ${darkMode ? 'bg-slate-800 text-white border border-slate-700' : 'bg-white shadow-2xl border border-slate-100'}`}>
             <p className={`text-sm mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Your sensors</p>
@@ -503,12 +813,96 @@ function TeamContent() {
             </div>
           </div>
           {showPopup && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
               <div className={`p-4 rounded ${darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'}`}>
                 <p>This person ({rejectedName}) rejected the invitation.</p>
                 <button onClick={closePopup} className={`mt-4 px-4 py-2 rounded hover:bg-red-600 ${darkMode ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'} text-white`}>
                   Close
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Sensor Group Modal */}
+          {showGroupModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className={`p-6 rounded-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-slate-800 text-white' : 'bg-white text-gray-800'}`}>
+                <h3 className="text-xl font-semibold mb-4">
+                  {editingGroup ? 'Edit Sensor Group' : 'Create Sensor Group'}
+                </h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Group Name
+                    </label>
+                    <input
+                      type="text"
+                      value={groupName}
+                      onChange={(e) => setGroupName(e.target.value)}
+                      placeholder="e.g., Floor 1 Sensors, Kitchen Sensors"
+                      className={`w-full border rounded px-3 py-2 ${darkMode ? 'bg-gray-700 text-white border-gray-600' : 'bg-white border-gray-300'}`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Select Sensors
+                    </label>
+                    <div className={`border rounded p-3 max-h-64 overflow-y-auto ${darkMode ? 'border-gray-600 bg-gray-700' : 'border-gray-300 bg-gray-50'}`}>
+                      {ownedSensors.length > 0 ? (
+                        <div className="space-y-2">
+                          {ownedSensors.map(sensor => (
+                            <label key={sensor.id} className="flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedSensorsForGroup.includes(sensor.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedSensorsForGroup([...selectedSensorsForGroup, sensor.id]);
+                                  } else {
+                                    setSelectedSensorsForGroup(selectedSensorsForGroup.filter(id => id !== sensor.id));
+                                  }
+                                }}
+                                className="mr-2 h-4 w-4"
+                              />
+                              <span>{sensor.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                          No sensors available. You need to own sensors to create groups.
+                        </p>
+                      )}
+                    </div>
+                    {selectedSensorsForGroup.length > 0 && (
+                      <p className={`text-sm mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                        {selectedSensorsForGroup.length} sensor(s) selected
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 mt-6">
+                  <button
+                    onClick={() => {
+                      setShowGroupModal(false);
+                      setGroupName('');
+                      setSelectedSensorsForGroup([]);
+                      setEditingGroup(null);
+                    }}
+                    className={`px-4 py-2 rounded ${darkMode ? 'bg-gray-600 hover:bg-gray-700' : 'bg-gray-200 hover:bg-gray-300'} text-white`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateGroup}
+                    className={`px-4 py-2 rounded text-white ${darkMode ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-500 hover:bg-blue-600'}`}
+                  >
+                    {editingGroup ? 'Update' : 'Create'}
+                  </button>
+                </div>
               </div>
             </div>
           )}

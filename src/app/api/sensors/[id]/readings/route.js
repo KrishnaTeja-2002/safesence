@@ -22,7 +22,7 @@ export async function GET(request, context) {
       });
     }
 
-    // Query real data from mqtt_consumer_test (with replay support) or fallback to mqtt_consumer
+    // Query real data from mqtt_consumer_test (with replay support)
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
     

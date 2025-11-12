@@ -99,6 +99,11 @@ class ApiClient {
   async getSensors() {
     return this.request('/sensors');
   }
+
+  // Sync Sensors API - Syncs data from mqtt_consumer_test to sensors table
+  async syncSensors() {
+    return this.request('/sync-sensors');
+  }
   async getDevices() {
     return this.request('/devices');
   }
@@ -232,6 +237,51 @@ class ApiClient {
         sensorId,
         role,
         email
+      })
+    });
+  }
+
+  // Sensor Groups API
+  async getSensorGroups() {
+    return this.request('/sensor-groups');
+  }
+
+  async createSensorGroup({ name, sensorIds }) {
+    return this.request('/sensor-groups', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        sensorIds
+      })
+    });
+  }
+
+  async updateSensorGroup({ id, name, sensorIds }) {
+    return this.request('/sensor-groups', {
+      method: 'PUT',
+      body: JSON.stringify({
+        id,
+        name,
+        sensorIds
+      })
+    });
+  }
+
+  async deleteSensorGroup(id) {
+    const params = new URLSearchParams({ id });
+    return this.request(`/sensor-groups?${params.toString()}`, { method: 'DELETE' });
+  }
+
+  // Batch Assignment API
+  async batchAssignAccess({ email, role, selectAll, groupIds, sensorIds }) {
+    return this.request('/shares/batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        role,
+        selectAll,
+        groupIds,
+        sensorIds
       })
     });
   }

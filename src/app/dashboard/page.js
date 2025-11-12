@@ -177,9 +177,21 @@ export default function Dashboard() {
   };
 
   /* ===== Data loading function ===== */
-  const loadDashboardData = async (showLoading = true) => {
+  const loadDashboardData = async (showLoading = true, shouldSync = false) => {
     try {
       if (showLoading) setLoadingData(true);
+      
+      // Sync sensors from mqtt_consumer_test to sensors table if requested
+      // (We sync less frequently to avoid performance issues)
+      if (shouldSync) {
+        try {
+          await apiClient.syncSensors();
+        } catch (syncError) {
+          console.warn('Failed to sync sensors (continuing with cached data):', syncError);
+          // Continue even if sync fails - we'll use existing data
+        }
+      }
+      
       const sensorRows = await apiClient.getSensors();
 
         // No need to store thresholds - using database status directly
@@ -305,16 +317,24 @@ export default function Dashboard() {
 
   /* ===== Fetch sensors + latest readings ===== */
   useEffect(() => {
-    // Initial load with loading indicator
-    loadDashboardData(true);
+    // Initial load with loading indicator and sync
+    loadDashboardData(true, true);
     
-    // Set up 15-second interval for seamless updates
-    const interval = setInterval(() => {
-      loadDashboardData(false); // Background updates without loading indicator
+    // Set up 15-second interval for seamless data updates
+    const dataInterval = setInterval(() => {
+      loadDashboardData(false, false); // Background updates without loading indicator, no sync
     }, 15000);
     
-    // Cleanup interval on unmount
-    return () => clearInterval(interval);
+    // Set up 60-second interval for syncing from mqtt_consumer_test
+    const syncInterval = setInterval(() => {
+      loadDashboardData(false, true); // Background sync and data refresh
+    }, 60000);
+    
+    // Cleanup intervals on unmount
+    return () => {
+      clearInterval(dataInterval);
+      clearInterval(syncInterval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs.unit, prefs.showUsers, prefs.tz, prefs.showTemp, prefs.showHumidity, selectedRole, currentUserEmail]);
 

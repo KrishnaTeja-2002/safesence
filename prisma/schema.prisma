@@ -52,6 +52,7 @@ model User {
   sentInvitations             TeamInvitation[]  @relation("Inviter")
   receivedInvitations         TeamInvitation[]  @relation("Invitee")
   userPreferences             UserPreferences?
+  sensorGroups                SensorGroup[]     @relation("SensorGroupOwner")
 
   @@index([instance_id])
   @@index([is_anonymous])
@@ -74,6 +75,7 @@ model Sensor {
   minLimit        Decimal?         @map("min_limit") @db.Decimal(10, 2)
   maxLimit        Decimal?         @map("max_limit") @db.Decimal(10, 2)
   teamInvitations TeamInvitation[]
+  groupMembers    SensorGroupMember[]
 
   @@index([sensorId], map: "idx_sensors_id")
   @@index([sensorType], map: "idx_sensors_sensor_type")
@@ -132,6 +134,35 @@ model TeamInvitation {
 
   @@index([sensorId], map: "idx_team_invites_sensor")
   @@map("team_invitations")
+  @@schema("public")
+}
+
+model SensorGroup {
+  id          String              @id @default(uuid()) @db.Uuid
+  name        String
+  ownerId     String              @map("owner_id") @db.Uuid
+  created_at  DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  owner       User                @relation("SensorGroupOwner", fields: [ownerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  members     SensorGroupMember[]
+
+  @@index([ownerId], map: "idx_sensor_groups_owner")
+  @@map("sensor_groups")
+  @@schema("public")
+}
+
+model SensorGroupMember {
+  id          String      @id @default(uuid()) @db.Uuid
+  groupId     String      @map("group_id") @db.Uuid
+  sensorId    String      @map("sensor_id")
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  group       SensorGroup @relation(fields: [groupId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sensor      Sensor      @relation(fields: [sensorId], references: [sensorId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([groupId, sensorId], map: "uq_sensor_group_member")
+  @@index([groupId], map: "idx_sensor_group_members_group")
+  @@index([sensorId], map: "idx_sensor_group_members_sensor")
+  @@map("sensor_group_members")
   @@schema("public")
 }
 
