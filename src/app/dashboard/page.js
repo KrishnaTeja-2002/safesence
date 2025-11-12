@@ -184,12 +184,8 @@ export default function Dashboard() {
       // Sync sensors from mqtt_consumer_test to sensors table if requested
       // (We sync less frequently to avoid performance issues)
       if (shouldSync) {
-        try {
-          await apiClient.syncSensors();
-        } catch (syncError) {
-          console.warn('Failed to sync sensors (continuing with cached data):', syncError);
-          // Continue even if sync fails - we'll use existing data
-        }
+        // Use silent mode to avoid console errors - we handle failures gracefully
+        await apiClient.syncSensors(true);
       }
       
       const sensorRows = await apiClient.getSensors();

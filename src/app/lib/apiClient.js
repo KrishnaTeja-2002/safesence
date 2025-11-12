@@ -101,8 +101,16 @@ class ApiClient {
   }
 
   // Sync Sensors API - Syncs data from mqtt_consumer_test to sensors table
-  async syncSensors() {
-    return this.request('/sync-sensors');
+  async syncSensors(silent = false) {
+    try {
+      return await this.request('/sync-sensors');
+    } catch (error) {
+      if (!silent) {
+        throw error;
+      }
+      // Silently fail if silent mode is enabled
+      return { success: false, error: error.message };
+    }
   }
   async getDevices() {
     return this.request('/devices');
