@@ -6,18 +6,36 @@ import { authenticateRequest } from '../middleware/auth-postgres.js';
 
 // Use singleton pattern to avoid multiple PrismaClient instances
 const globalForPrisma = globalThis;
-const prisma = globalForPrisma.__safesensePrismaGroups || new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-});
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.__safesensePrismaGroups = prisma;
+// Function to get or create Prisma client
+function getPrismaClient() {
+  if (globalForPrisma.__safesensePrismaGroups) {
+    return globalForPrisma.__safesensePrismaGroups;
+  }
+  
+  const client = new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
+  
+  // Verify models are available
+  if (!client.sensorGroup || typeof client.sensorGroup.create !== 'function') {
+    console.error('WARNING: Prisma client created but sensorGroup model is not available!');
+    console.error('Available properties:', Object.keys(client).filter(k => !k.startsWith('$') && !k.startsWith('_')));
+  }
+  
+  if (process.env.NODE_ENV !== 'production') {
+    globalForPrisma.__safesensePrismaGroups = client;
+  }
+  
+  // Ensure Prisma client is connected
+  client.$connect().catch(() => {
+    // Connection already exists or will be established on first query
+  });
+  
+  return client;
 }
 
-// Ensure Prisma client is connected
-prisma.$connect().catch(() => {
-  // Connection already exists or will be established on first query
-});
+const prisma = getPrismaClient();
 
 // GET /api/sensor-groups - Get all sensor groups for the current user
 export async function GET(request) {
@@ -33,12 +51,12 @@ export async function GET(request) {
 
     try {
       // Verify Prisma client has the sensorGroup model
-      if (!prisma.sensorGroup || typeof prisma.sensorGroup.findMany !== 'function') {
+      if (!getPrismaClient().sensorGroup || typeof getPrismaClient().sensorGroup.findMany !== 'function') {
         console.warn('Prisma client does not have sensorGroup model. Available models:', Object.keys(prisma).filter(k => !k.startsWith('$') && !k.startsWith('_')));
         return NextResponse.json({ groups: [] });
       }
 
-      const groups = await prisma.sensorGroup.findMany({
+      const groups = await getPrismaClient().sensorGroup.findMany({
         where: {
           ownerId: user.id
         },
@@ -176,16 +194,33 @@ export async function POST(request) {
     // Create group with members
     let group;
     try {
+      // Get fresh Prisma client instance to avoid caching issues
+      const prismaClient = getPrismaClient();
+      
+      // Debug: Log Prisma client state
+      console.log('Prisma client check:', {
+        hasSensorGroup: !!prismaClient.sensorGroup,
+        sensorGroupType: typeof prismaClient.sensorGroup,
+        hasCreate: prismaClient.sensorGroup ? typeof prismaClient.sensorGroup.create : 'N/A',
+        availableModels: Object.keys(prismaClient).filter(k => !k.startsWith('$') && !k.startsWith('_')).slice(0, 10)
+      });
+
       // Verify Prisma client has the sensorGroup model
-      if (!prisma.sensorGroup || typeof prisma.sensorGroup.create !== 'function') {
-        console.error('Prisma client does not have sensorGroup model. Available models:', Object.keys(prisma).filter(k => !k.startsWith('$') && !k.startsWith('_')));
+      if (!prismaClient.sensorGroup || typeof prismaClient.sensorGroup.create !== 'function') {
+        const availableModels = Object.keys(prismaClient).filter(k => !k.startsWith('$') && !k.startsWith('_'));
+        console.error('Prisma client does not have sensorGroup model. Available models:', availableModels);
         return NextResponse.json(
-          { error: 'Database models not available. Please regenerate Prisma client and restart the server.' },
+          { 
+            error: 'Database models not available. Please regenerate Prisma client and restart the server.',
+            details: `Available models: ${availableModels.join(', ')}`,
+            code: 'PRISMA_MODEL_MISSING'
+          },
           { status: 500 }
         );
       }
 
-      group = await prisma.sensorGroup.create({
+      console.log('Creating sensor group with data:', { name: name.trim(), ownerId: user.id, sensorIdsCount: sensorIds?.length || 0 });
+      group = await prismaClient.sensorGroup.create({
         data: {
           name: name.trim(),
           ownerId: user.id,
@@ -214,8 +249,25 @@ export async function POST(request) {
         message: createError.message,
         code: createError.code,
         meta: createError.meta,
-        stack: createError.stack
+        stack: createError.stack,
+        name: createError.name,
+        cause: createError.cause
       });
+      
+      // Check if it's the specific "Cannot read properties of undefined" error
+      if (createError.message?.includes('Cannot read properties of undefined') || 
+          createError.message?.includes("reading 'create'")) {
+        console.error('CRITICAL: Prisma sensorGroup model is undefined at runtime!');
+        console.error('This usually means the Prisma client needs to be regenerated or the server needs to be restarted.');
+        return NextResponse.json(
+          { 
+            error: 'Database model initialization error. Please restart the server.',
+            details: 'The sensorGroup model is not available. This typically requires restarting the Next.js server after Prisma client regeneration.',
+            code: 'PRISMA_INIT_ERROR'
+          },
+          { status: 500 }
+        );
+      }
       
       // Check if it's a foreign key constraint error
       if (createError.code === 'P2003' || createError.message?.includes('foreign key') || createError.message?.includes('constraint')) {
@@ -332,7 +384,7 @@ export async function PUT(request) {
     }
 
     // Verify user owns the group
-    const existingGroup = await prisma.sensorGroup.findFirst({
+    const existingGroup = await getPrismaClient().sensorGroup.findFirst({
       where: {
         id: id,
         ownerId: user.id
@@ -374,7 +426,7 @@ export async function PUT(request) {
     // Update members if sensorIds provided
     if (sensorIds !== undefined) {
       // Delete existing members
-      await prisma.sensorGroupMember.deleteMany({
+      await getPrismaClient().sensorGroupMember.deleteMany({
         where: {
           groupId: id
         }
@@ -382,7 +434,7 @@ export async function PUT(request) {
 
       // Create new members
       if (sensorIds.length > 0) {
-        await prisma.sensorGroupMember.createMany({
+        await getPrismaClient().sensorGroupMember.createMany({
           data: sensorIds.map(sensorId => ({
             groupId: id,
             sensorId: sensorId
@@ -392,7 +444,7 @@ export async function PUT(request) {
       }
     }
 
-    const group = await prisma.sensorGroup.update({
+    const group = await getPrismaClient().sensorGroup.update({
       where: { id: id },
       data: updateData,
       include: {
@@ -497,7 +549,7 @@ export async function DELETE(request) {
     }
 
     // Verify user owns the group
-    const existingGroup = await prisma.sensorGroup.findFirst({
+    const existingGroup = await getPrismaClient().sensorGroup.findFirst({
       where: {
         id: id,
         ownerId: user.id
@@ -512,7 +564,7 @@ export async function DELETE(request) {
     }
 
     // Delete group (members will be cascade deleted)
-    await prisma.sensorGroup.delete({
+    await getPrismaClient().sensorGroup.delete({
       where: { id: id }
     });
 
