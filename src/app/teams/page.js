@@ -282,32 +282,72 @@ function TeamContent() {
 
   // Handle sending invitation (single sensor - legacy)
   const handleSendInvite = async () => {
-    if (!inviteEmail) {
+    if (!inviteEmail || !inviteEmail.trim()) {
       alert('Please enter an email address.');
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(inviteEmail.trim())) {
+      alert('Please enter a valid email address.');
       return;
     }
 
     if (!activeSensorId) {
       alert('Please select a sensor first.');
-        return;
-      }
+      return;
+    }
       
     try {
-      await apiClient.shareSensor({ sensorId: activeSensorId, role: inviteRole, email: inviteEmail });
-        alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
-        setInviteEmail('');
+      await apiClient.shareSensor({ 
+        sensorId: activeSensorId, 
+        role: inviteRole, 
+        email: inviteEmail.trim().toLowerCase() 
+      });
+      alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
+      setInviteEmail('');
       await loadShares();
     } catch (err) {
       console.error('Send invite error:', err);
-      setError(`Failed to send invitation: ${err.message}`);
-      alert(`Failed to send invitation: ${err.message}`);
+      
+      // Handle different error types with user-friendly messages
+      let errorMessage = err.message || 'Failed to send invitation';
+      
+      if (err.code === 'DATABASE_ERROR') {
+        errorMessage = 'Unable to connect to the server. Please try again later or contact support.';
+      } else if (err.code === 'DATABASE_OPERATION_ERROR') {
+        if (err.prismaCode === 'P2002') {
+          errorMessage = 'An invitation already exists for this user and sensor combination.';
+        } else if (err.prismaCode === 'P2003') {
+          errorMessage = 'Invalid sensor reference. The sensor may not exist.';
+        } else {
+          errorMessage = 'Database operation failed. Please check your input and try again.';
+        }
+      } else if (err.message && err.message.includes('already has access')) {
+        errorMessage = 'This user already has access to this sensor.';
+      } else if (err.message && err.message.includes('permission')) {
+        errorMessage = 'You do not have permission to invite users to this sensor.';
+      } else if (err.message && err.message.includes('Invalid email')) {
+        errorMessage = 'Please enter a valid email address.';
+      }
+      
+      setError(errorMessage);
+      alert(errorMessage);
     }
   };
 
   // Handle batch assignment
   const handleBatchAssign = async () => {
-    if (!inviteEmail) {
+    if (!inviteEmail || !inviteEmail.trim()) {
       alert('Please enter an email address.');
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(inviteEmail.trim())) {
+      alert('Please enter a valid email address.');
       return;
     }
 
@@ -322,14 +362,18 @@ function TeamContent() {
       const filteredSensorIds = batchSelectedSensors.filter(id => !sensorsInSelectedGroups.includes(id));
 
       const result = await apiClient.batchAssignAccess({
-        email: inviteEmail,
+        email: inviteEmail.trim().toLowerCase(),
         role: inviteRole,
         selectAll: batchSelectAll,
         groupIds: batchSelectedGroups,
         sensorIds: filteredSensorIds
       });
 
-      alert(`Batch invitation sent to ${inviteEmail} for ${result.sensorCount || 0} sensor(s) with role: ${inviteRole}`);
+      if (result.warnings) {
+        alert(`Batch invitation sent to ${inviteEmail} for ${result.sensorCount || 0} sensor(s) with role: ${inviteRole}. ${result.warnings}`);
+      } else {
+        alert(`Batch invitation sent to ${inviteEmail} for ${result.sensorCount || 0} sensor(s) with role: ${inviteRole}`);
+      }
       setInviteEmail('');
       setBatchSelectAll(false);
       setBatchSelectedGroups([]);
@@ -342,8 +386,35 @@ function TeamContent() {
       }
     } catch (err) {
       console.error('Batch assign error:', err);
-      setError(`Failed to send batch invitation: ${err.message}`);
-      alert(`Failed to send batch invitation: ${err.message}`);
+      
+      // Handle different error types with user-friendly messages
+      let errorMessage = err.message || 'Failed to send batch invitation';
+      
+      if (err.code === 'DATABASE_ERROR') {
+        errorMessage = 'Unable to connect to the server. Please try again later or contact support.';
+      } else if (err.code === 'DATABASE_OPERATION_ERROR') {
+        // Check for specific Prisma error codes
+        if (err.prismaCode === 'P2002') {
+          errorMessage = 'An invitation already exists for this user and sensor combination.';
+        } else if (err.prismaCode === 'P2003') {
+          errorMessage = 'Invalid sensor reference. One or more selected sensors may not exist.';
+        } else if (err.prismaCode === 'P2025') {
+          errorMessage = 'Record not found. Please refresh the page and try again.';
+        } else {
+          errorMessage = 'Database operation failed. Please check your selections and try again.';
+        }
+      } else if (err.code === 'DUPLICATE_INVITATION') {
+        errorMessage = 'An invitation already exists for this user. Please check existing invitations.';
+      } else if (err.message && (
+        err.message.includes('database') || 
+        err.message.includes('server') ||
+        err.message.includes('Can\'t reach')
+      )) {
+        errorMessage = 'Server connection error. Please try again later or contact support.';
+      }
+      
+      setError(errorMessage);
+      alert(errorMessage);
     }
   };
 
@@ -386,7 +457,25 @@ function TeamContent() {
       setShowGroupModal(false);
     } catch (err) {
       console.error('Create/update group error:', err);
-      alert(`Failed to ${editingGroup ? 'update' : 'create'} group: ${err.message}`);
+      
+      // Handle different error types with user-friendly messages
+      let errorMessage = err.message || `Failed to ${editingGroup ? 'update' : 'create'} group`;
+      
+      if (err.code === 'DATABASE_ERROR') {
+        errorMessage = 'Unable to connect to the server. Please try again later or contact support.';
+      } else if (err.code === 'DATABASE_OPERATION_ERROR') {
+        errorMessage = 'Database operation failed. Please check your input and try again.';
+      } else if (err.message && (
+        err.message.includes('database') || 
+        err.message.includes('server') ||
+        err.message.includes('Can\'t reach')
+      )) {
+        errorMessage = 'Server connection error. Please try again later or contact support.';
+      } else {
+        errorMessage = `Failed to ${editingGroup ? 'update' : 'create'} group: ${errorMessage}`;
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -739,13 +828,47 @@ function TeamContent() {
                   <button
                       onClick={async () => {
                         try {
-                          if (!inviteEmail) throw new Error('Email is required');
-                                await apiClient.shareSensor({ sensorId: s.id, role: inviteRole, email: inviteEmail });
+                          if (!inviteEmail || !inviteEmail.trim()) {
+                            alert('Please enter an email address.');
+                            return;
+                          }
+                          
+                          // Basic email validation
+                          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                          if (!emailRegex.test(inviteEmail.trim())) {
+                            alert('Please enter a valid email address.');
+                            return;
+                          }
+                          
+                          await apiClient.shareSensor({ 
+                            sensorId: s.id, 
+                            role: inviteRole, 
+                            email: inviteEmail.trim().toLowerCase() 
+                          });
                           setInviteEmail('');
-                                const res = await apiClient.getSensorShares(s.id);
+                          const res = await apiClient.getSensorShares(s.id);
                           setShares(res?.access || []);
+                          alert(`Invitation sent to ${inviteEmail} with role: ${inviteRole}`);
                         } catch (e) {
-                          setError(e?.message || String(e));
+                          console.error('Share sensor error:', e);
+                          let errorMessage = e?.message || 'Failed to send invitation';
+                          
+                          if (e.code === 'DATABASE_ERROR') {
+                            errorMessage = 'Unable to connect to the server. Please try again later.';
+                          } else if (e.code === 'DATABASE_OPERATION_ERROR') {
+                            if (e.prismaCode === 'P2002') {
+                              errorMessage = 'An invitation already exists for this user.';
+                            } else {
+                              errorMessage = 'Database operation failed. Please try again.';
+                            }
+                          } else if (e.message && e.message.includes('already has access')) {
+                            errorMessage = 'This user already has access to this sensor.';
+                          } else if (e.message && e.message.includes('permission')) {
+                            errorMessage = 'You do not have permission to invite users.';
+                          }
+                          
+                          setError(errorMessage);
+                          alert(errorMessage);
                         }
                       }}
                       className={`px-4 py-2 rounded text-white ${darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'}`}

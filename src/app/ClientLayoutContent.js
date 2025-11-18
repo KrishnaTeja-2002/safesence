@@ -36,10 +36,6 @@ export default function ClientLayoutContent({ children }) {
 
   return (
     <>
-      <header style={styles.header}>
-        <div style={styles.logo}>Safe Sense</div>
-      </header>
-
       <main style={styles.main}>
         {children}
       </main>

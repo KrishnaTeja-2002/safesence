@@ -206,7 +206,7 @@ export default function DevicesPage() {
                             {(() => {
                               const st = (s.status || '').toLowerCase();
                               const cls = st === 'alert' ? (darkMode ? 'bg-red-900 text-red-300' : 'bg-red-100 text-red-800') : st === 'warning' ? (darkMode ? 'bg-yellow-900 text-yellow-300' : 'bg-yellow-100 text-yellow-800') : st === 'ok' ? (darkMode ? 'bg-green-900 text-green-300' : 'bg-green-100 text-green-800') : (darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-800');
-                              return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{s.status || 'unknown'}</span>;
+                              return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{s.status || 'offline'}</span>;
                             })()}
                           </td>
                           <td className="py-2 text-sm">

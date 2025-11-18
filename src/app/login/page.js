@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useDarkMode } from '../DarkModeContext';
 // Custom authentication - no longer using Supabase
 console.log('Google Client ID:', process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
@@ -29,6 +30,7 @@ const checkAuth = async () => {
 };
 
 export default function Home() {
+  const { darkMode } = useDarkMode();
   const [isSignup, setIsSignup] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
@@ -118,13 +120,48 @@ export default function Home() {
     return () => document.body.removeChild(script);
   }, []);
 
-  const handleCredentialResponse = (response) => {
+  const handleCredentialResponse = async (response) => {
     const idToken = response.credential;
-    console.log('Google ID Token:', idToken);
+    console.log('Google ID Token received');
+    setError('');
+    setLoginMessage('');
+
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential: idToken })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || 'Google login failed');
+      }
+
+      console.log('Google login successful:', data);
+      
+      // Store token and redirect
+      if (data.token) {
+        localStorage.setItem('auth-token', data.token);
+        setLoginMessage('Logged in successfully! Redirecting...');
+        setTimeout(() => router.push('/dashboard'), 1000);
+      } else {
+        setLoginMessage('Login successful! Please try again.');
+      }
+    } catch (error) {
+      console.error('Google login error:', error);
+      setError('Google login failed: ' + error.message);
+    }
   };
 
   const handleGoogleSignIn = async () => {
-    setError('Google Sign-In is not configured with the new auth.');
+    // Trigger Google Sign-In button click
+    if (window.google && window.google.accounts) {
+      window.google.accounts.id.prompt();
+    } else {
+      setError('Google Sign-In is not available. Please refresh the page.');
+    }
   };
 
   // Signup
@@ -223,10 +260,20 @@ export default function Home() {
         })
       });
       
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        // If response is not JSON, handle as network error
+        throw new Error('Failed to parse server response');
+      }
       
       if (!response.ok) {
-        throw new Error(data.message || 'Login failed');
+        // Create error with response data
+        const error = new Error(data.message || 'Login failed');
+        error.code = data.code;
+        error.response = response;
+        throw error;
       }
       
       console.log('Login successful:', data);
@@ -242,9 +289,13 @@ export default function Home() {
     } catch (error) {
       console.error('Login error:', error.message);
       
+      const errorMessage = error.message || 'Login failed';
+      const errorCode = error.code;
+      
       // Check if error is about email verification
-      const isVerificationError = error.message.includes('verify your email') || 
-                                 error.message.includes('email before logging in');
+      const isVerificationError = errorMessage.includes('verify your email') || 
+                                 errorMessage.includes('email before logging in') ||
+                                 errorCode === 'VERIFICATION_REQUIRED';
       
       if (isVerificationError) {
         setShowResendOption(true);
@@ -252,13 +303,16 @@ export default function Home() {
         setShowResendOption(false);
       }
       
-      setLoginMessage(
-        error.message === 'Failed to fetch'
-          ? 'Unable to connect to authentication server. Please check your network or contact support.'
-          : error.message.includes('Invalid') || error.message.includes('credentials')
-          ? 'Invalid email or password. Please try again.'
-          : 'Login failed: ' + error.message
-      );
+      // Handle different error types
+      if (error.message === 'Failed to fetch' || errorCode === 'DATABASE_ERROR') {
+        setLoginMessage('Unable to connect to the server. Please check your network connection or try again later.');
+      } else if (errorMessage.includes('Invalid') || errorMessage.includes('credentials')) {
+        setLoginMessage('Invalid email or password. Please try again.');
+      } else if (errorMessage.includes('database') || errorMessage.includes('server') || errorMessage.includes('Can\'t reach')) {
+        setLoginMessage('Server connection error. Please try again later or contact support.');
+      } else {
+        setLoginMessage('Login failed: ' + errorMessage);
+      }
     }
   };
 
@@ -321,6 +375,8 @@ export default function Home() {
       );
     }
   };
+
+  const styles = getStyles(darkMode);
 
   return (
     <main style={styles.main}>
@@ -506,7 +562,7 @@ export default function Home() {
   );
 }
 
-const styles = {
+const getStyles = (darkMode) => ({
   main: { 
     display: 'flex', 
     flexDirection: 'column', 
@@ -518,25 +574,49 @@ const styles = {
     overflow: 'hidden',
     position: 'fixed',
     top: 0,
-    left: 0
+    left: 0,
+    backgroundColor: darkMode ? '#0f172a' : '#ffffff',
+    color: darkMode ? '#ededed' : '#000000'
   },
   contentWrapper: { 
     display: 'flex', 
     width: '80%', 
     maxWidth: '1000px', 
-    boxShadow: '0 0 15px rgba(0,0,0,0.1)',
+    boxShadow: darkMode ? '0 0 15px rgba(0,0,0,0.5)' : '0 0 15px rgba(0,0,0,0.1)',
     overflow: 'auto',
     maxHeight: '90vh'
   },
-  welcomeText: { flex: 1, backgroundColor: '#F3F4F6', padding: '3rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
-  card: { flex: 1, backgroundColor: '#fff', padding: '2rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' },
+  welcomeText: { 
+    flex: 1, 
+    backgroundColor: darkMode ? '#1e293b' : '#F3F4F6', 
+    padding: '3rem', 
+    display: 'flex', 
+    flexDirection: 'column', 
+    justifyContent: 'center' 
+  },
+  card: { 
+    flex: 1, 
+    backgroundColor: darkMode ? '#1e293b' : '#fff', 
+    padding: '2rem', 
+    display: 'flex', 
+    flexDirection: 'column', 
+    justifyContent: 'center' 
+  },
   logo: { display: 'flex', alignItems: 'center', marginBottom: '1rem' },
   logoImage: { marginRight: '0.5rem' },
-  logoText: { fontSize: '1.5rem', fontWeight: 'bold' },
-  subtitleBold: { fontSize: '1.25rem', fontWeight: 'bold' },
-  subtitle: { fontSize: '1rem', color: '#6B7280' },
-  label: { marginTop: '1rem', marginBottom: '0.5rem', fontWeight: 'bold' },
-  input: { width: '100%', padding: '0.5rem', marginBottom: '0.5rem', border: '1px solid #D1D5DB', borderRadius: '0.25rem' },
+  logoText: { fontSize: '1.5rem', fontWeight: 'bold', color: darkMode ? '#ededed' : '#000000' },
+  subtitleBold: { fontSize: '1.25rem', fontWeight: 'bold', color: darkMode ? '#ededed' : '#000000' },
+  subtitle: { fontSize: '1rem', color: darkMode ? '#cbd5e1' : '#6B7280' },
+  label: { marginTop: '1rem', marginBottom: '0.5rem', fontWeight: 'bold', color: darkMode ? '#ededed' : '#000000' },
+  input: { 
+    width: '100%', 
+    padding: '0.5rem', 
+    marginBottom: '0.5rem', 
+    border: darkMode ? '1px solid #475569' : '1px solid #D1D5DB', 
+    borderRadius: '0.25rem',
+    backgroundColor: darkMode ? '#334155' : '#ffffff',
+    color: darkMode ? '#ededed' : '#000000'
+  },
   loginBtn: { width: '100%', padding: '0.5rem', backgroundColor: '#F97316', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', marginTop: '0.5rem' },
   loginBtnDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed', opacity: 0.6 },
   resendContainer: { marginTop: '0.5rem', textAlign: 'center' },
@@ -546,15 +626,15 @@ const styles = {
   link: { color: '#F97316', textDecoration: 'none', cursor: 'pointer' },
   linkRight: { color: '#F97316', textDecoration: 'none', cursor: 'pointer', display: 'block', textAlign: 'right', marginBottom: '1rem' },
   links: { marginTop: '1rem', textAlign: 'center' },
-  or: { textAlign: 'center', margin: '1rem 0', color: '#6B7280' },
+  or: { textAlign: 'center', margin: '1rem 0', color: darkMode ? '#cbd5e1' : '#6B7280' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#fff', padding: '2rem', borderRadius: '0.5rem', width: '400px' },
-  modalTitle: { fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '1rem' },
+  modalContent: { backgroundColor: darkMode ? '#1e293b' : '#fff', padding: '2rem', borderRadius: '0.5rem', width: '400px', color: darkMode ? '#ededed' : '#000000' },
+  modalTitle: { fontSize: '1.25rem', fontWeight: 'bold', marginBottom: '1rem', color: darkMode ? '#ededed' : '#000000' },
   form: { display: 'flex', flexDirection: 'column' },
-  error: { color: 'red', marginBottom: '0.5rem' },
+  error: { color: '#ef4444', marginBottom: '0.5rem' },
   message: { color: '#F97316', marginBottom: '0.5rem' },
   closeBtn: { width: '100%', padding: '0.5rem', backgroundColor: '#6B7280', color: '#fff', border: 'none', borderRadius: '0.25rem', cursor: 'pointer', marginTop: '0.5rem' },
   passwordWrapper: { position: 'relative' },
   eyeIcon: { position: 'absolute', right: '0.5rem', top: '0.5rem', cursor: 'pointer' },
-  footer: { textAlign: 'center', marginTop: '1rem', color: '#6B7280' },
-};
+  footer: { textAlign: 'center', marginTop: '1rem', color: darkMode ? '#cbd5e1' : '#6B7280' },
+});

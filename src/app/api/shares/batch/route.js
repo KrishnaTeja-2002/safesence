@@ -27,6 +27,24 @@ export async function POST(request) {
       );
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!emailRegex.test(normalizedEmail)) {
+      return NextResponse.json(
+        { error: 'Invalid email format' },
+        { status: 400 }
+      );
+    }
+
+    // Validate role
+    if (!['viewer', 'admin'].includes(role)) {
+      return NextResponse.json(
+        { error: 'Role must be either "viewer" or "admin"' },
+        { status: 400 }
+      );
+    }
+
     // Get all sensors user owns
     const userSensors = await prisma.$queryRaw`
       SELECT s.sensor_id
@@ -83,7 +101,7 @@ export async function POST(request) {
     const existingInvitations = await prisma.teamInvitation.findMany({
       where: {
         sensorId: { in: targetSensorIds },
-        email: email,
+        email: normalizedEmail,
         status: 'pending'
       }
     });
@@ -105,21 +123,46 @@ export async function POST(request) {
     const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     const acceptLink = `${origin}/api/sendInvite?token=${token}`;
 
-    const invitations = await Promise.all(
-      targetSensorIds.map(sensorId =>
-        prisma.teamInvitation.create({
+    // Create invitations one by one to better handle errors
+    const invitations = [];
+    const errors = [];
+    
+    for (const sensorId of targetSensorIds) {
+      try {
+        const invitation = await prisma.teamInvitation.create({
           data: {
             token,
-            email: email,
+            email: normalizedEmail,
             role: roleLabel,
             status: 'pending',
             inviterId: user.id,
             sensorId: sensorId,
             inviteLink: acceptLink
           }
-        })
-      )
-    );
+        });
+        invitations.push(invitation);
+      } catch (inviteError) {
+        console.error(`Failed to create invitation for sensor ${sensorId}:`, inviteError);
+        errors.push({
+          sensorId,
+          error: inviteError.message,
+          code: inviteError.code
+        });
+      }
+    }
+    
+    // If all invitations failed, throw an error
+    if (invitations.length === 0 && errors.length > 0) {
+      const firstError = errors[0];
+      const error = new Error(`Failed to create invitations: ${firstError.error}`);
+      error.code = firstError.code;
+      throw error;
+    }
+    
+    // Log partial failures
+    if (errors.length > 0) {
+      console.warn(`Created ${invitations.length} invitations, ${errors.length} failed:`, errors);
+    }
 
     // Send email with invitation
     try {
@@ -151,7 +194,7 @@ export async function POST(request) {
           address: 'safesencewinwinlabs@gmail.com'
         },
         replyTo: 'safesense@winwinlabs.org',
-        to: email,
+        to: normalizedEmail,
         subject: 'Team Invitation - SafeSense',
         headers: {
           'X-Mailer': 'SafeSense',
@@ -198,7 +241,7 @@ export async function POST(request) {
       };
 
       await transporter.sendMail(mailOptions);
-      console.log('Batch invitation email sent successfully to', email);
+      console.log('Batch invitation email sent successfully to', normalizedEmail);
     } catch (error) {
       console.error('Failed to send batch invitation email:', error);
     }
@@ -207,12 +250,84 @@ export async function POST(request) {
       success: true, 
       invited: true, 
       token,
-      sensorCount: targetSensorIds.length 
+      sensorCount: invitations.length,
+      totalRequested: targetSensorIds.length,
+      failedCount: errors.length,
+      warnings: errors.length > 0 ? `Some invitations failed (${errors.length} of ${targetSensorIds.length})` : undefined
     });
   } catch (error) {
     console.error('Batch assign error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
+    // Handle database connection errors
+    if (error.message && (
+      error.message.includes('Can\'t reach database server') ||
+      error.message.includes('database server') ||
+      error.message.includes('ECONNREFUSED') ||
+      error.message.includes('ETIMEDOUT') ||
+      error.message.includes('P1001')
+    )) {
+      return NextResponse.json(
+        { 
+          error: 'Unable to connect to the database. Please try again later or contact support.',
+          code: 'DATABASE_ERROR'
+        },
+        { status: 503 }
+      );
+    }
+    
+    // Handle Prisma validation errors
+    if (error.code && error.code.startsWith('P')) {
+      console.error('Prisma error code:', error.code);
+      console.error('Prisma error message:', error.message);
+      console.error('Prisma error meta:', error.meta);
+      
+      // Provide more specific error messages based on Prisma error codes
+      let userMessage = 'Database operation failed. Please check your input and try again.';
+      if (error.code === 'P2002') {
+        userMessage = 'A record with this information already exists. Please check for duplicate entries.';
+      } else if (error.code === 'P2003') {
+        userMessage = 'Invalid reference. One or more selected sensors may not exist.';
+      } else if (error.code === 'P2025') {
+        userMessage = 'Record not found. Please refresh and try again.';
+      }
+      
+      return NextResponse.json(
+        { 
+          error: userMessage,
+          code: 'DATABASE_OPERATION_ERROR',
+          prismaCode: error.code,
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+          meta: process.env.NODE_ENV === 'development' ? error.meta : undefined
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Handle specific known errors
+    if (error.message && error.message.includes('Unique constraint')) {
+      return NextResponse.json(
+        { 
+          error: 'An invitation already exists for this user and sensor combination.',
+          code: 'DUPLICATE_INVITATION'
+        },
+        { status: 409 }
+      );
+    }
+    
+    // Generic error with more details in development
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: process.env.NODE_ENV === 'development' 
+          ? `Internal server error: ${error.message}` 
+          : 'An error occurred while processing your request. Please try again later.',
+        code: 'INTERNAL_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }

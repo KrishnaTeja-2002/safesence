@@ -128,7 +128,7 @@ export default function Account() {
     try {
       const row = {
         user_id: userId,
-        temp_scale: TEMP_UI_TO_DB[preferences.tempScale] ?? "F",
+        temp_scale: "F", // Always F for now
         show_temp: preferences.dashboard.includes("Temperature Monitoring System"),
         show_humidity: preferences.dashboard.includes("Humidity Monitoring System"),
         show_sensors: preferences.dashboard.includes("Sensors"),
@@ -268,20 +268,22 @@ export default function Account() {
                   className={`border rounded px-3 py-2 w-full ${darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"}`}
                 />
               </div>
-              {/* Temp Scale */}
+              {/* Temp Scale - Fixed to Fahrenheit only */}
               <div>
                 <label className="block text-sm font-medium mb-2">Temp Scale</label>
                 <select
                   name="tempScale"
-                  value={preferences.tempScale}
-                  onChange={handleChange}
+                  value="Fahrenheit"
+                  disabled
                   className={`border rounded px-2 py-1 w-full ${
-                    darkMode ? "bg-gray-700 text-white border-gray-600" : "bg-white"
+                    darkMode ? "bg-gray-700 text-white border-gray-600 opacity-60" : "bg-gray-100 opacity-60"
                   }`}
                 >
                   <option>Fahrenheit</option>
-                  <option>Celsius</option>
                 </select>
+                <p className={`text-xs mt-1 ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+                  Temperature display is currently fixed to Fahrenheit
+                </p>
               </div>
 
               {/* Dashboard toggles */}

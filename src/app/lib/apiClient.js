@@ -51,15 +51,51 @@ class ApiClient {
       console.log('Response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch (parseError) {
-          console.error('Failed to parse error response as JSON:', parseError);
-          errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+        let errorData = {};
+        const contentType = response.headers.get('content-type');
+        const hasJsonContent = contentType && contentType.includes('application/json');
+        
+        // Try to parse JSON only if content-type indicates JSON
+        if (hasJsonContent) {
+          try {
+            const text = await response.text();
+            if (text && text.trim()) {
+              errorData = JSON.parse(text);
+            }
+          } catch (parseError) {
+            console.error('Failed to parse error response as JSON:', parseError);
+          }
         }
+        
+        // If errorData is empty or doesn't have an error message, use fallback
+        if (!errorData || Object.keys(errorData).length === 0 || !errorData.error) {
+          const statusText = response.statusText || 'Unknown Error';
+          errorData = {
+            error: `HTTP ${response.status}: ${statusText}`,
+            code: response.status >= 500 ? 'SERVER_ERROR' : 'CLIENT_ERROR'
+          };
+        }
+        
         console.error('API Error Response:', errorData);
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        console.error('Response status:', response.status, response.statusText);
+        
+        // Create error with code and details preserved
+        const error = new Error(errorData.error || `HTTP ${response.status}: ${response.statusText || 'Unknown Error'}`);
+        if (errorData.code) {
+          error.code = errorData.code;
+        }
+        if (errorData.prismaCode) {
+          error.prismaCode = errorData.prismaCode;
+        }
+        if (errorData.details) {
+          error.details = errorData.details;
+        }
+        if (errorData.meta) {
+          error.meta = errorData.meta;
+        }
+        error.status = response.status;
+        error.statusText = response.statusText;
+        throw error;
       }
 
       let data;

@@ -152,8 +152,51 @@ export async function POST(request) {
     return NextResponse.json({ group: formattedGroup });
   } catch (error) {
     console.error('Create sensor group error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
+    
+    // Handle database connection errors
+    if (error.message && (
+      error.message.includes('Can\'t reach database server') ||
+      error.message.includes('database server') ||
+      error.message.includes('ECONNREFUSED') ||
+      error.message.includes('ETIMEDOUT') ||
+      error.message.includes('P1001')
+    )) {
+      return NextResponse.json(
+        { 
+          error: 'Unable to connect to the database. Please try again later or contact support.',
+          code: 'DATABASE_ERROR'
+        },
+        { status: 503 }
+      );
+    }
+    
+    // Handle Prisma validation errors
+    if (error.code && error.code.startsWith('P')) {
+      return NextResponse.json(
+        { 
+          error: 'Database operation failed. Please check your input and try again.',
+          code: 'DATABASE_OPERATION_ERROR',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Generic error with more details in development
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: process.env.NODE_ENV === 'development' 
+          ? `Internal server error: ${error.message}` 
+          : 'An error occurred while creating the group. Please try again later.',
+        code: 'INTERNAL_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }
@@ -273,8 +316,51 @@ export async function PUT(request) {
     return NextResponse.json({ group: formattedGroup });
   } catch (error) {
     console.error('Update sensor group error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
+    
+    // Handle database connection errors
+    if (error.message && (
+      error.message.includes('Can\'t reach database server') ||
+      error.message.includes('database server') ||
+      error.message.includes('ECONNREFUSED') ||
+      error.message.includes('ETIMEDOUT') ||
+      error.message.includes('P1001')
+    )) {
+      return NextResponse.json(
+        { 
+          error: 'Unable to connect to the database. Please try again later or contact support.',
+          code: 'DATABASE_ERROR'
+        },
+        { status: 503 }
+      );
+    }
+    
+    // Handle Prisma validation errors
+    if (error.code && error.code.startsWith('P')) {
+      return NextResponse.json(
+        { 
+          error: 'Database operation failed. Please check your input and try again.',
+          code: 'DATABASE_OPERATION_ERROR',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Generic error
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: process.env.NODE_ENV === 'development' 
+          ? `Internal server error: ${error.message}` 
+          : 'An error occurred while updating the group. Please try again later.',
+        code: 'INTERNAL_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }
@@ -325,8 +411,51 @@ export async function DELETE(request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Delete sensor group error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
+    
+    // Handle database connection errors
+    if (error.message && (
+      error.message.includes('Can\'t reach database server') ||
+      error.message.includes('database server') ||
+      error.message.includes('ECONNREFUSED') ||
+      error.message.includes('ETIMEDOUT') ||
+      error.message.includes('P1001')
+    )) {
+      return NextResponse.json(
+        { 
+          error: 'Unable to connect to the database. Please try again later or contact support.',
+          code: 'DATABASE_ERROR'
+        },
+        { status: 503 }
+      );
+    }
+    
+    // Handle Prisma validation errors
+    if (error.code && error.code.startsWith('P')) {
+      return NextResponse.json(
+        { 
+          error: 'Database operation failed. Please check your input and try again.',
+          code: 'DATABASE_OPERATION_ERROR',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Generic error
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { 
+        error: process.env.NODE_ENV === 'development' 
+          ? `Internal server error: ${error.message}` 
+          : 'An error occurred while deleting the group. Please try again later.',
+        code: 'INTERNAL_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }

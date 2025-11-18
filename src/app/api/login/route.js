@@ -28,6 +28,24 @@ export async function POST(req) {
     });
   } catch (err) {
     console.error('Login error:', err);
-    return new Response(JSON.stringify({ message: err.message || 'Login failed' }), { status: 400 });
+    
+    // Handle database connection errors
+    if (err.message && (
+      err.message.includes('Can\'t reach database server') ||
+      err.message.includes('database server') ||
+      err.message.includes('ECONNREFUSED') ||
+      err.message.includes('ETIMEDOUT')
+    )) {
+      return new Response(JSON.stringify({ 
+        message: 'Unable to connect to the server. Please try again later or contact support.',
+        code: 'DATABASE_ERROR'
+      }), { status: 503 });
+    }
+    
+    // Handle other errors
+    return new Response(JSON.stringify({ 
+      message: err.message || 'Login failed',
+      code: err.message?.includes('verify') ? 'VERIFICATION_REQUIRED' : 'LOGIN_ERROR'
+    }), { status: 400 });
   }
 }

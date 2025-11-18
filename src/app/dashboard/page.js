@@ -72,7 +72,7 @@ export default function Dashboard() {
 
   // Preferences (from user_preferences)
   const [prefs, setPrefs] = useState({
-    unit: "F", // 'F' | 'C' (temperature display)
+    unit: "F", // Always F for now
     tz: "America/Anchorage",
     showTemp: true,
     showHumidity: true,
@@ -132,7 +132,7 @@ export default function Dashboard() {
           const preferences = await apiClient.getUserPreferences();
           if (preferences) {
             const next = {
-              unit: preferences.tempScale || "F",
+              unit: "F", // Always F for now
               tz: preferences.timeZone || "America/Anchorage",
               showTemp: !!preferences.showTemp,
               showHumidity: !!preferences.showHumidity,
@@ -218,9 +218,9 @@ export default function Dashboard() {
                status = r.status || 'unknown';
 
                
-               // Convert to user's preferred unit for display only
-               value = valueInF != null ? (prefs.unit === "C" ? fToC(valueInF) : valueInF) : null;
-               displayValue = value != null ? `${value.toFixed(1)}°${prefs.unit}` : `--°${prefs.unit}`;
+               // Always display in Fahrenheit, rounded to whole number
+               value = valueInF;
+               displayValue = value != null ? `${Math.round(value)}°F` : `--°F`;
                
                // Store sensor unit for realtime updates
                unit = sensorUnit;
@@ -593,7 +593,9 @@ export default function Dashboard() {
                 <div className="flex flex-col w-20 mr-4">
                   <div className="h-6"></div>
                   <div className="relative h-80">
-                    <div className="absolute inset-0 flex flex-col justify-between text-sm text-slate-600 items-end pr-3 font-semibold">
+                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
+                      darkMode ? "text-slate-300" : "text-slate-600"
+                    }`}>
                       {ticks(axisTemp).map((t, i) => (
                         <span key={i} className="transform -translate-y-1/2">
                           {t}
@@ -696,21 +698,33 @@ export default function Dashboard() {
                   <div className={`flex justify-around mt-6 pt-4 px-8 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                     {tempItems.map((it, i) => (
                       <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                        <p className="text-base font-bold truncate group-hover:text-orange-600 transition-colors duration-200">{it.name}</p>
+                        <p className={`text-base font-bold truncate transition-colors duration-200 ${
+                          darkMode ? "group-hover:text-orange-400" : "group-hover:text-orange-600"
+                        }`}>{it.name}</p>
                         <p
                           className={`text-sm font-semibold px-3 py-2 rounded-full mt-2 shadow-lg ${
                                it.status === "alert"
-                              ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
+                              ? darkMode 
+                                ? "bg-gradient-to-r from-red-900 to-red-800 text-red-200 animate-bounce border border-red-700"
+                                : "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
                                  : it.status === "warning"
-                              ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
+                              ? darkMode
+                                ? "bg-gradient-to-r from-yellow-900 to-yellow-800 text-yellow-200 border border-yellow-700"
+                                : "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
                                  : it.status === "offline" || it.status === "unknown"
-                              ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                              ? darkMode
+                                ? "bg-gradient-to-r from-slate-700 to-slate-600 text-slate-200 border border-slate-500"
+                                : "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                              : darkMode
+                                ? "bg-gradient-to-r from-green-900 to-green-800 text-green-200 border border-green-700"
                               : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
                              }`}
                            >
                            {it.status}
                          </p>
-                        <p className="text-sm text-slate-500 mt-2 font-medium">{it.device_name}</p>
+                        <p className={`text-sm mt-2 font-medium ${
+                          darkMode ? "text-slate-400" : "text-slate-500"
+                        }`}>{it.device_name}</p>
                       </div>
                     ))}
                   </div>
@@ -720,10 +734,14 @@ export default function Dashboard() {
                 <div className="flex flex-col w-20 ml-4">
                   <div className="h-6"></div>
                   <div className="relative h-80">
-                    <div className="absolute inset-0 flex flex-col justify-between text-sm text-slate-500 items-start pl-3 font-semibold">
+                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-start pl-3 font-semibold ${
+                      darkMode ? "text-slate-300" : "text-slate-500"
+                    }`}>
                       {["Critical", "Hot", "Warm", "Room", "Cool", "Ideal", "Cold", "Very Cold", "Freezing", "Ice", "Frozen"].map(
                         (t, i) => (
-                          <span key={i} className="transform -translate-y-1/2 text-slate-700">
+                          <span key={i} className={`transform -translate-y-1/2 ${
+                            darkMode ? "text-slate-300" : "text-slate-700"
+                          }`}>
                             {t}
                           </span>
                         )
@@ -737,40 +755,42 @@ export default function Dashboard() {
               <div className="flex justify-center mt-8 space-x-8 text-sm">
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Normal (Good)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Normal (Good)</span>
                  </div>
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Warning</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Warning</span>
                  </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Critical (Needs Attention)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Critical (Needs Attention)</span>
                 </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Unconfigured</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Unconfigured</span>
                 </div>
               </div>
 
               {/* Temperature Table */}
               <div className="mt-8">
                 <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Temperature Sensor Details</h4>
-                <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-lg">
+                <div className={`overflow-x-auto rounded-xl border shadow-lg ${
+                  darkMode ? "border-slate-700" : "border-slate-200"
+                }`}>
                   <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    <thead className="bg-slate-50">
+                    <thead className={darkMode ? "bg-slate-800" : "bg-slate-50"}>
                       <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Sensor</th>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Reading</th>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Status</th>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Last Updated</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Sensor</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
                       </tr>
                     </thead>
                     <tbody>
                       {tempItems.map((it, i) => (
                         <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
                           <td className="py-4 px-6 font-semibold">
-                            <span className="text-slate-800">{it.name}</span>
+                            <span className={darkMode ? "text-slate-200" : "text-slate-800"}>{it.name}</span>
                             <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
                               it.access_role === 'owner'
                                 ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
@@ -839,7 +859,9 @@ export default function Dashboard() {
                 <div className="flex flex-col w-20 mr-4">
                   <div className="h-6"></div>
                   <div className="relative h-80">
-                    <div className="absolute inset-0 flex flex-col justify-between text-sm text-slate-600 items-end pr-3 font-semibold">
+                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
+                      darkMode ? "text-slate-300" : "text-slate-600"
+                    }`}>
                       {ticks(axisHum).map((t, i) => (
                         <span key={i} className="transform -translate-y-1/2">
                           {t}
@@ -942,21 +964,33 @@ export default function Dashboard() {
                   <div className={`flex justify-around mt-6 pt-4 px-8 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                     {humItems.map((it, i) => (
                       <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                        <p className="text-base font-bold truncate group-hover:text-orange-600 transition-colors duration-200">{it.name}</p>
+                        <p className={`text-base font-bold truncate transition-colors duration-200 ${
+                          darkMode ? "group-hover:text-orange-400" : "group-hover:text-orange-600"
+                        }`}>{it.name}</p>
                         <p
                           className={`text-sm font-semibold px-3 py-2 rounded-full mt-2 shadow-lg ${
                                it.status === "alert"
-                              ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
+                              ? darkMode 
+                                ? "bg-gradient-to-r from-red-900 to-red-800 text-red-200 animate-bounce border border-red-700"
+                                : "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
                                  : it.status === "warning"
-                              ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
+                              ? darkMode
+                                ? "bg-gradient-to-r from-yellow-900 to-yellow-800 text-yellow-200 border border-yellow-700"
+                                : "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
                                  : it.status === "offline" || it.status === "unknown"
-                              ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                              ? darkMode
+                                ? "bg-gradient-to-r from-slate-700 to-slate-600 text-slate-200 border border-slate-500"
+                                : "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                              : darkMode
+                                ? "bg-gradient-to-r from-green-900 to-green-800 text-green-200 border border-green-700"
                               : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
                              }`}
                            >
                            {it.status}
                          </p>
-                        <p className="text-sm text-slate-500 mt-2 font-medium">{it.device_name}</p>
+                        <p className={`text-sm mt-2 font-medium ${
+                          darkMode ? "text-slate-400" : "text-slate-500"
+                        }`}>{it.device_name}</p>
                       </div>
                     ))}
                   </div>
@@ -966,10 +1000,14 @@ export default function Dashboard() {
                 <div className="flex flex-col w-20 ml-4">
                   <div className="h-6"></div>
                   <div className="relative h-80">
-                    <div className="absolute inset-0 flex flex-col justify-between text-sm text-slate-500 items-start pl-3 font-semibold">
+                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-start pl-3 font-semibold ${
+                      darkMode ? "text-slate-300" : "text-slate-500"
+                    }`}>
                       {["Critical", "Very Dry", "Dry", "Low", "Ok", "Ideal", "Good", "Moist", "Humid", "Very Humid", "Saturated"].map(
                         (t, i) => (
-                          <span key={i} className="transform -translate-y-1/2 text-slate-700">
+                          <span key={i} className={`transform -translate-y-1/2 ${
+                            darkMode ? "text-slate-300" : "text-slate-700"
+                          }`}>
                             {t}
                           </span>
                         )
@@ -983,40 +1021,42 @@ export default function Dashboard() {
               <div className="flex justify-center mt-8 space-x-8 text-sm">
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Normal (Good)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Normal (Good)</span>
                  </div>
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Warning</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Warning</span>
                  </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Critical (Needs Attention)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Critical (Needs Attention)</span>
                 </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className="font-semibold text-slate-700">Unconfigured</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Unconfigured</span>
                 </div>
               </div>
 
               {/* Humidity Table */}
               <div className="mt-8">
                 <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Humidity Sensor Details</h4>
-                <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-lg">
+                <div className={`overflow-x-auto rounded-xl border shadow-lg ${
+                  darkMode ? "border-slate-700" : "border-slate-200"
+                }`}>
                   <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    <thead className="bg-slate-50">
+                    <thead className={darkMode ? "bg-slate-800" : "bg-slate-50"}>
                       <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Sensor</th>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Reading</th>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Status</th>
-                        <th className="text-left py-4 px-6 font-bold text-slate-800">Last Updated</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Sensor</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
+                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
                       </tr>
                     </thead>
                     <tbody>
                       {humItems.map((it, i) => (
                         <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
                           <td className="py-4 px-6 font-semibold">
-                            <span className="text-slate-800">{it.name}</span>
+                            <span className={darkMode ? "text-slate-200" : "text-slate-800"}>{it.name}</span>
                             <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
                               it.access_role === 'owner'
                                 ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
@@ -1051,7 +1091,9 @@ export default function Dashboard() {
                               {it.status}
                             </span>
                           </td>
-                          <td className="py-4 px-6 text-slate-600 font-medium">{
+                          <td className={`py-4 px-6 font-medium ${
+                            darkMode ? "text-slate-300" : "text-slate-600"
+                          }`}>{
                              it.lastFetchedTime
                                ? fmtDate(it.lastFetchedTime, prefs.tz, true)
                                : "No data"
