@@ -229,12 +229,17 @@ export default function History() {
       try {
         const data = await apiClient.getSensors();
 
-        let list = (data || []).map(r => ({
-          sensor_id: r.sensor_id,
-          name: r.sensor_name || String(r.sensor_id),
-          sensor_type: (r.sensor_type || "sensor").toLowerCase(), // 'sensor'|'temperature'|'humidity'
-          metric: (r.metric || "F").toUpperCase(), // device unit for temp sensors
-        }));
+        let list = (data || []).map(r => {
+          // Normalize sensor type: only allow 'temperature' or 'humidity', default to 'temperature'
+          const rawType = (r.sensor_type || "").toLowerCase();
+          const sensorType = rawType === "humidity" ? "humidity" : "temperature";
+          return {
+            sensor_id: r.sensor_id,
+            name: r.sensor_name || String(r.sensor_id),
+            sensor_type: sensorType,
+            metric: (r.metric || "F").toUpperCase(), // device unit for temp sensors
+          };
+        });
 
         // optional filter based on account prefs
         list = list.filter(s => (s.sensor_type === "humidity" ? showHumidity : showTemp));

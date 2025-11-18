@@ -46,10 +46,10 @@ export async function GET(request) {
         ownerId: group.ownerId,
         created_at: group.created_at,
         updated_at: group.updated_at,
-        sensors: group.members.map(m => ({
-          sensorId: m.sensor.sensorId,
-          sensorName: m.sensor.sensorName
-        }))
+        sensors: (group.members || []).map(m => ({
+          sensorId: m.sensor?.sensorId || null,
+          sensorName: m.sensor?.sensorName || null
+        })).filter(s => s.sensorId !== null)
       }));
 
       return NextResponse.json({ groups: formattedGroups });
@@ -85,7 +85,16 @@ export async function POST(request) {
     }
     const user = authResult.user;
 
-    const { name, sensorIds } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
+    const { name, sensorIds } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json(
@@ -96,46 +105,92 @@ export async function POST(request) {
 
     // Verify user owns all sensors
     if (sensorIds && sensorIds.length > 0) {
-      const sensors = await prisma.$queryRaw`
-        SELECT s.sensor_id
-        FROM public.sensors s
-        JOIN public.devices d ON s.device_id = d.device_id
-        WHERE s.sensor_id = ANY(${sensorIds}::text[])
-        AND d.owner_id = ${user.id}::uuid
-      `;
-
-      if (sensors.length !== sensorIds.length) {
+      // Validate sensorIds is an array
+      if (!Array.isArray(sensorIds)) {
         return NextResponse.json(
-          { error: 'You do not own all the specified sensors' },
-          { status: 403 }
+          { error: 'sensorIds must be an array' },
+          { status: 400 }
+        );
+      }
+
+      // Filter out any invalid sensor IDs
+      const validSensorIds = sensorIds.filter(id => id && typeof id === 'string' && id.trim().length > 0);
+      
+      if (validSensorIds.length === 0) {
+        return NextResponse.json(
+          { error: 'No valid sensor IDs provided' },
+          { status: 400 }
+        );
+      }
+
+      if (validSensorIds.length !== sensorIds.length) {
+        return NextResponse.json(
+          { error: 'Some sensor IDs are invalid' },
+          { status: 400 }
+        );
+      }
+
+      try {
+        const sensors = await prisma.$queryRaw`
+          SELECT s.sensor_id
+          FROM public.sensors s
+          JOIN public.devices d ON s.device_id = d.device_id
+          WHERE s.sensor_id = ANY(${validSensorIds}::text[])
+          AND d.owner_id = ${user.id}::uuid
+        `;
+
+        if (sensors.length !== validSensorIds.length) {
+          return NextResponse.json(
+            { error: 'You do not own all the specified sensors' },
+            { status: 403 }
+          );
+        }
+      } catch (dbError) {
+        console.error('Database error verifying sensor ownership:', dbError);
+        return NextResponse.json(
+          { error: 'Failed to verify sensor ownership. Please try again.' },
+          { status: 500 }
         );
       }
     }
 
     // Create group with members
-    const group = await prisma.sensorGroup.create({
-      data: {
-        name: name.trim(),
-        ownerId: user.id,
-        members: sensorIds && sensorIds.length > 0 ? {
-          create: sensorIds.map(sensorId => ({
-            sensorId: sensorId
-          }))
-        } : undefined
-      },
-      include: {
-        members: {
-          include: {
-            sensor: {
-              select: {
-                sensorId: true,
-                sensorName: true
+    let group;
+    try {
+      group = await prisma.sensorGroup.create({
+        data: {
+          name: name.trim(),
+          ownerId: user.id,
+          members: sensorIds && sensorIds.length > 0 ? {
+            create: sensorIds.map(sensorId => ({
+              sensorId: sensorId
+            }))
+          } : undefined
+        },
+        include: {
+          members: {
+            include: {
+              sensor: {
+                select: {
+                  sensorId: true,
+                  sensorName: true
+                }
               }
             }
           }
         }
+      });
+    } catch (createError) {
+      console.error('Error creating sensor group:', createError);
+      // Check if it's a foreign key constraint error
+      if (createError.code === 'P2003' || createError.message?.includes('foreign key') || createError.message?.includes('constraint')) {
+        return NextResponse.json(
+          { error: 'One or more sensors do not exist. Please refresh and try again.' },
+          { status: 400 }
+        );
       }
-    });
+      throw createError;
+    }
 
     const formattedGroup = {
       id: group.id,
@@ -143,10 +198,10 @@ export async function POST(request) {
       ownerId: group.ownerId,
       created_at: group.created_at,
       updated_at: group.updated_at,
-      sensors: group.members.map(m => ({
-        sensorId: m.sensor.sensorId,
-        sensorName: m.sensor.sensorName
-      }))
+      sensors: (group.members || []).map(m => ({
+        sensorId: m.sensor?.sensorId || null,
+        sensorName: m.sensor?.sensorName || null
+      })).filter(s => s.sensorId !== null)
     };
 
     return NextResponse.json({ group: formattedGroup });
@@ -214,7 +269,16 @@ export async function PUT(request) {
     }
     const user = authResult.user;
 
-    const { id, name, sensorIds } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
+    const { id, name, sensorIds } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -307,10 +371,10 @@ export async function PUT(request) {
       ownerId: group.ownerId,
       created_at: group.created_at,
       updated_at: group.updated_at,
-      sensors: group.members.map(m => ({
-        sensorId: m.sensor.sensorId,
-        sensorName: m.sensor.sensorName
-      }))
+      sensors: (group.members || []).map(m => ({
+        sensorId: m.sensor?.sensorId || null,
+        sensorName: m.sensor?.sensorName || null
+      })).filter(s => s.sensorId !== null)
     };
 
     return NextResponse.json({ group: formattedGroup });

@@ -21,7 +21,16 @@ export async function POST(request) {
     }
     const user = authResult.user;
 
-    const { sensor_id, email, role } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
+    const { sensor_id, email, role } = body;
 
     // Validate input
     if (!sensor_id || !role || !email) {
@@ -56,7 +65,7 @@ export async function POST(request) {
       WHERE s.sensor_id = ${sensor_id}
     `;
 
-    if (!sensorResult || sensorResult.length === 0) {
+    if (!sensorResult || !Array.isArray(sensorResult) || sensorResult.length === 0) {
       return NextResponse.json(
         { error: 'Sensor not found' },
         { status: 404 }
@@ -64,6 +73,12 @@ export async function POST(request) {
     }
 
     const sensor = sensorResult[0];
+    if (!sensor) {
+      return NextResponse.json(
+        { error: 'Sensor data is invalid' },
+        { status: 404 }
+      );
+    }
     
     // Check if user is owner
     const isOwner = String(sensor.owner_id) === String(user.id);
@@ -323,7 +338,7 @@ export async function GET(request) {
       WHERE s.sensor_id = ${sensor_id}
     `;
 
-    if (!sensorResult || sensorResult.length === 0) {
+    if (!sensorResult || !Array.isArray(sensorResult) || sensorResult.length === 0) {
       return NextResponse.json(
         { error: 'Sensor not found' },
         { status: 404 }
@@ -331,6 +346,12 @@ export async function GET(request) {
     }
 
     const sensor = sensorResult[0];
+    if (!sensor) {
+      return NextResponse.json(
+        { error: 'Sensor data is invalid' },
+        { status: 404 }
+      );
+    }
 
     // Load all invitations for this sensor (pending and accepted)
     const invitations = await prisma.$queryRaw`
@@ -354,21 +375,25 @@ export async function GET(request) {
     }
     
     // Process invitations
-    invitations.forEach(inv => {
-      const mappedRole = /full/i.test(inv.role || '') || /admin/i.test(inv.role || '') ? 'admin' : 'viewer';
-      const mappedStatus = inv.status === 'pending' ? 'invited' : 'accepted';
-      
-      // Avoid duplicating owner
-      if (inv.user_id === sensor.owner_id) return;
-      
-      result.push({ 
-        email: inv.email, 
-        role: mappedRole, 
-        status: mappedStatus, 
-        user_id: inv.user_id || null,
-        username: inv.invitee_email?.split('@')[0] || null
+    if (Array.isArray(invitations)) {
+      invitations.forEach(inv => {
+        if (!inv) return; // Skip null/undefined entries
+        
+        const mappedRole = /full/i.test(inv.role || '') || /admin/i.test(inv.role || '') ? 'admin' : 'viewer';
+        const mappedStatus = inv.status === 'pending' ? 'invited' : 'accepted';
+        
+        // Avoid duplicating owner
+        if (inv.user_id && sensor.owner_id && String(inv.user_id) === String(sensor.owner_id)) return;
+        
+        result.push({ 
+          email: inv.email || null, 
+          role: mappedRole, 
+          status: mappedStatus, 
+          user_id: inv.user_id || null,
+          username: inv.invitee_email?.split('@')[0] || null
+        });
       });
-    });
+    }
 
     return NextResponse.json({ 
       sensor_id, 
@@ -450,7 +475,7 @@ export async function DELETE(request) {
       WHERE s.sensor_id = ${sensor_id}
     `;
 
-    if (!sensorResult || sensorResult.length === 0) {
+    if (!sensorResult || !Array.isArray(sensorResult) || sensorResult.length === 0) {
       return NextResponse.json(
         { error: 'Sensor not found' },
         { status: 404 }
@@ -458,6 +483,12 @@ export async function DELETE(request) {
     }
 
     const sensor = sensorResult[0];
+    if (!sensor) {
+      return NextResponse.json(
+        { error: 'Sensor data is invalid' },
+        { status: 404 }
+      );
+    }
 
     // Verify user has permission (owner or admin)
     const isOwner = String(sensor.owner_id) === String(user.id);

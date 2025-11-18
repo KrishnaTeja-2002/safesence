@@ -18,7 +18,16 @@ export async function POST(request) {
     }
     const user = authResult.user;
 
-    const { email, role, selectAll, groupIds, sensorIds } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
+    const { email, role, selectAll, groupIds, sensorIds } = body;
 
     if (!email || !role) {
       return NextResponse.json(
@@ -46,12 +55,21 @@ export async function POST(request) {
     }
 
     // Get all sensors user owns
-    const userSensors = await prisma.$queryRaw`
-      SELECT s.sensor_id
-      FROM public.sensors s
-      JOIN public.devices d ON s.device_id = d.device_id
-      WHERE d.owner_id = ${user.id}::uuid
-    `;
+    let userSensors;
+    try {
+      userSensors = await prisma.$queryRaw`
+        SELECT s.sensor_id
+        FROM public.sensors s
+        JOIN public.devices d ON s.device_id = d.device_id
+        WHERE d.owner_id = ${user.id}::uuid
+      `;
+    } catch (dbError) {
+      console.error('Database error fetching user sensors:', dbError);
+      return NextResponse.json(
+        { error: 'Failed to fetch your sensors. Please try again.' },
+        { status: 500 }
+      );
+    }
 
     const userSensorIds = userSensors.map(s => s.sensor_id);
 
@@ -63,26 +81,56 @@ export async function POST(request) {
     } else {
       // Collect sensors from groups
       if (groupIds && groupIds.length > 0) {
-        const groupSensors = await prisma.sensorGroupMember.findMany({
-          where: {
-            groupId: { in: groupIds },
-            group: {
-              ownerId: user.id
-            }
-          },
-          select: {
-            sensorId: true
-          }
-        });
+        // Validate groupIds is an array
+        if (!Array.isArray(groupIds)) {
+          return NextResponse.json(
+            { error: 'groupIds must be an array' },
+            { status: 400 }
+          );
+        }
 
-        const groupSensorIds = groupSensors.map(gs => gs.sensorId);
-        targetSensorIds.push(...groupSensorIds);
+        try {
+          const groupSensors = await prisma.sensorGroupMember.findMany({
+            where: {
+              groupId: { in: groupIds },
+              group: {
+                ownerId: user.id
+              }
+            },
+            select: {
+              sensorId: true
+            }
+          });
+
+          const groupSensorIds = groupSensors.map(gs => gs.sensorId);
+          targetSensorIds.push(...groupSensorIds);
+        } catch (dbError) {
+          console.error('Database error fetching group sensors:', dbError);
+          return NextResponse.json(
+            { error: 'Failed to fetch sensors from selected groups. Please try again.' },
+            { status: 500 }
+          );
+        }
       }
 
       // Add individual sensors
       if (sensorIds && sensorIds.length > 0) {
+        // Validate sensorIds is an array
+        if (!Array.isArray(sensorIds)) {
+          return NextResponse.json(
+            { error: 'sensorIds must be an array' },
+            { status: 400 }
+          );
+        }
+
         // Verify user owns these sensors
-        const validSensorIds = sensorIds.filter(id => userSensorIds.includes(id));
+        const validSensorIds = sensorIds.filter(id => id && typeof id === 'string' && userSensorIds.includes(id));
+        if (validSensorIds.length !== sensorIds.length) {
+          return NextResponse.json(
+            { error: 'You do not own all the specified sensors' },
+            { status: 403 }
+          );
+        }
         targetSensorIds.push(...validSensorIds);
       }
 

@@ -196,7 +196,9 @@ export default function Dashboard() {
 
         const items = (sensorRows || [])
           .map((r) => {
-            const sType = r.sensor_type || "sensor"; // 'sensor'|'temperature'|'humidity'
+            // Normalize sensor type: only allow 'temperature' or 'humidity', default to 'temperature'
+            const rawType = (r.sensor_type || "").toLowerCase();
+            const sType = rawType === "humidity" ? "humidity" : "temperature";
             const kind = sType === "humidity" ? "humidity" : "temperature";
             const name = r.sensor_name || r.sensor_id;
             const deviceName = r.device_name || r.device_id || 'Unknown Device';
