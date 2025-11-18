@@ -4,7 +4,20 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { authenticateRequest } from '../../middleware/auth-postgres.js';
 
-const prisma = new PrismaClient();
+// Use singleton pattern to avoid multiple PrismaClient instances
+const globalForPrisma = globalThis;
+const prisma = globalForPrisma.__safesensePrismaBatch || new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+});
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.__safesensePrismaBatch = prisma;
+}
+
+// Ensure Prisma client is connected
+prisma.$connect().catch(() => {
+  // Connection already exists or will be established on first query
+});
 
 // POST /api/shares/batch - Batch assign access to multiple sensors/groups
 export async function POST(request) {
@@ -90,6 +103,15 @@ export async function POST(request) {
         }
 
         try {
+          // Verify Prisma client has the sensorGroupMember model
+          if (!prisma.sensorGroupMember || typeof prisma.sensorGroupMember.findMany !== 'function') {
+            console.error('Prisma client does not have sensorGroupMember model. Available models:', Object.keys(prisma).filter(k => !k.startsWith('$') && !k.startsWith('_')));
+            return NextResponse.json(
+              { error: 'Sensor groups feature is not available. Please regenerate Prisma client and restart the server.' },
+              { status: 503 }
+            );
+          }
+
           const groupSensors = await prisma.sensorGroupMember.findMany({
             where: {
               groupId: { in: groupIds },
@@ -106,6 +128,20 @@ export async function POST(request) {
           targetSensorIds.push(...groupSensorIds);
         } catch (dbError) {
           console.error('Database error fetching group sensors:', dbError);
+          console.error('Error details:', {
+            message: dbError.message,
+            code: dbError.code,
+            meta: dbError.meta
+          });
+          
+          // Check if table doesn't exist
+          if (dbError.message?.includes('does not exist') || dbError.message?.includes('relation') || dbError.message?.includes('Table')) {
+            return NextResponse.json(
+              { error: 'Sensor groups feature is not available. Please run database migrations.' },
+              { status: 503 }
+            );
+          }
+          
           return NextResponse.json(
             { error: 'Failed to fetch sensors from selected groups. Please try again.' },
             { status: 500 }

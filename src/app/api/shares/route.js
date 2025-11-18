@@ -4,7 +4,20 @@ export const runtime = "nodejs";
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+// Use singleton pattern to avoid multiple PrismaClient instances
+const globalForPrisma = globalThis;
+const prisma = globalForPrisma.__safesensePrismaShares || new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+});
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.__safesensePrismaShares = prisma;
+}
+
+// Ensure Prisma client is connected
+prisma.$connect().catch(() => {
+  // Connection already exists or will be established on first query
+});
 
 // POST /api/shares -> create invitation for a user to a sensor (owner/admin)
 // Body: { sensor_id: string, email: string, role: 'viewer'|'admin' }

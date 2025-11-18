@@ -4,7 +4,20 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { authenticateRequest } from '../middleware/auth-postgres.js';
 
-const prisma = new PrismaClient();
+// Use singleton pattern to avoid multiple PrismaClient instances
+const globalForPrisma = globalThis;
+const prisma = globalForPrisma.__safesensePrismaGroups || new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+});
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.__safesensePrismaGroups = prisma;
+}
+
+// Ensure Prisma client is connected
+prisma.$connect().catch(() => {
+  // Connection already exists or will be established on first query
+});
 
 // GET /api/sensor-groups - Get all sensor groups for the current user
 export async function GET(request) {
@@ -19,6 +32,12 @@ export async function GET(request) {
     const user = authResult.user;
 
     try {
+      // Verify Prisma client has the sensorGroup model
+      if (!prisma.sensorGroup || typeof prisma.sensorGroup.findMany !== 'function') {
+        console.warn('Prisma client does not have sensorGroup model. Available models:', Object.keys(prisma).filter(k => !k.startsWith('$') && !k.startsWith('_')));
+        return NextResponse.json({ groups: [] });
+      }
+
       const groups = await prisma.sensorGroup.findMany({
         where: {
           ownerId: user.id
@@ -157,6 +176,15 @@ export async function POST(request) {
     // Create group with members
     let group;
     try {
+      // Verify Prisma client has the sensorGroup model
+      if (!prisma.sensorGroup || typeof prisma.sensorGroup.create !== 'function') {
+        console.error('Prisma client does not have sensorGroup model. Available models:', Object.keys(prisma).filter(k => !k.startsWith('$') && !k.startsWith('_')));
+        return NextResponse.json(
+          { error: 'Database models not available. Please regenerate Prisma client and restart the server.' },
+          { status: 500 }
+        );
+      }
+
       group = await prisma.sensorGroup.create({
         data: {
           name: name.trim(),
@@ -182,6 +210,13 @@ export async function POST(request) {
       });
     } catch (createError) {
       console.error('Error creating sensor group:', createError);
+      console.error('Error details:', {
+        message: createError.message,
+        code: createError.code,
+        meta: createError.meta,
+        stack: createError.stack
+      });
+      
       // Check if it's a foreign key constraint error
       if (createError.code === 'P2003' || createError.message?.includes('foreign key') || createError.message?.includes('constraint')) {
         return NextResponse.json(
@@ -189,6 +224,15 @@ export async function POST(request) {
           { status: 400 }
         );
       }
+      
+      // Check if table doesn't exist
+      if (createError.message?.includes('does not exist') || createError.message?.includes('relation') || createError.message?.includes('Table')) {
+        return NextResponse.json(
+          { error: 'Sensor groups feature is not available. Please run database migrations.' },
+          { status: 503 }
+        );
+      }
+      
       throw createError;
     }
 
