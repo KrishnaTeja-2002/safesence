@@ -10,17 +10,38 @@ const globalForPrisma = globalThis;
 // Function to get or create Prisma client
 function getPrismaClient() {
   if (globalForPrisma.__safesensePrismaGroups) {
-    return globalForPrisma.__safesensePrismaGroups;
+    const cached = globalForPrisma.__safesensePrismaGroups;
+    // Verify cached client still has models
+    if (cached.sensorGroup && typeof cached.sensorGroup.create === 'function') {
+      return cached;
+    } else {
+      console.warn('Cached Prisma client missing models, creating new one...');
+      delete globalForPrisma.__safesensePrismaGroups;
+    }
   }
   
-  const client = new PrismaClient({
+  // Force fresh import to ensure latest Prisma client
+  const { PrismaClient: FreshPrismaClient } = require('@prisma/client');
+  const client = new FreshPrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
   });
   
+  // Wait a moment for Prisma client to fully initialize (models might load asynchronously)
   // Verify models are available
-  if (!client.sensorGroup || typeof client.sensorGroup.create !== 'function') {
-    console.error('WARNING: Prisma client created but sensorGroup model is not available!');
-    console.error('Available properties:', Object.keys(client).filter(k => !k.startsWith('$') && !k.startsWith('_')));
+  const hasSensorGroup = client.sensorGroup && typeof client.sensorGroup.create === 'function';
+  const hasSensorGroupMember = client.sensorGroupMember && typeof client.sensorGroupMember.findMany === 'function';
+  
+  if (!hasSensorGroup || !hasSensorGroupMember) {
+    const availableModels = Object.keys(client).filter(k => !k.startsWith('$') && !k.startsWith('_'));
+    console.error('ERROR: Prisma client created but models are not available!');
+    console.error('Available properties:', availableModels);
+    console.error('Has sensorGroup:', hasSensorGroup, 'Has sensorGroupMember:', hasSensorGroupMember);
+    
+    // Try to regenerate client
+    console.error('This usually means:');
+    console.error('1. Prisma client needs regeneration: npx prisma generate');
+    console.error('2. Server needs restart after regeneration');
+    console.error('3. Node modules might need reinstall: rm -rf node_modules && npm install');
   }
   
   if (process.env.NODE_ENV !== 'production') {

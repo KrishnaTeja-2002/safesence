@@ -357,15 +357,26 @@ function TeamContent() {
     }
 
     try {
-      // Filter out sensors that are already in selected groups to avoid duplicates
+      // When selectAll is true, we don't need to send individual sensor IDs or group IDs
+      // The API will handle selecting all sensors owned by the user
       const sensorsInSelectedGroups = getSensorsFromGroups();
-      const filteredSensorIds = batchSelectedSensors.filter(id => !sensorsInSelectedGroups.includes(id));
+      const filteredSensorIds = batchSelectAll 
+        ? [] // Don't send sensor IDs when selectAll is true
+        : batchSelectedSensors.filter(id => !sensorsInSelectedGroups.includes(id));
+
+      console.log('Batch assign request:', {
+        email: inviteEmail.trim().toLowerCase(),
+        role: inviteRole,
+        selectAll: batchSelectAll,
+        groupIds: batchSelectAll ? [] : batchSelectedGroups, // Don't send group IDs when selectAll is true
+        sensorIds: filteredSensorIds
+      });
 
       const result = await apiClient.batchAssignAccess({
         email: inviteEmail.trim().toLowerCase(),
         role: inviteRole,
         selectAll: batchSelectAll,
-        groupIds: batchSelectedGroups,
+        groupIds: batchSelectAll ? [] : batchSelectedGroups, // Clear group IDs when selectAll is true
         sensorIds: filteredSensorIds
       });
 
@@ -725,15 +736,18 @@ function TeamContent() {
                           type="checkbox"
                           checked={batchSelectAll}
                           onChange={(e) => {
-                            setBatchSelectAll(e.target.checked);
-                            if (e.target.checked) {
+                            const isChecked = e.target.checked;
+                            console.log('Select All checkbox changed:', isChecked);
+                            setBatchSelectAll(isChecked);
+                            if (isChecked) {
+                              // Clear individual selections when selecting all
                               setBatchSelectedGroups([]);
                               setBatchSelectedSensors([]);
                             }
                           }}
                           className="mr-2 h-4 w-4"
                         />
-                        <span className="font-semibold">Select All Sensors</span>
+                        <span className="font-semibold">Select All Sensors ({ownedSensors.length} sensors)</span>
                       </label>
 
                       {/* Sensor Groups */}

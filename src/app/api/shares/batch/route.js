@@ -42,6 +42,14 @@ export async function POST(request) {
     }
     const { email, role, selectAll, groupIds, sensorIds } = body;
 
+    console.log('Batch assign request received:', {
+      email,
+      role,
+      selectAll: !!selectAll,
+      groupIds: groupIds?.length || 0,
+      sensorIds: sensorIds?.length || 0
+    });
+
     if (!email || !role) {
       return NextResponse.json(
         { error: 'email and role are required' },
@@ -71,11 +79,11 @@ export async function POST(request) {
     let userSensors;
     try {
       userSensors = await prisma.$queryRaw`
-        SELECT s.sensor_id
-        FROM public.sensors s
-        JOIN public.devices d ON s.device_id = d.device_id
-        WHERE d.owner_id = ${user.id}::uuid
-      `;
+      SELECT s.sensor_id
+      FROM public.sensors s
+      JOIN public.devices d ON s.device_id = d.device_id
+      WHERE d.owner_id = ${user.id}::uuid
+    `;
     } catch (dbError) {
       console.error('Database error fetching user sensors:', dbError);
       return NextResponse.json(
@@ -88,8 +96,9 @@ export async function POST(request) {
 
     let targetSensorIds = [];
 
-    if (selectAll) {
+    if (selectAll === true) {
       // Grant access to all sensors
+      console.log('Select All is true, using all user sensors:', userSensorIds.length);
       targetSensorIds = userSensorIds;
     } else {
       // Collect sensors from groups
@@ -112,20 +121,20 @@ export async function POST(request) {
             );
           }
 
-          const groupSensors = await prisma.sensorGroupMember.findMany({
-            where: {
-              groupId: { in: groupIds },
-              group: {
-                ownerId: user.id
-              }
-            },
-            select: {
-              sensorId: true
+        const groupSensors = await prisma.sensorGroupMember.findMany({
+          where: {
+            groupId: { in: groupIds },
+            group: {
+              ownerId: user.id
             }
-          });
+          },
+          select: {
+            sensorId: true
+          }
+        });
 
-          const groupSensorIds = groupSensors.map(gs => gs.sensorId);
-          targetSensorIds.push(...groupSensorIds);
+        const groupSensorIds = groupSensors.map(gs => gs.sensorId);
+        targetSensorIds.push(...groupSensorIds);
         } catch (dbError) {
           console.error('Database error fetching group sensors:', dbError);
           console.error('Error details:', {
@@ -173,6 +182,8 @@ export async function POST(request) {
       // Remove duplicates
       targetSensorIds = [...new Set(targetSensorIds)];
     }
+
+    console.log('Final target sensor IDs count:', targetSensorIds.length);
 
     if (targetSensorIds.length === 0) {
       return NextResponse.json(

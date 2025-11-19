@@ -389,23 +389,23 @@ export async function GET(request) {
     
     // Process invitations
     if (Array.isArray(invitations)) {
-      invitations.forEach(inv => {
+    invitations.forEach(inv => {
         if (!inv) return; // Skip null/undefined entries
         
-        const mappedRole = /full/i.test(inv.role || '') || /admin/i.test(inv.role || '') ? 'admin' : 'viewer';
-        const mappedStatus = inv.status === 'pending' ? 'invited' : 'accepted';
-        
-        // Avoid duplicating owner
+      const mappedRole = /full/i.test(inv.role || '') || /admin/i.test(inv.role || '') ? 'admin' : 'viewer';
+      const mappedStatus = inv.status === 'pending' ? 'invited' : 'accepted';
+      
+      // Avoid duplicating owner
         if (inv.user_id && sensor.owner_id && String(inv.user_id) === String(sensor.owner_id)) return;
-        
-        result.push({ 
+      
+      result.push({ 
           email: inv.email || null, 
-          role: mappedRole, 
-          status: mappedStatus, 
-          user_id: inv.user_id || null,
-          username: inv.invitee_email?.split('@')[0] || null
-        });
+        role: mappedRole, 
+        status: mappedStatus, 
+        user_id: inv.user_id || null,
+        username: inv.invitee_email?.split('@')[0] || null
       });
+    });
     }
 
     return NextResponse.json({ 
