@@ -106,49 +106,40 @@ export default function ChatBot() {
 
   return (
     <>
-      {/* Floating Chat Button */}
+      {/* Floating Chat Button - Subtle Design */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className={`fixed bottom-8 right-8 w-20 h-20 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110 z-[9999] group ${
+          className={`fixed bottom-6 right-6 w-12 h-12 rounded-full shadow-md flex items-center justify-center transition-all duration-300 hover:scale-105 hover:shadow-lg z-[9999] group ${
             darkMode
-              ? 'bg-gradient-to-br from-blue-600 via-purple-600 to-pink-600 hover:from-blue-700 hover:via-purple-700 hover:to-pink-700'
-              : 'bg-gradient-to-br from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600'
+              ? 'bg-slate-700 hover:bg-slate-600 border border-slate-600'
+              : 'bg-white hover:bg-slate-50 border border-slate-200'
           }`}
           aria-label="Open AI Chat"
           title="Ask AI Assistant"
         >
-          {/* Animated Ring */}
-          <span className="absolute inline-flex h-full w-full rounded-full bg-white opacity-20 animate-ping"></span>
-          
-          {/* Robot Icon */}
-          <div className="relative">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="w-10 h-10 text-white transition-transform duration-300 group-hover:rotate-12"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-              />
-            </svg>
-            
-            {/* "AI" Badge */}
-            <span className="absolute -top-2 -right-2 bg-green-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-lg border-2 border-white">
-              AI
-            </span>
-          </div>
+          {/* Simple Chat Icon */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className={`w-5 h-5 transition-transform duration-200 group-hover:scale-110 ${
+              darkMode ? 'text-slate-300' : 'text-slate-600'
+            }`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
+          </svg>
 
-          {/* Online Pulse */}
-          <span className="absolute -top-1 -right-1 flex h-4 w-4">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-4 w-4 bg-green-500 border-2 border-white shadow-lg"></span>
-          </span>
+          {/* Small Online Indicator */}
+          <span className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 ${
+            darkMode ? 'bg-green-500 border-slate-700' : 'bg-green-500 border-white'
+          }`}></span>
         </button>
       )}
 

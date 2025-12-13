@@ -16,9 +16,9 @@ const cToF = (v) => (v == null ? null : v * 9 / 5 + 32);
 // Axis configs
 const axisConfigTemp = (unit) =>
   unit === "F"
-    ? { min: 0, max: 100, step: 10, title: "🌡️ Temperature (0–100°F)", tickFmt: (n) => `${n}°F` }
-    : { min: 0, max: 50, step: 5, title: "🌡️ Temperature (0–50°C)", tickFmt: (n) => `${n}°C` };
-const axisConfigHum = () => ({ min: 0, max: 100, step: 10, title: "💧 Humidity (0–100% RH)", tickFmt: (n) => `${n}%` });
+    ? { min: -25, max: 100, step: 25, title: "Temperature Sensors", tickFmt: (n) => `${n}°F` }
+    : { min: -30, max: 40, step: 10, title: "Temperature Sensors", tickFmt: (n) => `${n}°C` };
+const axisConfigHum = () => ({ min: -25, max: 100, step: 25, title: "Humidity Sensors", tickFmt: (n) => `${n}%` });
 
 const fmtDate = (d, tz, withTime = true) => {
   const opts = withTime
@@ -94,6 +94,10 @@ export default function Dashboard() {
 
   // Role filter: 'all' | 'owned' | 'admin' | 'viewer'
   const [selectedRole, setSelectedRole] = useState("all");
+
+  // Hovered bar info for temperature and humidity charts
+  const [hoveredTempBar, setHoveredTempBar] = useState(null);
+  const [hoveredHumBar, setHoveredHumBar] = useState(null);
 
   // Notifications popup
   const [showNotifications, setShowNotifications] = useState(false);
@@ -579,7 +583,7 @@ export default function Dashboard() {
         {/* Temperature Chart */}
         {prefs.showTemp && (
           <div className={`rounded-2xl shadow-2xl p-8 mb-10 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
-            <div className="flex justify-between items-center mb-8">
+            <div className="flex justify-between items-center mb-4">
               <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                 {axisTemp.title}
               </h3>
@@ -588,11 +592,39 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Hover Info - Above Graph (only visible when hovering) */}
+            <div className={`mb-6 h-10 flex items-center justify-center transition-all duration-300 ${hoveredTempBar ? "opacity-100" : "opacity-0"}`}>
+              {hoveredTempBar && (
+                <div className="flex items-center gap-4">
+                  <div className={`w-3 h-3 rounded-full ${
+                    hoveredTempBar.status === "alert" ? "bg-red-500" 
+                    : hoveredTempBar.status === "warning" ? "bg-yellow-500"
+                    : hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "bg-slate-400"
+                    : "bg-green-500"
+                  }`}></div>
+                  <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>{hoveredTempBar.name}</span>
+                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                  <span className={`font-medium ${
+                    hoveredTempBar.status === "alert" ? "text-red-500" 
+                    : hoveredTempBar.status === "warning" ? "text-yellow-500"
+                    : hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "text-slate-500"
+                    : "text-green-500"
+                  }`}>
+                    {hoveredTempBar.status === "ok" ? "Good" : hoveredTempBar.status === "alert" ? "Needs Attention" : hoveredTempBar.status}
+                  </span>
+                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                  <span className={`font-bold text-lg ${darkMode ? "text-white" : "text-slate-800"}`}>
+                    {hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "NA" : hoveredTempBar.displayValue}
+                  </span>
+                </div>
+              )}
+            </div>
+
             {/* Chart area (grid/axes always render) */}
             <div className="relative">
               <div className="flex items-start">
                 {/* Left Y-axis */}
-                <div className="flex flex-col w-20 mr-4">
+                <div className="flex flex-col w-16 mr-4 flex-shrink-0">
                   <div className="h-6"></div>
                   <div className="relative h-80">
                     <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
@@ -607,68 +639,47 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Main plot */}
+                {/* Main plot - expanded to full width */}
                 <div className="flex-1 relative">
                   {/* Grid */}
-                  <div className="absolute inset-0 h-80 bg-gradient-to-b from-slate-50 to-white rounded-xl border border-slate-200 shadow-inner">
+                  <div className={`absolute inset-0 h-80 rounded-xl border shadow-inner ${darkMode ? "bg-gradient-to-b from-slate-700 to-slate-800 border-slate-600" : "bg-gradient-to-b from-slate-50 to-white border-slate-200"}`}>
                     <div className="h-full flex flex-col justify-between">
-                      {[...Array(11)].map((_, i) => (
+                      {[...Array(6)].map((_, i) => (
                         <div
                           key={i}
                           className={`border-t w-full ${
-                            i === 0 ? "border-slate-600 border-t-2" : i === 5 ? "border-slate-400 border-t-2" : i === 10 ? "border-slate-600 border-t-2" : "border-slate-200"
+                            i === 0 || i === 5 ? "border-slate-400 border-t-2" : "border-slate-200"
                           } ${darkMode ? "border-slate-600" : ""}`}
                         />
                       ))}
                     </div>
                     <div className="absolute inset-0">
-                      <div className={`absolute left-0 top-0 bottom-0 w-1 bg-slate-400 ${darkMode ? "bg-slate-500" : ""}`}></div>
-                      <div className={`absolute right-0 top-0 bottom-0 w-1 bg-slate-400 ${darkMode ? "bg-slate-500" : ""}`}></div>
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
+                      <div className={`absolute right-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
                     </div>
                   </div>
 
-                  {/* Bars (or empty) */}
-                  <div className="relative h-80">
-                    <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full px-8">
+                  {/* Bars (scrollable container) */}
+                  <div className="relative h-80 overflow-x-auto overflow-y-hidden" onMouseLeave={() => setHoveredTempBar(null)}>
+                    <div className={`absolute bottom-0 left-0 flex items-end h-full px-4 gap-3 ${tempItems.length > 8 ? "min-w-max" : "w-full justify-around"}`}>
                       {tempItems.length === 0 ? (
                         <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No temperature sensors to display.</div>
                       ) : (
-                        tempItems.map((it, i) => {
+                        [...tempItems].sort((a, b) => a.name.localeCompare(b.name)).map((it, i) => {
                           const h = toHeight(it, axisTemp);
-                          const label = it.status === "offline" || it.status === "unknown"
-                            ? "NA"
-                            : it.displayValue;
                           return (
-                            <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                              {(it.status === "offline" || it.status === "unknown" || it.value != null) && (
-                                <div
-                                  className={`absolute text-sm font-bold px-4 py-3 rounded-xl shadow-2xl z-10 transition-all duration-300 group-hover:scale-110 group-hover:shadow-3xl ${
-                                    it.status === "alert"
-                                      ? "bg-gradient-to-r from-red-500 to-red-600 text-white border-2 border-red-700"
-                                      : it.status === "warning"
-                                      ? "bg-gradient-to-r from-yellow-400 to-yellow-500 text-white border-2 border-yellow-600"
-                                      : it.status === "offline" || it.status === "unknown"
-                                      ? "bg-gradient-to-r from-slate-500 to-slate-600 text-white border-2 border-slate-700"
-                                      : "bg-gradient-to-r from-green-500 to-green-600 text-white border-2 border-green-700"
-                                  }`}
-                                  style={{
-                                    bottom: `${h + 16}px`,
-                                    left: "50%",
-                                    transform: "translateX(-50%)",
-                                    whiteSpace: "nowrap",
-                                    boxShadow: "0 8px 25px rgba(0,0,0,0.25)",
-                                    animation: (it.status === "alert" || it.status === "warning") ? "customBounce 2s infinite" : "none",
-                                  }}
-                                >
-                                  {label}
-                                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
-                                </div>
-                              )}
+                            <div 
+                              key={i} 
+                              className="flex flex-col items-center relative" 
+                              style={{ minWidth: "40px", maxWidth: "60px" }}
+                              onMouseEnter={() => setHoveredTempBar(it)}
+                              onMouseLeave={() => setHoveredTempBar(null)}
+                            >
                               {it.value != null ? (
                                 <div
-                                  className={`relative w-16 rounded-t-lg shadow-2xl transition-all duration-500 group-hover:w-20 group-hover:shadow-3xl ${it.color} ${
+                                  className={`relative w-8 rounded-t-lg shadow-lg transition-all duration-300 cursor-pointer hover:w-10 hover:shadow-xl ${it.color} ${
                                     it.status === "alert" ? "animate-pulse" : ""
-                                  }`}
+                                  } ${hoveredTempBar?.sensor_id === it.sensor_id ? "w-10 shadow-xl ring-2 ring-white" : ""}`}
                                   style={{
                                     height: `${Math.max(h, 4)}px`,
                                     background:
@@ -679,74 +690,20 @@ export default function Dashboard() {
                                          : it.status === "offline" || it.status === "unknown"
                                         ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
                                         : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
-                                    boxShadow: "0 8px 25px rgba(0,0,0,0.3)",
+                                    boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
                                   }}
-                                  title={`${it.name}: ${label} (${it.status})`}
                                 >
                                 </div>
                               ) : (
-                                <div className="bg-gradient-to-t from-slate-400 to-slate-300 w-16 rounded-t-lg opacity-60 shadow-lg" style={{ height: "4px" }} title={`${it.name}: No data`}>
-                                  <div className="text-xs text-center text-slate-600 mt-1 font-medium">No Data</div>
+                                <div 
+                                  className={`bg-gradient-to-t from-slate-400 to-slate-300 w-8 rounded-t-lg opacity-60 shadow-lg cursor-pointer hover:w-10 ${hoveredTempBar?.sensor_id === it.sensor_id ? "w-10 ring-2 ring-white" : ""}`} 
+                                  style={{ height: "4px" }}
+                                >
                                 </div>
                               )}
                             </div>
                           );
                         })
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Labels below bars */}
-                  <div className={`flex justify-around mt-6 pt-4 px-8 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                    {tempItems.map((it, i) => (
-                      <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                        <p className={`text-base font-bold truncate transition-colors duration-200 ${
-                          darkMode ? "group-hover:text-orange-400" : "group-hover:text-orange-600"
-                        }`}>{it.name}</p>
-                        <p
-                          className={`text-sm font-semibold px-3 py-2 rounded-full mt-2 shadow-lg ${
-                               it.status === "alert"
-                              ? darkMode 
-                                ? "bg-gradient-to-r from-red-900 to-red-800 text-red-200 animate-bounce border border-red-700"
-                                : "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
-                                 : it.status === "warning"
-                              ? darkMode
-                                ? "bg-gradient-to-r from-yellow-900 to-yellow-800 text-yellow-200 border border-yellow-700"
-                                : "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
-                                 : it.status === "offline" || it.status === "unknown"
-                              ? darkMode
-                                ? "bg-gradient-to-r from-slate-700 to-slate-600 text-slate-200 border border-slate-500"
-                                : "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
-                              : darkMode
-                                ? "bg-gradient-to-r from-green-900 to-green-800 text-green-200 border border-green-700"
-                              : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
-                             }`}
-                           >
-                           {it.status}
-                         </p>
-                        <p className={`text-sm mt-2 font-medium ${
-                          darkMode ? "text-slate-400" : "text-slate-500"
-                        }`}>{it.device_name}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right Y-axis: descriptive labels */}
-                <div className="flex flex-col w-20 ml-4">
-                  <div className="h-6"></div>
-                  <div className="relative h-80">
-                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-start pl-3 font-semibold ${
-                      darkMode ? "text-slate-300" : "text-slate-500"
-                    }`}>
-                      {["Critical", "Hot", "Warm", "Room", "Cool", "Ideal", "Cold", "Very Cold", "Freezing", "Ice", "Frozen"].map(
-                        (t, i) => (
-                          <span key={i} className={`transform -translate-y-1/2 ${
-                            darkMode ? "text-slate-300" : "text-slate-700"
-                          }`}>
-                            {t}
-                          </span>
-                        )
                       )}
                     </div>
                   </div>
@@ -757,7 +714,7 @@ export default function Dashboard() {
               <div className="flex justify-center mt-8 space-x-8 text-sm">
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Normal (Good)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Good</span>
                  </div>
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
@@ -765,11 +722,11 @@ export default function Dashboard() {
                  </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Critical (Needs Attention)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Needs Attention</span>
                 </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Unconfigured</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Offline</span>
                 </div>
               </div>
 
@@ -845,7 +802,7 @@ export default function Dashboard() {
         {/* Humidity Chart */}
         {prefs.showHumidity && (
           <div className={`rounded-2xl shadow-2xl p-8 mb-10 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
-            <div className="flex justify-between items-center mb-8">
+            <div className="flex justify-between items-center mb-4">
               <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                 {axisHum.title}
               </h3>
@@ -854,11 +811,39 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Hover Info - Above Graph (only visible when hovering) */}
+            <div className={`mb-6 h-10 flex items-center justify-center transition-all duration-300 ${hoveredHumBar ? "opacity-100" : "opacity-0"}`}>
+              {hoveredHumBar && (
+                <div className="flex items-center gap-4">
+                  <div className={`w-3 h-3 rounded-full ${
+                    hoveredHumBar.status === "alert" ? "bg-red-500" 
+                    : hoveredHumBar.status === "warning" ? "bg-yellow-500"
+                    : hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "bg-slate-400"
+                    : "bg-green-500"
+                  }`}></div>
+                  <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>{hoveredHumBar.name}</span>
+                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                  <span className={`font-medium ${
+                    hoveredHumBar.status === "alert" ? "text-red-500" 
+                    : hoveredHumBar.status === "warning" ? "text-yellow-500"
+                    : hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "text-slate-500"
+                    : "text-green-500"
+                  }`}>
+                    {hoveredHumBar.status === "ok" ? "Good" : hoveredHumBar.status === "alert" ? "Needs Attention" : hoveredHumBar.status}
+                  </span>
+                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                  <span className={`font-bold text-lg ${darkMode ? "text-white" : "text-slate-800"}`}>
+                    {hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "NA" : (hoveredHumBar.value != null ? `${hoveredHumBar.value.toFixed(1)}%` : "--%")}
+                  </span>
+                </div>
+              )}
+            </div>
+
             {/* Chart area (grid/axes always render) */}
             <div className="relative">
               <div className="flex items-start">
                 {/* Left Y-axis */}
-                <div className="flex flex-col w-20 mr-4">
+                <div className="flex flex-col w-16 mr-4 flex-shrink-0">
                   <div className="h-6"></div>
                   <div className="relative h-80">
                     <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
@@ -873,68 +858,47 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Main plot */}
+                {/* Main plot - expanded to full width */}
                 <div className="flex-1 relative">
                   {/* Grid */}
-                  <div className="absolute inset-0 h-80 bg-gradient-to-b from-slate-50 to-white rounded-xl border border-slate-200 shadow-inner">
+                  <div className={`absolute inset-0 h-80 rounded-xl border shadow-inner ${darkMode ? "bg-gradient-to-b from-slate-700 to-slate-800 border-slate-600" : "bg-gradient-to-b from-slate-50 to-white border-slate-200"}`}>
                     <div className="h-full flex flex-col justify-between">
-                      {[...Array(11)].map((_, i) => (
+                      {[...Array(6)].map((_, i) => (
                         <div
                           key={i}
                           className={`border-t w-full ${
-                            i === 0 ? "border-slate-600 border-t-2" : i === 5 ? "border-slate-400 border-t-2" : i === 10 ? "border-slate-600 border-t-2" : "border-slate-200"
+                            i === 0 || i === 5 ? "border-slate-400 border-t-2" : "border-slate-200"
                           } ${darkMode ? "border-slate-600" : ""}`}
                         />
                       ))}
                     </div>
                     <div className="absolute inset-0">
-                      <div className={`absolute left-0 top-0 bottom-0 w-1 bg-slate-400 ${darkMode ? "bg-slate-500" : ""}`}></div>
-                      <div className={`absolute right-0 top-0 bottom-0 w-1 bg-slate-400 ${darkMode ? "bg-slate-500" : ""}`}></div>
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
+                      <div className={`absolute right-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
                     </div>
                   </div>
 
-                  {/* Bars (or empty) */}
-                  <div className="relative h-80">
-                    <div className="absolute bottom-0 left-0 right-0 flex justify-around items-end h-full px-8">
+                  {/* Bars (scrollable container) */}
+                  <div className="relative h-80 overflow-x-auto overflow-y-hidden" onMouseLeave={() => setHoveredHumBar(null)}>
+                    <div className={`absolute bottom-0 left-0 flex items-end h-full px-4 gap-3 ${humItems.length > 8 ? "min-w-max" : "w-full justify-around"}`}>
                       {humItems.length === 0 ? (
                         <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No humidity sensors to display.</div>
                       ) : (
-                        humItems.map((it, i) => {
+                        [...humItems].sort((a, b) => a.name.localeCompare(b.name)).map((it, i) => {
                           const h = toHeight(it, axisHum);
-                          const label = it.status === "offline" || it.status === "unknown"
-                            ? "NA"
-                            : (it.value != null ? `${it.value.toFixed(1)}%` : "--%");
                           return (
-                            <div key={i} className="flex flex-col items-center relative group" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                              {(it.status === "offline" || it.status === "unknown" || it.value != null) && (
-                                <div
-                                  className={`absolute text-sm font-bold px-4 py-3 rounded-xl shadow-2xl z-10 transition-all duration-300 group-hover:scale-110 group-hover:shadow-3xl ${
-                                    it.status === "alert"
-                                      ? "bg-gradient-to-r from-red-500 to-red-600 text-white border-2 border-red-700"
-                                      : it.status === "warning"
-                                      ? "bg-gradient-to-r from-yellow-400 to-yellow-500 text-white border-2 border-yellow-600"
-                                      : it.status === "offline" || it.status === "unknown"
-                                      ? "bg-gradient-to-r from-slate-500 to-slate-600 text-white border-2 border-slate-700"
-                                      : "bg-gradient-to-r from-green-500 to-green-600 text-white border-2 border-green-700"
-                                  }`}
-                                  style={{
-                                    bottom: `${h + 16}px`,
-                                    left: "50%",
-                                    transform: "translateX(-50%)",
-                                    whiteSpace: "nowrap",
-                                    boxShadow: "0 8px 25px rgba(0,0,0,0.25)",
-                                    animation: (it.status === "alert" || it.status === "warning") ? "customBounce 2s infinite" : "none",
-                                  }}
-                                >
-                                  {label}
-                                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-current"></div>
-                                </div>
-                              )}
+                            <div 
+                              key={i} 
+                              className="flex flex-col items-center relative" 
+                              style={{ minWidth: "40px", maxWidth: "60px" }}
+                              onMouseEnter={() => setHoveredHumBar(it)}
+                              onMouseLeave={() => setHoveredHumBar(null)}
+                            >
                               {it.value != null ? (
                                 <div
-                                  className={`relative w-16 rounded-t-lg shadow-2xl transition-all duration-500 group-hover:w-20 group-hover:shadow-3xl ${it.color} ${
+                                  className={`relative w-8 rounded-t-lg shadow-lg transition-all duration-300 cursor-pointer hover:w-10 hover:shadow-xl ${it.color} ${
                                     it.status === "alert" ? "animate-pulse" : ""
-                                  }`}
+                                  } ${hoveredHumBar?.sensor_id === it.sensor_id ? "w-10 shadow-xl ring-2 ring-white" : ""}`}
                                   style={{
                                     height: `${Math.max(h, 4)}px`,
                                     background:
@@ -945,74 +909,20 @@ export default function Dashboard() {
                                          : it.status === "offline" || it.status === "unknown"
                                         ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
                                         : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
-                                    boxShadow: "0 8px 25px rgba(0,0,0,0.3)",
+                                    boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
                                   }}
-                                  title={`${it.name}: ${label} (${it.status})`}
                                 >
                                 </div>
                               ) : (
-                                <div className="bg-gradient-to-t from-slate-400 to-slate-300 w-16 rounded-t-lg opacity-60 shadow-lg" style={{ height: "4px" }} title={`${it.name}: No data`}>
-                                  <div className="text-xs text-center text-slate-600 mt-1 font-medium">No Data</div>
+                                <div 
+                                  className={`bg-gradient-to-t from-slate-400 to-slate-300 w-8 rounded-t-lg opacity-60 shadow-lg cursor-pointer hover:w-10 ${hoveredHumBar?.sensor_id === it.sensor_id ? "w-10 ring-2 ring-white" : ""}`} 
+                                  style={{ height: "4px" }}
+                                >
                                 </div>
                               )}
                             </div>
                           );
                         })
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Labels below bars */}
-                  <div className={`flex justify-around mt-6 pt-4 px-8 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                    {humItems.map((it, i) => (
-                      <div key={i} className="text-center group cursor-pointer" style={{ flexBasis: "22%", maxWidth: "120px" }}>
-                        <p className={`text-base font-bold truncate transition-colors duration-200 ${
-                          darkMode ? "group-hover:text-orange-400" : "group-hover:text-orange-600"
-                        }`}>{it.name}</p>
-                        <p
-                          className={`text-sm font-semibold px-3 py-2 rounded-full mt-2 shadow-lg ${
-                               it.status === "alert"
-                              ? darkMode 
-                                ? "bg-gradient-to-r from-red-900 to-red-800 text-red-200 animate-bounce border border-red-700"
-                                : "bg-gradient-to-r from-red-100 to-red-200 text-red-800 animate-bounce border border-red-300"
-                                 : it.status === "warning"
-                              ? darkMode
-                                ? "bg-gradient-to-r from-yellow-900 to-yellow-800 text-yellow-200 border border-yellow-700"
-                                : "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
-                                 : it.status === "offline" || it.status === "unknown"
-                              ? darkMode
-                                ? "bg-gradient-to-r from-slate-700 to-slate-600 text-slate-200 border border-slate-500"
-                                : "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
-                              : darkMode
-                                ? "bg-gradient-to-r from-green-900 to-green-800 text-green-200 border border-green-700"
-                              : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
-                             }`}
-                           >
-                           {it.status}
-                         </p>
-                        <p className={`text-sm mt-2 font-medium ${
-                          darkMode ? "text-slate-400" : "text-slate-500"
-                        }`}>{it.device_name}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right Y-axis: descriptive labels */}
-                <div className="flex flex-col w-20 ml-4">
-                  <div className="h-6"></div>
-                  <div className="relative h-80">
-                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-start pl-3 font-semibold ${
-                      darkMode ? "text-slate-300" : "text-slate-500"
-                    }`}>
-                      {["Critical", "Very Dry", "Dry", "Low", "Ok", "Ideal", "Good", "Moist", "Humid", "Very Humid", "Saturated"].map(
-                        (t, i) => (
-                          <span key={i} className={`transform -translate-y-1/2 ${
-                            darkMode ? "text-slate-300" : "text-slate-700"
-                          }`}>
-                            {t}
-                          </span>
-                        )
                       )}
                     </div>
                   </div>
@@ -1023,7 +933,7 @@ export default function Dashboard() {
               <div className="flex justify-center mt-8 space-x-8 text-sm">
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Normal (Good)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Good</span>
                  </div>
                  <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
@@ -1031,11 +941,11 @@ export default function Dashboard() {
                  </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Critical (Needs Attention)</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Needs Attention</span>
                 </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Unconfigured</span>
+                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Offline</span>
                 </div>
               </div>
 

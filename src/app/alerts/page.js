@@ -1948,13 +1948,19 @@ export default function Alerts() {
             (selectedRole === 'viewer' && s.access_role === 'viewer')
           );
           const filtered = streams.filter(roleMatches);
-          const inStatus = (status) => filtered.filter((s) => s.status === status);
+          // System Alerts includes offline and unknown statuses
+          const inStatus = (status) => {
+            if (status === 'offline') {
+              // System Alerts includes both offline and unknown sensors
+              return filtered.filter((s) => s.status === 'offline' || s.status === 'unknown');
+            }
+            return filtered.filter((s) => s.status === status);
+          };
           const sections = [
-            { icon: '', label: 'Alert', status: 'alert' },
+            { icon: '', label: 'Needs Attention', status: 'alert' },
             { icon: '', label: 'Warning', status: 'warning' },
-            { icon: '', label: 'OK', status: 'ok' },
-            { icon: '', label: 'Sensor Offline', status: 'offline' },
-            { icon: '', label: 'Unknown', status: 'unknown' }
+            { icon: '', label: 'Good', status: 'ok' },
+            { icon: '', label: 'System Alerts', status: 'offline' }
           ];
           
           // Separate sections with alerts from those without

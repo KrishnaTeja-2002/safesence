@@ -29,7 +29,7 @@ export const STATUS_MAPPING = {
     borderColor: 'border-red-300'
   },
   'offline': {
-    label: 'Sensor Offline',
+    label: 'System Alert',
     color: 'gray',
     bgColor: 'bg-gray-100',
     textColor: 'text-gray-600',
