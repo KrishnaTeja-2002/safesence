@@ -214,16 +214,17 @@ export async function POST(request) {
     const roleLabel = role === 'admin' ? 'Full access' : 'Access';
     const origin = request.headers.get('origin') || `${request.headers.get('x-forwarded-proto') || 'http'}://${request.headers.get('host')}`;
 
-    // Create a single token for all invitations (they can share the same token)
-    const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-    const acceptLink = `${origin}/api/sendInvite?token=${token}`;
-
     // Create invitations one by one to better handle errors
+    // Each invitation needs a unique token due to database constraint
     const invitations = [];
     const errors = [];
     
     for (const sensorId of targetSensorIds) {
       try {
+        // Generate a unique token for each invitation
+        const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const acceptLink = `${origin}/api/sendInvite?token=${token}`;
+        
         const invitation = await prisma.teamInvitation.create({
           data: {
             token,
@@ -283,6 +284,9 @@ export async function POST(request) {
         ? targetSensorIds.join(', ')
         : `${targetSensorIds.slice(0, 5).join(', ')} and ${targetSensorIds.length - 5} more`;
 
+      // Use the first invitation's link for the email (all invitations will be processed when user accepts)
+      const acceptLink = invitations.length > 0 ? invitations[0].inviteLink : `${origin}/teams`;
+
       const mailOptions = {
         from: {
           name: 'SafeSense Team',
@@ -310,7 +314,7 @@ export async function POST(request) {
                 You have been invited to join SafeSense sensor monitoring with the role: <strong>${roleLabel}</strong>.
               </p>
               <div style="background-color: white; padding: 15px; border-radius: 6px; border-left: 4px solid #10b981; margin-top: 15px;">
-                <p style="margin: 0; color: #374151; font-weight: 500;">Access granted to ${targetSensorIds.length} sensor(s)</p>
+                <p style="margin: 0; color: #374151; font-weight: 500;">Access granted to ${invitations.length} sensor(s)</p>
                 <p style="margin: 5px 0 0 0; color: #6b7280; font-size: 14px;">Role: ${roleLabel}</p>
                 ${targetSensorIds.length <= 10 ? `<p style="margin: 10px 0 0 0; color: #6b7280; font-size: 12px;">Sensors: ${sensorList}</p>` : ''}
               </div>
@@ -344,7 +348,6 @@ export async function POST(request) {
     return NextResponse.json({ 
       success: true, 
       invited: true, 
-      token,
       sensorCount: invitations.length,
       totalRequested: targetSensorIds.length,
       failedCount: errors.length,
