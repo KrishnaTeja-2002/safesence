@@ -36,7 +36,20 @@ export default function Home() {
   const [resetEmail, setResetEmail] = useState('');
   const [error, setError] = useState('');
 
+  // Forgot password flow states
+  const [showResetOTP, setShowResetOTP] = useState(false);
+  const [resetOTP, setResetOTP] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [retypeNewPassword, setRetypeNewPassword] = useState('');
+  const [showNewPasswordField, setShowNewPasswordField] = useState(false);
+  const [showRetypeNewPasswordField, setShowRetypeNewPasswordField] = useState(false);
+  const [isRequestingReset, setIsRequestingReset] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [resetOTPResendCooldown, setResetOTPResendCooldown] = useState(0);
+
   // Signup state
+  const [signupName, setSignupName] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupReenterPassword, setSignupReenterPassword] = useState('');
@@ -44,6 +57,11 @@ export default function Home() {
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [showSignupRePassword, setShowSignupRePassword] = useState(false);
   const [isSignupLoading, setIsSignupLoading] = useState(false);
+  const [showOTPVerification, setShowOTPVerification] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [signupToken, setSignupToken] = useState('');
+  const [isVerifyingOTP, setIsVerifyingOTP] = useState(false);
+  const [otpResendCooldown, setOtpResendCooldown] = useState(0);
 
   // Login state
   const [loginEmail, setLoginEmail] = useState('');
@@ -52,6 +70,7 @@ export default function Home() {
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showResendOption, setShowResendOption] = useState(false);
   const [isResending, setIsResending] = useState(false);
+  const [deviceFingerprint, setDeviceFingerprint] = useState('');
 
   const router = useRouter();
 
@@ -164,7 +183,7 @@ export default function Home() {
     }
   };
 
-  // Signup
+  // Signup - Step 1: Send OTP
   const handleSignup = async (e) => {
     e.preventDefault();
     
@@ -177,31 +196,52 @@ export default function Home() {
     setError('');
     setIsSignupLoading(true);
 
-    if (!signupEmail || !signupPassword) {
-      setSignupMessage('Email and password are required');
+    // Validation
+    if (!signupName || signupName.trim().length < 2) {
+      setSignupMessage('Name must be at least 2 characters');
       setIsSignupLoading(false);
       return;
     }
+
+    if (!signupEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signupEmail)) {
+      setSignupMessage('Valid email is required');
+      setIsSignupLoading(false);
+      return;
+    }
+
+    if (!signupPassword || signupPassword.length < 8) {
+      setSignupMessage('Password must be at least 8 characters');
+      setIsSignupLoading(false);
+      return;
+    }
+
     if (signupPassword !== signupReenterPassword) {
       setSignupMessage('Passwords do not match');
       setIsSignupLoading(false);
       return;
     }
-    if (signupPassword.length < 6) {
-      setSignupMessage('Password must be at least 6 characters');
+
+    // Password strength check
+    const hasUpperCase = /[A-Z]/.test(signupPassword);
+    const hasLowerCase = /[a-z]/.test(signupPassword);
+    const hasNumbers = /\d/.test(signupPassword);
+
+    if (!hasUpperCase || !hasLowerCase || !hasNumbers) {
+      setSignupMessage('Password must contain uppercase, lowercase, and numbers');
       setIsSignupLoading(false);
       return;
     }
 
     try {
-      console.log('Attempting signup:', { email: signupEmail });
+      console.log('Attempting signup:', { name: signupName, email: signupEmail });
       const response = await fetch('/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          name: signupName,
           email: signupEmail,
           password: signupPassword,
-          username: signupEmail.split('@')[0]
+          retypePassword: signupReenterPassword
         })
       });
       
@@ -211,18 +251,26 @@ export default function Home() {
         throw new Error(data.message || 'Signup failed');
       }
       
-      console.log('Signup successful:', data);
+      console.log('OTP sent successfully:', data);
       
-      // Show verification challenge number (if provided)
-      if (typeof data.challengeCorrect !== 'undefined' && data.challengeCorrect !== null) {
-        setSignupMessage(`Account created! Open your email and tap ${data.challengeCorrect} to verify.`);
+      // Store signup token and move to OTP verification
+      if (data.signupToken) {
+        setSignupToken(data.signupToken);
+        setShowOTPVerification(true);
+        setSignupMessage('');
+        setOtpResendCooldown(60); // 60 second cooldown
+        // Start countdown
+        const countdown = setInterval(() => {
+          setOtpResendCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(countdown);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
       } else {
-        setSignupMessage('Account created! Check your email to verify your account.');
-      }
-      
-      // If backend also returns a token, you can optionally log user in
-      if (data.token) {
-        localStorage.setItem('auth-token', data.token);
+        setSignupMessage('Failed to initiate signup. Please try again.');
       }
     } catch (error) {
       console.error('Signup error:', error.message);
@@ -238,7 +286,147 @@ export default function Home() {
     }
   };
 
-  // Login
+  // Signup - Step 2: Verify OTP
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+    
+    if (isVerifyingOTP) {
+      return;
+    }
+
+    if (!otpCode || !/^\d{6}$/.test(otpCode)) {
+      setSignupMessage('Please enter a valid 6-digit code');
+      return;
+    }
+
+    setIsVerifyingOTP(true);
+    setSignupMessage('');
+
+    try {
+      const response = await fetch('/api/signup/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: signupEmail,
+          otp: otpCode,
+          signupToken: signupToken
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Verification failed');
+      }
+      
+      console.log('Account created successfully:', data);
+      
+      // Store token and redirect
+      if (data.token) {
+        localStorage.setItem('auth-token', data.token);
+        setSignupMessage('Account created successfully! Redirecting...');
+        setTimeout(() => {
+          router.push('/dashboard');
+        }, 1000);
+      } else {
+        setSignupMessage('Account created! Please log in.');
+        setTimeout(() => {
+          setIsSignup(false);
+          setShowOTPVerification(false);
+          setOtpCode('');
+          setSignupToken('');
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('OTP verification error:', error.message);
+      setSignupMessage(error.message || 'Verification failed. Please try again.');
+      setOtpCode(''); // Clear OTP on error
+    } finally {
+      setIsVerifyingOTP(false);
+    }
+  };
+
+  // Resend OTP
+  const handleResendOTP = async () => {
+    if (otpResendCooldown > 0) {
+      return;
+    }
+
+    setIsSignupLoading(true);
+    setSignupMessage('');
+
+    try {
+      const response = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: signupName,
+          email: signupEmail,
+          password: signupPassword,
+          retypePassword: signupReenterPassword
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to resend code');
+      }
+      
+      if (data.signupToken) {
+        setSignupToken(data.signupToken);
+        setSignupMessage('Verification code resent! Please check your email.');
+        setOtpResendCooldown(60);
+        const countdown = setInterval(() => {
+          setOtpResendCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(countdown);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+    } catch (error) {
+      setSignupMessage(error.message || 'Failed to resend code. Please try again.');
+    } finally {
+      setIsSignupLoading(false);
+    }
+  };
+
+  // Generate device fingerprint on mount
+  useEffect(() => {
+    const generateFingerprint = async () => {
+      try {
+        const userAgent = navigator.userAgent;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.textBaseline = 'top';
+        ctx.font = '14px Arial';
+        ctx.fillText('Device fingerprint', 2, 2);
+        const canvasFingerprint = canvas.toDataURL();
+        
+        const fingerprint = await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(`${userAgent}|${canvasFingerprint}|${screen.width}x${screen.height}`)
+        ).then(hash => 
+          Array.from(new Uint8Array(hash))
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('')
+        );
+        
+        setDeviceFingerprint(fingerprint);
+      } catch (error) {
+        console.error('Failed to generate device fingerprint:', error);
+        // Fallback to simple hash
+        const simpleHash = btoa(navigator.userAgent + screen.width + screen.height).substring(0, 64);
+        setDeviceFingerprint(simpleHash);
+      }
+    };
+    generateFingerprint();
+  }, []);
+
+  // Login - Step 1: Initial login attempt
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoginMessage('');
@@ -256,7 +444,8 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: loginEmail,
-          password: loginPassword
+          password: loginPassword,
+          deviceFingerprint: deviceFingerprint
         })
       });
       
@@ -264,15 +453,12 @@ export default function Home() {
       try {
         data = await response.json();
       } catch (parseError) {
-        // If response is not JSON, handle as network error
         throw new Error('Failed to parse server response');
       }
       
       if (!response.ok) {
-        // Create error with response data
         const error = new Error(data.message || 'Login failed');
         error.code = data.code;
-        error.response = response;
         throw error;
       }
       
@@ -349,30 +535,201 @@ export default function Home() {
     }
   };
 
-  // Forgot Password
+  // Forgot Password - Step 1: Request OTP
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setError('');
 
-    if (!resetEmail) {
-      setError('Please enter your email');
+    if (!resetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail)) {
+      setError('Please enter a valid email address');
       return;
     }
 
+    if (isRequestingReset) {
+      return;
+    }
+
+    setIsRequestingReset(true);
+    setError('');
+
     try {
-      console.log('Sending password reset:', resetEmail);
-      // Password reset functionality disabled - using new auth system
-      // In a real implementation, you would call your own password reset API
+      console.log('Requesting password reset:', resetEmail);
+      const response = await fetch('/api/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to send reset code');
+      }
+
+      // Move to OTP verification step
+      setShowResetOTP(true);
       setError('');
-      alert('Password reset functionality is not available. Please contact an administrator.');
-      setShowForgotPassword(false);
+      setResetOTPResendCooldown(60); // 60 second cooldown
+      
+      // Start countdown
+      const countdown = setInterval(() => {
+        setResetOTPResendCooldown((prev) => {
+          if (prev <= 1) {
+            clearInterval(countdown);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     } catch (error) {
-      console.error('Password reset error:', error.message);
+      console.error('Password reset request error:', error.message);
       setError(
         error.message === 'Failed to fetch'
           ? 'Unable to connect to authentication server. Please check your network or contact support.'
-          : 'Failed to send reset link: ' + error.message
+          : error.message
       );
+    } finally {
+      setIsRequestingReset(false);
+    }
+  };
+
+  // Forgot Password - Step 2: Validate OTP format and move to next step (verify later)
+  const handleVerifyResetOTP = async (e) => {
+    e.preventDefault();
+
+    if (!resetOTP || !/^\d{6}$/.test(resetOTP)) {
+      setError('Please enter a valid 6-digit code');
+      return;
+    }
+
+    // Just move to password reset step - OTP will be verified when password is submitted
+    setShowResetOTP(false);
+    setShowNewPassword(true);
+    setError('');
+  };
+
+  // Forgot Password - Step 3: Set New Password
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    
+    if (isResettingPassword) {
+      return;
+    }
+
+    setError('');
+
+    // Validation
+    if (!newPassword || newPassword.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+
+    if (newPassword !== retypeNewPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    // Password strength check
+    const hasUpperCase = /[A-Z]/.test(newPassword);
+    const hasLowerCase = /[a-z]/.test(newPassword);
+    const hasNumbers = /\d/.test(newPassword);
+
+    if (!hasUpperCase || !hasLowerCase || !hasNumbers) {
+      setError('Password must contain uppercase, lowercase, and numbers');
+      return;
+    }
+
+    setIsResettingPassword(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: resetEmail,
+          otp: resetOTP,
+          newPassword: newPassword,
+          retypePassword: retypeNewPassword
+        })
+      });
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        throw new Error('Failed to parse server response');
+      }
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Failed to reset password');
+      }
+
+      // Success - close modal and show success message
+      setError('');
+      setShowForgotPassword(false);
+      setShowResetOTP(false);
+      setShowNewPassword(false);
+      setResetEmail('');
+      setResetOTP('');
+      setNewPassword('');
+      setRetypeNewPassword('');
+      setResetOTPResendCooldown(0);
+      
+      // Show success message in login form
+      setLoginMessage('Password reset successful! You can now log in with your new password.');
+      setTimeout(() => {
+        setLoginMessage('');
+      }, 5000);
+    } catch (error) {
+      console.error('Password reset error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack
+      });
+      setError(error.message || 'Failed to reset password. Please try again.');
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
+
+  // Resend Reset OTP
+  const handleResendResetOTP = async () => {
+    if (resetOTPResendCooldown > 0) {
+      return;
+    }
+
+    setIsRequestingReset(true);
+    setError('');
+
+    try {
+      const response = await fetch('/api/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to resend code');
+      }
+
+      setError('');
+      setResetOTPResendCooldown(60);
+      const countdown = setInterval(() => {
+        setResetOTPResendCooldown((prev) => {
+          if (prev <= 1) {
+            clearInterval(countdown);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (error) {
+      setError(error.message || 'Failed to resend code. Please try again.');
+    } finally {
+      setIsRequestingReset(false);
     }
   };
 
@@ -466,7 +823,19 @@ export default function Home() {
             </>
           ) : (
             <>
+              {!showOTPVerification ? (
+            <>
               <form onSubmit={handleSignup}>
+                    <label style={styles.label}>Name</label>
+                    <input
+                      type="text"
+                      placeholder="Your full name"
+                      style={styles.input}
+                      value={signupName}
+                      onChange={(e) => setSignupName(e.target.value)}
+                      required
+                      disabled={isSignupLoading}
+                    />
                 <label style={styles.label}>Email</label>
                 <input
                   type="email"
@@ -475,16 +844,18 @@ export default function Home() {
                   value={signupEmail}
                   onChange={(e) => setSignupEmail(e.target.value)}
                   required
+                      disabled={isSignupLoading}
                 />
                 <label style={styles.label}>Password</label>
                 <div style={styles.passwordWrapper}>
                   <input
                     type={showSignupPassword ? 'text' : 'password'}
-                    placeholder="Password"
+                        placeholder="Password (min 8 chars, uppercase, lowercase, numbers)"
                     style={styles.input}
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
                     required
+                        disabled={isSignupLoading}
                   />
                   <span style={styles.eyeIcon} onClick={() => setShowSignupPassword(!showSignupPassword)}>
                     {showSignupPassword ? '🙈' : '👁️'}
@@ -499,6 +870,7 @@ export default function Home() {
                     value={signupReenterPassword}
                     onChange={(e) => setSignupReenterPassword(e.target.value)}
                     required
+                        disabled={isSignupLoading}
                   />
                   <span style={styles.eyeIcon} onClick={() => setShowSignupRePassword(!showSignupRePassword)}>
                     {showSignupRePassword ? '🙈' : '👁️'}
@@ -512,7 +884,7 @@ export default function Home() {
                   type="submit"
                   disabled={isSignupLoading}
                 >
-                  {isSignupLoading ? 'Creating Account...' : 'Create Account'}
+                      {isSignupLoading ? 'Sending Code...' : 'Create Account'}
                 </button>
               </form>
               {signupMessage && <p style={styles.message}>{signupMessage}</p>}
@@ -526,6 +898,83 @@ export default function Home() {
                   Already a member? Sign-in
                 </a>
               </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <h3 style={{ ...styles.subtitleBold, marginBottom: '0.5rem' }}>Verify Your Email</h3>
+                    <p style={{ ...styles.subtitle, fontSize: '0.875rem' }}>
+                      We sent a 6-digit code to <strong>{signupEmail}</strong>
+                    </p>
+                  </div>
+                  <form onSubmit={handleVerifyOTP}>
+                    <label style={styles.label}>Enter Verification Code</label>
+                    <input
+                      type="text"
+                      placeholder="000000"
+                      style={{
+                        ...styles.input,
+                        textAlign: 'center',
+                        fontSize: '1.5rem',
+                        letterSpacing: '0.5rem',
+                        fontFamily: 'monospace'
+                      }}
+                      value={otpCode}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                        setOtpCode(value);
+                      }}
+                      maxLength={6}
+                      required
+                      disabled={isVerifyingOTP}
+                      autoFocus
+                    />
+                    <button 
+                      style={{
+                        ...styles.loginBtn,
+                        ...(isVerifyingOTP ? styles.loginBtnDisabled : {})
+                      }} 
+                      type="submit"
+                      disabled={isVerifyingOTP || otpCode.length !== 6}
+                    >
+                      {isVerifyingOTP ? 'Verifying...' : 'Verify & Create Account'}
+                    </button>
+                  </form>
+                  {signupMessage && <p style={styles.message}>{signupMessage}</p>}
+                  {error && <p style={styles.error}>{error}</p>}
+                  <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                    <p style={{ ...styles.subtitle, fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                      Didn't receive the code?
+                    </p>
+                    <button
+                      onClick={handleResendOTP}
+                      disabled={otpResendCooldown > 0 || isSignupLoading}
+                      style={{
+                        ...styles.resendBtn,
+                        ...(otpResendCooldown > 0 || isSignupLoading ? styles.resendBtnDisabled : {})
+                      }}
+                    >
+                      {otpResendCooldown > 0 
+                        ? `Resend in ${otpResendCooldown}s` 
+                        : 'Resend Code'}
+                    </button>
+                  </div>
+                  <div style={styles.links}>
+                    <a 
+                      href="#back" 
+                      onClick={() => {
+                        setShowOTPVerification(false);
+                        setOtpCode('');
+                        setSignupToken('');
+                        setOtpResendCooldown(0);
+                      }} 
+                      style={styles.link}
+                    >
+                      ← Back to signup
+                    </a>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
@@ -535,9 +984,14 @@ export default function Home() {
       {showForgotPassword && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
+            {!showResetOTP && !showNewPassword ? (
+              <>
             <h2 style={styles.modalTitle}>Reset Password</h2>
+                <p style={{ ...styles.subtitle, marginBottom: '1rem', fontSize: '0.875rem' }}>
+                  Enter your email address and we'll send you a verification code to reset your password.
+                </p>
             <form onSubmit={handleForgotPassword} style={styles.form}>
-              <label style={styles.label}>Enter your email</label>
+                  <label style={styles.label}>Email</label>
               <input
                 type="email"
                 placeholder="Email"
@@ -545,15 +999,167 @@ export default function Home() {
                 value={resetEmail}
                 onChange={(e) => setResetEmail(e.target.value)}
                 required
+                    disabled={isRequestingReset}
               />
               {error && <p style={styles.error}>{error}</p>}
-              <button type="submit" style={styles.loginBtn}>
-                Send Reset Link
+                  <button 
+                    type="submit" 
+                    style={{
+                      ...styles.loginBtn,
+                      ...(isRequestingReset ? styles.loginBtnDisabled : {})
+                    }}
+                    disabled={isRequestingReset}
+                  >
+                    {isRequestingReset ? 'Sending Code...' : 'Send Verification Code'}
               </button>
-              <button type="button" style={styles.closeBtn} onClick={() => setShowForgotPassword(false)}>
+                  <button 
+                    type="button" 
+                    style={styles.closeBtn} 
+                    onClick={() => {
+                      setShowForgotPassword(false);
+                      setResetEmail('');
+                      setError('');
+                      setShowResetOTP(false);
+                      setShowNewPassword(false);
+                      setResetOTP('');
+                      setNewPassword('');
+                      setRetypeNewPassword('');
+                      setResetOTPResendCooldown(0);
+                    }}
+                  >
                 Cancel
               </button>
             </form>
+              </>
+            ) : showResetOTP && !showNewPassword ? (
+              <>
+                <h2 style={styles.modalTitle}>Verify Your Email</h2>
+                <p style={{ ...styles.subtitle, marginBottom: '1rem', fontSize: '0.875rem' }}>
+                  We sent a 6-digit code to <strong>{resetEmail}</strong>
+                </p>
+                <form onSubmit={handleVerifyResetOTP} style={styles.form}>
+                  <label style={styles.label}>Enter Verification Code</label>
+                  <input
+                    type="text"
+                    placeholder="000000"
+                    style={{
+                      ...styles.input,
+                      textAlign: 'center',
+                      fontSize: '1.5rem',
+                      letterSpacing: '0.5rem',
+                      fontFamily: 'monospace'
+                    }}
+                    value={resetOTP}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                      setResetOTP(value);
+                    }}
+                    maxLength={6}
+                    required
+                    autoFocus
+                  />
+                  {error && <p style={styles.error}>{error}</p>}
+                  <button 
+                    type="submit" 
+                    style={styles.loginBtn}
+                    disabled={resetOTP.length !== 6}
+                  >
+                    Continue
+                  </button>
+                  <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                    <p style={{ ...styles.subtitle, fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+                      Didn't receive the code?
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleResendResetOTP}
+                      disabled={resetOTPResendCooldown > 0 || isRequestingReset}
+                      style={{
+                        ...styles.resendBtn,
+                        ...(resetOTPResendCooldown > 0 || isRequestingReset ? styles.resendBtnDisabled : {})
+                      }}
+                    >
+                      {resetOTPResendCooldown > 0 
+                        ? `Resend in ${resetOTPResendCooldown}s` 
+                        : 'Resend Code'}
+                    </button>
+          </div>
+                  <button 
+                    type="button" 
+                    style={styles.closeBtn} 
+                    onClick={() => {
+                      setShowResetOTP(false);
+                      setResetOTP('');
+                      setError('');
+                    }}
+                  >
+                    ← Back
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <h2 style={styles.modalTitle}>Create New Password</h2>
+                <p style={{ ...styles.subtitle, marginBottom: '1rem', fontSize: '0.875rem' }}>
+                  Enter your new password below.
+                </p>
+                <form onSubmit={handleResetPassword} style={styles.form}>
+                  <label style={styles.label}>New Password</label>
+                  <div style={styles.passwordWrapper}>
+                    <input
+                      type={showNewPasswordField ? 'text' : 'password'}
+                      placeholder="Password (min 8 chars, uppercase, lowercase, numbers)"
+                      style={styles.input}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      required
+                      disabled={isResettingPassword}
+                    />
+                    <span style={styles.eyeIcon} onClick={() => setShowNewPasswordField(!showNewPasswordField)}>
+                      {showNewPasswordField ? '🙈' : '👁️'}
+                    </span>
+                  </div>
+                  <label style={styles.label}>Re-enter New Password</label>
+                  <div style={styles.passwordWrapper}>
+                    <input
+                      type={showRetypeNewPasswordField ? 'text' : 'password'}
+                      placeholder="Re-enter Password"
+                      style={styles.input}
+                      value={retypeNewPassword}
+                      onChange={(e) => setRetypeNewPassword(e.target.value)}
+                      required
+                      disabled={isResettingPassword}
+                    />
+                    <span style={styles.eyeIcon} onClick={() => setShowRetypeNewPasswordField(!showRetypeNewPasswordField)}>
+                      {showRetypeNewPasswordField ? '🙈' : '👁️'}
+                    </span>
+                  </div>
+                  {error && <p style={styles.error}>{error}</p>}
+                  <button 
+                    type="submit" 
+                    style={{
+                      ...styles.loginBtn,
+                      ...(isResettingPassword ? styles.loginBtnDisabled : {})
+                    }}
+                    disabled={isResettingPassword}
+                  >
+                    {isResettingPassword ? 'Resetting Password...' : 'Reset Password'}
+                  </button>
+                  <button 
+                    type="button" 
+                    style={styles.closeBtn} 
+                    onClick={() => {
+                      setShowNewPassword(false);
+                      setNewPassword('');
+                      setRetypeNewPassword('');
+                      setError('');
+                    }}
+                  >
+                    ← Back
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -1,199 +1,256 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
-import nodemailer from 'nodemailer';
 import { prisma, ensurePrismaConnected } from '../../../../lib/prismaClient.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import otpService from '../../../../lib/otpService.js';
 
 await ensurePrismaConnected();
 
-function buildTransport() {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER || 'safesencewinwinlabs@gmail.com';
-  const pass = process.env.SMTP_PASS || 'tprw plda fxec pzqt';
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
-}
-
+/**
+ * POST /api/signup
+ * Step 1: Validate signup data and send OTP
+ * 
+ * Body: { name, email, password, retypePassword }
+ * Response: { success: true, message: 'OTP sent to email' }
+ */
 export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const email = (body?.email || '').trim();
+    const name = (body?.name || '').trim();
+    const email = (body?.email || '').trim().toLowerCase();
     const password = (body?.password || '').trim();
-    const username = (body?.username || (email ? email.split('@')[0] : '')).trim();
+    const retypePassword = (body?.retypePassword || '').trim();
 
-    if (!email) {
-      return NextResponse.json({ message: 'Email is required' }, { status: 400 });
-    }
-    if (!password) {
-      return NextResponse.json({ message: 'Password is required' }, { status: 400 });
+    // Validation
+    if (!name || name.length < 2) {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Name must be at least 2 characters' 
+      }, { status: 400 });
     }
 
-    // Check if account already exists in auth.users (case-insensitive)
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Valid email is required' 
+      }, { status: 400 });
+    }
+
+    if (!password || password.length < 8) {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Password must be at least 8 characters' 
+      }, { status: 400 });
+    }
+
+    if (password !== retypePassword) {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Passwords do not match' 
+      }, { status: 400 });
+    }
+
+    // Check password strength (optional but recommended)
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+
+    if (!hasUpperCase || !hasLowerCase || !hasNumbers) {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Password must contain uppercase, lowercase, and numbers' 
+      }, { status: 400 });
+    }
+
+    // Check if account already exists
     try {
-      const exists = await prisma.$queryRaw`select 1 from auth.users where lower(email) = lower(${email}) limit 1`;
+      const exists = await prisma.$queryRaw`
+        SELECT 1 FROM auth.users 
+        WHERE lower(email) = lower(${email}) 
+        AND deleted_at IS NULL
+        LIMIT 1
+      `;
       if (Array.isArray(exists) && exists.length > 0) {
-        return NextResponse.json({ success: false, message: 'Account already exists' }, { status: 409 });
+        return NextResponse.json({ 
+          success: false, 
+          message: 'An account with this email already exists' 
+        }, { status: 409 });
       }
-    } catch {}
-
-    const transporter = buildTransport();
-
-    // Generate app URL - works for both local development and Coolify production
-    let appUrl = process.env.APP_BASE_URL || process.env.NEXT_PUBLIC_APP_URL;
-    
-    if (!appUrl) {
-      // Auto-detect URL from request headers (works in both local and production)
-      const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
-      const protocol = request.headers.get('x-forwarded-proto') || 'https';
-      
-      // Validate that we have a proper host (not database URL)
-      if (host && !host.includes('postgres') && !host.includes('database') && !host.includes('161.97.170.64:5401')) {
-        appUrl = `${protocol}://${host}`;
-        console.log('Auto-detected app URL from headers:', appUrl);
-      } else {
-        // Fallback: use the request URL to extract the domain
-        try {
-          const requestUrl = new URL(request.url);
-          appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
-          console.log('Using request URL for app URL:', appUrl);
-        } catch (error) {
-          // Last resort fallback based on environment
-          appUrl = process.env.NODE_ENV === 'production' 
-            ? 'https://your-coolify-domain.com' // Replace with your actual Coolify domain
-            : 'http://localhost:3000';
-          console.error('Using environment-based fallback URL:', appUrl);
-        }
-      }
+    } catch (dbError) {
+      console.error('Database error checking existing user:', dbError);
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Database error. Please try again.' 
+      }, { status: 500 });
     }
-    
-    // CRITICAL: Validate that appUrl is NOT a database URL
-    if (appUrl.includes('postgres://') || appUrl.includes('postgresql://') || appUrl.includes('161.97.170.64:5401')) {
-      console.error('CRITICAL ERROR: appUrl is a database URL!', appUrl);
-      // Force use of request URL
-      try {
-        const requestUrl = new URL(request.url);
-        appUrl = `${requestUrl.protocol}//${requestUrl.host}`;
-        console.log('Forced correction to request URL:', appUrl);
-      } catch (error) {
-        // Environment-based fallback
-        appUrl = process.env.NODE_ENV === 'production' 
-          ? 'https://your-coolify-domain.com' // Replace with your actual Coolify domain
-          : 'http://localhost:3000';
-        console.error('Using emergency environment-based fallback URL:', appUrl);
-      }
-    }
-    
-    // Log final URL for debugging
-    console.log('Final app URL for verification link:', appUrl);
-    console.log('Environment:', process.env.NODE_ENV);
 
-    const fromName = process.env.SMTP_FROM_NAME || 'SafeSense Team';
-    const fromAddr = process.env.SMTP_FROM || (process.env.SMTP_USER || 'safesencewinwinlabs@gmail.com');
+    // Hash password and store temporarily in signup_pending table
+    // We'll create the actual account after OTP verification
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const signupToken = crypto.randomBytes(32).toString('hex');
 
-    // Prepare three-number verification challenge
-    const generateOptions = () => {
-      const set = new Set();
-      while (set.size < 3) {
-        set.add(Math.floor(10 + Math.random() * 90)); // 10-99
-      }
-      return Array.from(set);
-    };
-    const options = generateOptions();
-    const correct = options[Math.floor(Math.random() * options.length)];
-
-    // Create account directly in auth.users table
-    let verifyToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     try {
-      const hashed = await bcrypt.hash(password, 12);
-      const userId = crypto.randomUUID();
-      
-      // Create user directly in auth.users with all required fields
+      // Store pending signup data
+      // First, delete any existing pending signup for this email
       await prisma.$executeRaw`
-        INSERT INTO auth.users (
-          id, 
+        DELETE FROM public.signup_pending 
+        WHERE email = ${email}
+      `;
+
+      // Insert new pending signup
+      await prisma.$executeRaw`
+        INSERT INTO public.signup_pending (
           email, 
-          encrypted_password, 
-          confirmation_token,
-          confirmation_sent_at,
-          created_at, 
-          updated_at,
-          aud,
-          role,
-          is_sso_user,
-          is_anonymous,
-          raw_user_meta_data
+          name, 
+          password_hash, 
+          signup_token, 
+          expires_at, 
+          created_at
         ) VALUES (
-          ${userId}::uuid,
           ${email},
-          ${hashed},
-          ${verifyToken},
-          now(),
-          now(),
-          now(),
-          'authenticated',
-          'authenticated',
-          false,
-          false,
-          ${JSON.stringify({ emailVerificationChallenge: { options, correct } })}::jsonb
+          ${name},
+          ${hashedPassword},
+          ${signupToken},
+          NOW() + INTERVAL '30 minutes',
+          NOW()
         )
       `;
+    } catch (dbError) {
+      console.error('Failed to store pending signup:', dbError);
+      console.error('Error details:', {
+        message: dbError.message,
+        code: dbError.code,
+        meta: dbError.meta
+      });
       
-      console.log('Created user in auth.users:', { userId, email, verifyToken });
-      
-    } catch (e) {
-      return NextResponse.json({ success: false, message: 'Failed to create account: ' + (e?.message || e) }, { status: 500 });
+      // Check if table doesn't exist
+      if (dbError.message?.includes('does not exist') || 
+          dbError.message?.includes('relation') || 
+          dbError.message?.includes('Table') ||
+          dbError.code === '42P01') {
+        // Try to create all required tables automatically
+        try {
+          console.log('Attempting to create authentication tables...');
+          
+          // Create signup_pending table
+          await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS public.signup_pending (
+              id BIGSERIAL PRIMARY KEY,
+              email VARCHAR(255) NOT NULL UNIQUE,
+              name VARCHAR(255) NOT NULL,
+              password_hash VARCHAR(255) NOT NULL,
+              signup_token VARCHAR(64) NOT NULL,
+              expires_at TIMESTAMPTZ NOT NULL,
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+          `);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_signup_pending_token ON public.signup_pending(signup_token)`);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_signup_pending_expires ON public.signup_pending(expires_at)`);
+          
+          // Create otp_codes table
+          await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS public.otp_codes (
+              id BIGSERIAL PRIMARY KEY,
+              email VARCHAR(255) NOT NULL,
+              otp VARCHAR(6) NOT NULL,
+              purpose VARCHAR(50) DEFAULT 'signup',
+              expires_at TIMESTAMPTZ NOT NULL,
+              attempts INTEGER DEFAULT 0,
+              created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+          `);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_otp_email_purpose ON public.otp_codes(email, purpose)`);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_otp_expires ON public.otp_codes(expires_at)`);
+          
+          // Create user_devices table
+          await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS public.user_devices (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              user_id UUID NOT NULL,
+              device_fingerprint VARCHAR(255) NOT NULL,
+              device_name VARCHAR(255),
+              last_used_at TIMESTAMPTZ DEFAULT NOW(),
+              created_at TIMESTAMPTZ DEFAULT NOW(),
+              user_agent TEXT,
+              ip_address VARCHAR(45),
+              UNIQUE(user_id, device_fingerprint)
+            )
+          `);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_user_device_user ON public.user_devices(user_id)`);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS idx_user_device_last_used ON public.user_devices(last_used_at)`);
+          
+          console.log('All authentication tables created successfully');
+          
+          // Retry the insert
+          await prisma.$executeRaw`
+            INSERT INTO public.signup_pending (
+              email, 
+              name, 
+              password_hash, 
+              signup_token, 
+              expires_at, 
+              created_at
+            ) VALUES (
+              ${email},
+              ${name},
+              ${hashedPassword},
+              ${signupToken},
+              NOW() + INTERVAL '30 minutes',
+              NOW()
+            )
+          `;
+          console.log('Signup data stored successfully after table creation');
+        } catch (createError) {
+          console.error('Failed to create tables:', createError);
+          console.error('Create error details:', {
+            message: createError.message,
+            code: createError.code,
+            meta: createError.meta
+          });
+          return NextResponse.json({ 
+            success: false, 
+            message: 'Database setup failed. Please contact support or run: node scripts/setup-auth-tables.js',
+            code: 'MIGRATION_REQUIRED',
+            error: process.env.NODE_ENV === 'development' ? createError.message : undefined
+          }, { status: 500 });
+        }
+      } else {
+        return NextResponse.json({ 
+          success: false, 
+          message: 'Failed to process signup. Please try again.' 
+        }, { status: 500 });
+      }
     }
 
-    // 1) Send verification link to the user
-    const buildLink = (n) => `${appUrl}/api/verify-email?token=${verifyToken}&email=${encodeURIComponent(email)}&choice=${encodeURIComponent(n)}`;
-    const [n1, n2, n3] = options;
-    const link1 = buildLink(n1);
-    const link2 = buildLink(n2);
-    const link3 = buildLink(n3);
-    
-    const userMail = {
-      from: { name: fromName, address: fromAddr },
-      to: email,
-      subject: 'Verify your SafeSense account',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="margin: 0 0 16px;">Welcome, ${username || 'there'} 👋</h2>
-          <p style="margin: 0 0 12px; color: #374151;">Verify your email by clicking the number shown in the app.</p>
-          <div style="display:flex; gap:12px; margin: 16px 0;">
-            <a href="${link1}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n1}</a>
-            <a href="${link2}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n2}</a>
-            <a href="${link3}" style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">${n3}</a>
-          </div>
-          <p style="margin:0; color:#6b7280; font-size: 12px;">If you didn't request this, you can ignore this email.</p>
-        </div>
-      `,
-    };
+    // Generate and send OTP
+    try {
+      await otpService.generateAndSendOTP(email, 'signup');
+    } catch (otpError) {
+      console.error('Failed to send OTP:', otpError);
+      // Clean up pending signup
+      await prisma.$executeRaw`
+        DELETE FROM public.signup_pending 
+        WHERE email = ${email}
+      `;
+      return NextResponse.json({ 
+        success: false, 
+        message: otpError.message || 'Failed to send verification code. Please try again.' 
+      }, { status: 500 });
+    }
 
-    // 2) Notify admin mailbox
-    const adminTo = process.env.SIGNUP_NOTIFY_TO || fromAddr;
-    const adminMail = {
-      from: { name: fromName, address: fromAddr },
-      to: adminTo,
-      subject: 'New SafeSense signup request',
-      text: `New signup request\nEmail: ${email}\nUsername: ${username}`,
-    };
-
-    await transporter.verify().catch(() => {});
-    await Promise.all([
-      transporter.sendMail(userMail),
-      transporter.sendMail(adminMail),
-    ]);
-
-    return NextResponse.json({ success: true, message: 'Verification email sent. Please verify to sign in.', challengeCorrect: correct });
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Verification code sent to your email. Please check your inbox.',
+      signupToken // Return token for client to use in verification
+    });
   } catch (error) {
-    return NextResponse.json({ success: false, message: error.message || 'Signup failed' }, { status: 500 });
+    console.error('Signup error:', error);
+    return NextResponse.json({ 
+      success: false, 
+      message: error.message || 'Signup failed. Please try again.' 
+    }, { status: 500 });
   }
 }

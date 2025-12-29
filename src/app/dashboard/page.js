@@ -397,6 +397,9 @@ export default function Dashboard() {
     );
   }
 
+  // Check if user has no devices/sensors (empty state)
+  const hasNoData = itemsVisible.length === 0 && !loadingData;
+
      return (
      <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
                <style jsx>{`
@@ -563,461 +566,487 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Role Filter */}
-        <div className="flex justify-end items-center mb-6">
-          <div className="flex items-center gap-3">
-            <label className={`text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Role Filter:</label>
-            <select
-              value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value)}
-              className={`border-2 rounded-xl px-4 py-2 font-medium transition-all duration-200 ${darkMode ? "bg-slate-700 text-white border-slate-600 hover:border-slate-500" : "bg-white border-slate-200 hover:border-slate-300 shadow-sm"}`}
+        {/* Empty State or Dashboard Content */}
+        {hasNoData ? (
+          <div className={`rounded-3xl p-16 shadow-xl text-center ${darkMode ? "bg-slate-800 border border-slate-700" : "bg-white shadow-2xl border border-slate-100"}`}>
+            <div className={`flex items-center justify-center w-32 h-32 bg-gradient-to-r from-blue-400 to-cyan-500 rounded-full mb-8 mx-auto shadow-lg`}>
+              <span className="text-6xl">📡</span>
+            </div>
+            <h2 className={`text-3xl font-bold mb-4 ${darkMode ? "text-white" : "text-slate-800"}`}>
+              Welcome to SafeSense!
+            </h2>
+            <p className={`text-lg mb-8 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+              You don't have any devices or sensors yet. Get started by adding your first device.
+            </p>
+            <button
+              onClick={() => router.push('/devices/add')}
+              className={`px-8 py-4 rounded-xl font-semibold text-lg transition-all duration-200 bg-gradient-to-r from-orange-500 to-red-500 text-white hover:from-orange-600 hover:to-red-600 shadow-lg hover:shadow-xl hover:scale-105`}
             >
-              <option value="all">All</option>
-              <option value="owned">Owned</option>
-              <option value="admin">Admin</option>
-              <option value="viewer">Viewer</option>
-            </select>
+              Add Your First Device
+            </button>
+            <p className={`text-sm mt-6 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+              Once you add a device, your dashboard will show real-time sensor data here.
+            </p>
           </div>
-        </div>
-
-        {/* Temperature Chart */}
-        {prefs.showTemp && (
-          <div className={`rounded-2xl shadow-2xl p-8 mb-10 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                {axisTemp.title}
-              </h3>
-              <div className={`text-sm px-3 py-2 rounded-lg ${darkMode ? "text-slate-300 bg-slate-700" : "text-slate-500 bg-slate-100"}`}>
-                Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span>
+        ) : (
+          <>
+            {/* Role Filter */}
+            <div className="flex justify-end items-center mb-6">
+              <div className="flex items-center gap-3">
+                <label className={`text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Role Filter:</label>
+                <select
+                  value={selectedRole}
+                  onChange={(e) => setSelectedRole(e.target.value)}
+                  className={`border-2 rounded-xl px-4 py-2 font-medium transition-all duration-200 ${darkMode ? "bg-slate-700 text-white border-slate-600 hover:border-slate-500" : "bg-white border-slate-200 hover:border-slate-300 shadow-sm"}`}
+                >
+                  <option value="all">All</option>
+                  <option value="owned">Owned</option>
+                  <option value="admin">Admin</option>
+                  <option value="viewer">Viewer</option>
+                </select>
               </div>
             </div>
 
-            {/* Hover Info - Above Graph (only visible when hovering) */}
-            <div className={`mb-6 h-10 flex items-center justify-center transition-all duration-300 ${hoveredTempBar ? "opacity-100" : "opacity-0"}`}>
-              {hoveredTempBar && (
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${
-                    hoveredTempBar.status === "alert" ? "bg-red-500" 
-                    : hoveredTempBar.status === "warning" ? "bg-yellow-500"
-                    : hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "bg-slate-400"
-                    : "bg-green-500"
-                  }`}></div>
-                  <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>{hoveredTempBar.name}</span>
-                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
-                  <span className={`font-medium ${
-                    hoveredTempBar.status === "alert" ? "text-red-500" 
-                    : hoveredTempBar.status === "warning" ? "text-yellow-500"
-                    : hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "text-slate-500"
-                    : "text-green-500"
-                  }`}>
-                    {hoveredTempBar.status === "ok" ? "Good" : hoveredTempBar.status === "alert" ? "Needs Attention" : hoveredTempBar.status}
-                  </span>
-                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
-                  <span className={`font-bold text-lg ${darkMode ? "text-white" : "text-slate-800"}`}>
-                    {hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "NA" : hoveredTempBar.displayValue}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Chart area (grid/axes always render) */}
-            <div className="relative">
-              <div className="flex items-start">
-                {/* Left Y-axis */}
-                <div className="flex flex-col w-16 mr-4 flex-shrink-0">
-                  <div className="h-6"></div>
-                  <div className="relative h-80">
-                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
-                      darkMode ? "text-slate-300" : "text-slate-600"
-                    }`}>
-                      {ticks(axisTemp).map((t, i) => (
-                        <span key={i} className="transform -translate-y-1/2">
-                          {t}
-                        </span>
-                      ))}
-                    </div>
+            {/* Temperature Chart */}
+            {prefs.showTemp && (
+              <div className={`rounded-2xl shadow-2xl p-8 mb-10 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                    {axisTemp.title}
+                  </h3>
+                  <div className={`text-sm px-3 py-2 rounded-lg ${darkMode ? "text-slate-300 bg-slate-700" : "text-slate-500 bg-slate-100"}`}>
+                    Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span>
                   </div>
                 </div>
 
-                {/* Main plot - expanded to full width */}
-                <div className="flex-1 relative">
-                  {/* Grid */}
-                  <div className={`absolute inset-0 h-80 rounded-xl border shadow-inner ${darkMode ? "bg-gradient-to-b from-slate-700 to-slate-800 border-slate-600" : "bg-gradient-to-b from-slate-50 to-white border-slate-200"}`}>
-                    <div className="h-full flex flex-col justify-between">
-                      {[...Array(6)].map((_, i) => (
-                        <div
-                          key={i}
-                          className={`border-t w-full ${
-                            i === 0 || i === 5 ? "border-slate-400 border-t-2" : "border-slate-200"
-                          } ${darkMode ? "border-slate-600" : ""}`}
-                        />
-                      ))}
+                {/* Hover Info - Above Graph (only visible when hovering) */}
+                <div className={`mb-6 h-10 flex items-center justify-center transition-all duration-300 ${hoveredTempBar ? "opacity-100" : "opacity-0"}`}>
+                  {hoveredTempBar && (
+                    <div className="flex items-center gap-4">
+                      <div className={`w-3 h-3 rounded-full ${
+                        hoveredTempBar.status === "alert" ? "bg-red-500" 
+                        : hoveredTempBar.status === "warning" ? "bg-yellow-500"
+                        : hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "bg-slate-400"
+                        : "bg-green-500"
+                      }`}></div>
+                      <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>{hoveredTempBar.name}</span>
+                      <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                      <span className={`font-medium ${
+                        hoveredTempBar.status === "alert" ? "text-red-500" 
+                        : hoveredTempBar.status === "warning" ? "text-yellow-500"
+                        : hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "text-slate-500"
+                        : "text-green-500"
+                      }`}>
+                        {hoveredTempBar.status === "ok" ? "Good" : hoveredTempBar.status === "alert" ? "Needs Attention" : hoveredTempBar.status}
+                      </span>
+                      <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                      <span className={`font-bold text-lg ${darkMode ? "text-white" : "text-slate-800"}`}>
+                        {hoveredTempBar.status === "offline" || hoveredTempBar.status === "unknown" ? "NA" : hoveredTempBar.displayValue}
+                      </span>
                     </div>
-                    <div className="absolute inset-0">
-                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
-                      <div className={`absolute right-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
-                    </div>
-                  </div>
+                  )}
+                </div>
 
-                  {/* Bars (scrollable container) */}
-                  <div className="relative h-80 overflow-x-auto overflow-y-hidden" onMouseLeave={() => setHoveredTempBar(null)}>
-                    <div className={`absolute bottom-0 left-0 flex items-end h-full px-4 gap-3 ${tempItems.length > 8 ? "min-w-max" : "w-full justify-around"}`}>
-                      {tempItems.length === 0 ? (
-                        <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No temperature sensors to display.</div>
-                      ) : (
-                        [...tempItems].sort((a, b) => a.name.localeCompare(b.name)).map((it, i) => {
-                          const h = toHeight(it, axisTemp);
-                          return (
-                            <div 
-                              key={i} 
-                              className="flex flex-col items-center relative" 
-                              style={{ minWidth: "40px", maxWidth: "60px" }}
-                              onMouseEnter={() => setHoveredTempBar(it)}
-                              onMouseLeave={() => setHoveredTempBar(null)}
-                            >
-                              {it.value != null ? (
-                                <div
-                                  className={`relative w-8 rounded-t-lg shadow-lg transition-all duration-300 cursor-pointer hover:w-10 hover:shadow-xl ${it.color} ${
-                                    it.status === "alert" ? "animate-pulse" : ""
-                                  } ${hoveredTempBar?.sensor_id === it.sensor_id ? "w-10 shadow-xl ring-2 ring-white" : ""}`}
-                                  style={{
-                                    height: `${Math.max(h, 4)}px`,
-                                    background:
-                                       it.status === "alert"
-                                        ? "linear-gradient(to top, #dc2626, #ef4444, #f87171)"
-                                         : it.status === "warning"
-                                        ? "linear-gradient(to top, #fbbf24, #fcd34d, #fde68a)"
-                                         : it.status === "offline" || it.status === "unknown"
-                                        ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
-                                        : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
-                                    boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
-                                  }}
-                                >
-                                </div>
-                              ) : (
+                {/* Chart area (grid/axes always render) */}
+                <div className="relative">
+                  <div className="flex items-start">
+                    {/* Left Y-axis */}
+                    <div className="flex flex-col w-16 mr-4 flex-shrink-0">
+                      <div className="h-6"></div>
+                      <div className="relative h-80">
+                        <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
+                          darkMode ? "text-slate-300" : "text-slate-600"
+                        }`}>
+                          {ticks(axisTemp).map((t, i) => (
+                            <span key={i} className="transform -translate-y-1/2">
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Main plot - expanded to full width */}
+                    <div className="flex-1 relative">
+                      {/* Grid */}
+                      <div className={`absolute inset-0 h-80 rounded-xl border shadow-inner ${darkMode ? "bg-gradient-to-b from-slate-700 to-slate-800 border-slate-600" : "bg-gradient-to-b from-slate-50 to-white border-slate-200"}`}>
+                        <div className="h-full flex flex-col justify-between">
+                          {[...Array(6)].map((_, i) => (
+                            <div
+                              key={i}
+                              className={`border-t w-full ${
+                                i === 0 || i === 5 ? "border-slate-400 border-t-2" : "border-slate-200"
+                              } ${darkMode ? "border-slate-600" : ""}`}
+                            />
+                          ))}
+                        </div>
+                        <div className="absolute inset-0">
+                          <div className={`absolute left-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
+                          <div className={`absolute right-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
+                        </div>
+                      </div>
+
+                      {/* Bars (scrollable container) */}
+                      <div className="relative h-80 overflow-x-auto overflow-y-hidden" onMouseLeave={() => setHoveredTempBar(null)}>
+                        <div className={`absolute bottom-0 left-0 flex items-end h-full px-4 gap-3 ${tempItems.length > 8 ? "min-w-max" : "w-full justify-around"}`}>
+                          {tempItems.length === 0 ? (
+                            <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No temperature sensors to display.</div>
+                          ) : (
+                            [...tempItems].sort((a, b) => a.name.localeCompare(b.name)).map((it, i) => {
+                              const h = toHeight(it, axisTemp);
+                              return (
                                 <div 
-                                  className={`bg-gradient-to-t from-slate-400 to-slate-300 w-8 rounded-t-lg opacity-60 shadow-lg cursor-pointer hover:w-10 ${hoveredTempBar?.sensor_id === it.sensor_id ? "w-10 ring-2 ring-white" : ""}`} 
-                                  style={{ height: "4px" }}
+                                  key={i} 
+                                  className="flex flex-col items-center relative" 
+                                  style={{ minWidth: "40px", maxWidth: "60px" }}
+                                  onMouseEnter={() => setHoveredTempBar(it)}
+                                  onMouseLeave={() => setHoveredTempBar(null)}
                                 >
+                                  {it.value != null ? (
+                                    <div
+                                      className={`relative w-8 rounded-t-lg shadow-lg transition-all duration-300 cursor-pointer hover:w-10 hover:shadow-xl ${it.color} ${
+                                        it.status === "alert" ? "animate-pulse" : ""
+                                      } ${hoveredTempBar?.sensor_id === it.sensor_id ? "w-10 shadow-xl ring-2 ring-white" : ""}`}
+                                      style={{
+                                        height: `${Math.max(h, 4)}px`,
+                                        background:
+                                           it.status === "alert"
+                                            ? "linear-gradient(to top, #dc2626, #ef4444, #f87171)"
+                                             : it.status === "warning"
+                                            ? "linear-gradient(to top, #fbbf24, #fcd34d, #fde68a)"
+                                             : it.status === "offline" || it.status === "unknown"
+                                            ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
+                                            : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
+                                        boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
+                                      }}
+                                    >
+                                    </div>
+                                  ) : (
+                                    <div 
+                                      className={`bg-gradient-to-t from-slate-400 to-slate-300 w-8 rounded-t-lg opacity-60 shadow-lg cursor-pointer hover:w-10 ${hoveredTempBar?.sensor_id === it.sensor_id ? "w-10 ring-2 ring-white" : ""}`} 
+                                      style={{ height: "4px" }}
+                                    >
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )}
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Legend */}
-              <div className="flex justify-center mt-8 space-x-8 text-sm">
-                 <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Good</span>
-                 </div>
-                 <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Warning</span>
-                 </div>
-                <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Needs Attention</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Offline</span>
-                </div>
-              </div>
+                  {/* Legend */}
+                  <div className="flex justify-center mt-8 space-x-8 text-sm">
+                     <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Good</span>
+                     </div>
+                     <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Warning</span>
+                     </div>
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Needs Attention</span>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Offline</span>
+                    </div>
+                  </div>
 
-              {/* Temperature Table */}
-              <div className="mt-8">
-                <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Temperature Sensor Details</h4>
-                <div className={`overflow-x-auto rounded-xl border shadow-lg ${
-                  darkMode ? "border-slate-700" : "border-slate-200"
-                }`}>
-                  <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    <thead className={darkMode ? "bg-slate-800" : "bg-slate-50"}>
-                      <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Sensor</th>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tempItems.map((it, i) => (
-                        <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
-                          <td className="py-4 px-6 font-semibold">
-                            <span className={darkMode ? "text-slate-200" : "text-slate-800"}>{it.name}</span>
-                            <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
-                              it.access_role === 'owner'
-                                ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
-                                : it.access_role === 'admin'
-                                ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300'
-                                : 'bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300'
-                            }`}>
-                              {it.access_role}
-                            </span>
-                          </td>
-                          <td className="py-4 px-6">
-                             <span
-                              className={`text-lg font-bold ${
-                                it.status === "alert" ? "text-red-600" : it.status === "warning" ? "text-yellow-600" : it.status === "offline" || it.status === "unknown" ? "text-slate-500" : "text-green-600"
-                               }`}
-                             >
-                               {it.status === "offline" || it.status === "unknown" ? "NA" : it.displayValue}
-                             </span>
-                           </td>
-                          <td className="py-4 px-6">
-                            <span
-                              className={`px-3 py-2 rounded-full text-sm font-semibold shadow-sm ${
-                                 it.status === "alert"
-                                  ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 border border-red-300"
-                                   : it.status === "warning"
-                                  ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
-                                   : it.status === "offline" || it.status === "unknown"
-                                  ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
-                                  : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
-                              }`}
-                             >
-                              {it.status}
-                            </span>
-                          </td>
-                          <td className="py-4 px-6 text-slate-600 font-medium">{
-                             it.lastFetchedTime
-                               ? fmtDate(it.lastFetchedTime, prefs.tz, true)
-                               : "No data"
-                           }</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Humidity Chart */}
-        {prefs.showHumidity && (
-          <div className={`rounded-2xl shadow-2xl p-8 mb-10 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                {axisHum.title}
-              </h3>
-              <div className={`text-sm px-3 py-2 rounded-lg ${darkMode ? "text-slate-300 bg-slate-700" : "text-slate-500 bg-slate-100"}`}>
-                Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span>
-              </div>
-            </div>
-
-            {/* Hover Info - Above Graph (only visible when hovering) */}
-            <div className={`mb-6 h-10 flex items-center justify-center transition-all duration-300 ${hoveredHumBar ? "opacity-100" : "opacity-0"}`}>
-              {hoveredHumBar && (
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${
-                    hoveredHumBar.status === "alert" ? "bg-red-500" 
-                    : hoveredHumBar.status === "warning" ? "bg-yellow-500"
-                    : hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "bg-slate-400"
-                    : "bg-green-500"
-                  }`}></div>
-                  <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>{hoveredHumBar.name}</span>
-                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
-                  <span className={`font-medium ${
-                    hoveredHumBar.status === "alert" ? "text-red-500" 
-                    : hoveredHumBar.status === "warning" ? "text-yellow-500"
-                    : hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "text-slate-500"
-                    : "text-green-500"
-                  }`}>
-                    {hoveredHumBar.status === "ok" ? "Good" : hoveredHumBar.status === "alert" ? "Needs Attention" : hoveredHumBar.status}
-                  </span>
-                  <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
-                  <span className={`font-bold text-lg ${darkMode ? "text-white" : "text-slate-800"}`}>
-                    {hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "NA" : (hoveredHumBar.value != null ? `${hoveredHumBar.value.toFixed(1)}%` : "--%")}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Chart area (grid/axes always render) */}
-            <div className="relative">
-              <div className="flex items-start">
-                {/* Left Y-axis */}
-                <div className="flex flex-col w-16 mr-4 flex-shrink-0">
-                  <div className="h-6"></div>
-                  <div className="relative h-80">
-                    <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
-                      darkMode ? "text-slate-300" : "text-slate-600"
+                  {/* Temperature Table */}
+                  <div className="mt-8">
+                    <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Temperature Sensor Details</h4>
+                    <div className={`overflow-x-auto rounded-xl border shadow-lg ${
+                      darkMode ? "border-slate-700" : "border-slate-200"
                     }`}>
-                      {ticks(axisHum).map((t, i) => (
-                        <span key={i} className="transform -translate-y-1/2">
-                          {t}
-                        </span>
-                      ))}
+                      <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                        <thead className={darkMode ? "bg-slate-800" : "bg-slate-50"}>
+                          <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Sensor</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tempItems.map((it, i) => (
+                            <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
+                              <td className="py-4 px-6 font-semibold">
+                                <span className={darkMode ? "text-slate-200" : "text-slate-800"}>{it.name}</span>
+                                <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
+                                  it.access_role === 'owner'
+                                    ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
+                                    : it.access_role === 'admin'
+                                    ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300'
+                                    : 'bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300'
+                                }`}>
+                                  {it.access_role}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6">
+                                 <span
+                                  className={`text-lg font-bold ${
+                                    it.status === "alert" ? "text-red-600" : it.status === "warning" ? "text-yellow-600" : it.status === "offline" || it.status === "unknown" ? "text-slate-500" : "text-green-600"
+                                   }`}
+                                 >
+                                   {it.status === "offline" || it.status === "unknown" ? "NA" : it.displayValue}
+                                 </span>
+                               </td>
+                              <td className="py-4 px-6">
+                                <span
+                                  className={`px-3 py-2 rounded-full text-sm font-semibold shadow-sm ${
+                                     it.status === "alert"
+                                      ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 border border-red-300"
+                                       : it.status === "warning"
+                                      ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
+                                       : it.status === "offline" || it.status === "unknown"
+                                      ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                                      : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
+                                  }`}
+                                 >
+                                  {it.status}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-slate-600 font-medium">{
+                                 it.lastFetchedTime
+                                   ? fmtDate(it.lastFetchedTime, prefs.tz, true)
+                                   : "No data"
+                               }</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
 
-                {/* Main plot - expanded to full width */}
-                <div className="flex-1 relative">
-                  {/* Grid */}
-                  <div className={`absolute inset-0 h-80 rounded-xl border shadow-inner ${darkMode ? "bg-gradient-to-b from-slate-700 to-slate-800 border-slate-600" : "bg-gradient-to-b from-slate-50 to-white border-slate-200"}`}>
-                    <div className="h-full flex flex-col justify-between">
-                      {[...Array(6)].map((_, i) => (
-                        <div
-                          key={i}
-                          className={`border-t w-full ${
-                            i === 0 || i === 5 ? "border-slate-400 border-t-2" : "border-slate-200"
-                          } ${darkMode ? "border-slate-600" : ""}`}
-                        />
-                      ))}
-                    </div>
-                    <div className="absolute inset-0">
-                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
-                      <div className={`absolute right-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
-                    </div>
+            {/* Humidity Chart */}
+            {prefs.showHumidity && (
+              <div className={`rounded-2xl shadow-2xl p-8 mb-10 ${darkMode ? "bg-slate-800 text-white border border-slate-700" : "bg-white border border-slate-100"}`}>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                    {axisHum.title}
+                  </h3>
+                  <div className={`text-sm px-3 py-2 rounded-lg ${darkMode ? "text-slate-300 bg-slate-700" : "text-slate-500 bg-slate-100"}`}>
+                    Last updated: <span suppressHydrationWarning className="font-semibold">{lastUpdateTs ? fmtDate(lastUpdateTs, prefs.tz, true) : "—"}</span>
                   </div>
+                </div>
 
-                  {/* Bars (scrollable container) */}
-                  <div className="relative h-80 overflow-x-auto overflow-y-hidden" onMouseLeave={() => setHoveredHumBar(null)}>
-                    <div className={`absolute bottom-0 left-0 flex items-end h-full px-4 gap-3 ${humItems.length > 8 ? "min-w-max" : "w-full justify-around"}`}>
-                      {humItems.length === 0 ? (
-                        <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No humidity sensors to display.</div>
-                      ) : (
-                        [...humItems].sort((a, b) => a.name.localeCompare(b.name)).map((it, i) => {
-                          const h = toHeight(it, axisHum);
-                          return (
-                            <div 
-                              key={i} 
-                              className="flex flex-col items-center relative" 
-                              style={{ minWidth: "40px", maxWidth: "60px" }}
-                              onMouseEnter={() => setHoveredHumBar(it)}
-                              onMouseLeave={() => setHoveredHumBar(null)}
-                            >
-                              {it.value != null ? (
-                                <div
-                                  className={`relative w-8 rounded-t-lg shadow-lg transition-all duration-300 cursor-pointer hover:w-10 hover:shadow-xl ${it.color} ${
-                                    it.status === "alert" ? "animate-pulse" : ""
-                                  } ${hoveredHumBar?.sensor_id === it.sensor_id ? "w-10 shadow-xl ring-2 ring-white" : ""}`}
-                                  style={{
-                                    height: `${Math.max(h, 4)}px`,
-                                    background:
-                                       it.status === "alert"
-                                        ? "linear-gradient(to top, #dc2626, #ef4444, #f87171)"
-                                         : it.status === "warning"
-                                        ? "linear-gradient(to top, #fbbf24, #fcd34d, #fde68a)"
-                                         : it.status === "offline" || it.status === "unknown"
-                                        ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
-                                        : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
-                                    boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
-                                  }}
-                                >
-                                </div>
-                              ) : (
+                {/* Hover Info - Above Graph (only visible when hovering) */}
+                <div className={`mb-6 h-10 flex items-center justify-center transition-all duration-300 ${hoveredHumBar ? "opacity-100" : "opacity-0"}`}>
+                  {hoveredHumBar && (
+                    <div className="flex items-center gap-4">
+                      <div className={`w-3 h-3 rounded-full ${
+                        hoveredHumBar.status === "alert" ? "bg-red-500" 
+                        : hoveredHumBar.status === "warning" ? "bg-yellow-500"
+                        : hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "bg-slate-400"
+                        : "bg-green-500"
+                      }`}></div>
+                      <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>{hoveredHumBar.name}</span>
+                      <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                      <span className={`font-medium ${
+                        hoveredHumBar.status === "alert" ? "text-red-500" 
+                        : hoveredHumBar.status === "warning" ? "text-yellow-500"
+                        : hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "text-slate-500"
+                        : "text-green-500"
+                      }`}>
+                        {hoveredHumBar.status === "ok" ? "Good" : hoveredHumBar.status === "alert" ? "Needs Attention" : hoveredHumBar.status}
+                      </span>
+                      <span className={`${darkMode ? "text-slate-400" : "text-slate-400"}`}>•</span>
+                      <span className={`font-bold text-lg ${darkMode ? "text-white" : "text-slate-800"}`}>
+                        {hoveredHumBar.status === "offline" || hoveredHumBar.status === "unknown" ? "NA" : (hoveredHumBar.value != null ? `${hoveredHumBar.value.toFixed(1)}%` : "--%")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Chart area (grid/axes always render) */}
+                <div className="relative">
+                  <div className="flex items-start">
+                    {/* Left Y-axis */}
+                    <div className="flex flex-col w-16 mr-4 flex-shrink-0">
+                      <div className="h-6"></div>
+                      <div className="relative h-80">
+                        <div className={`absolute inset-0 flex flex-col justify-between text-sm items-end pr-3 font-semibold ${
+                          darkMode ? "text-slate-300" : "text-slate-600"
+                        }`}>
+                          {ticks(axisHum).map((t, i) => (
+                            <span key={i} className="transform -translate-y-1/2">
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Main plot - expanded to full width */}
+                    <div className="flex-1 relative">
+                      {/* Grid */}
+                      <div className={`absolute inset-0 h-80 rounded-xl border shadow-inner ${darkMode ? "bg-gradient-to-b from-slate-700 to-slate-800 border-slate-600" : "bg-gradient-to-b from-slate-50 to-white border-slate-200"}`}>
+                        <div className="h-full flex flex-col justify-between">
+                          {[...Array(6)].map((_, i) => (
+                            <div
+                              key={i}
+                              className={`border-t w-full ${
+                                i === 0 || i === 5 ? "border-slate-400 border-t-2" : "border-slate-200"
+                              } ${darkMode ? "border-slate-600" : ""}`}
+                            />
+                          ))}
+                        </div>
+                        <div className="absolute inset-0">
+                          <div className={`absolute left-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
+                          <div className={`absolute right-0 top-0 bottom-0 w-1 ${darkMode ? "bg-slate-500" : "bg-slate-400"}`}></div>
+                        </div>
+                      </div>
+
+                      {/* Bars (scrollable container) */}
+                      <div className="relative h-80 overflow-x-auto overflow-y-hidden" onMouseLeave={() => setHoveredHumBar(null)}>
+                        <div className={`absolute bottom-0 left-0 flex items-end h-full px-4 gap-3 ${humItems.length > 8 ? "min-w-max" : "w-full justify-around"}`}>
+                          {humItems.length === 0 ? (
+                            <div className="text-center w-full text-lg text-slate-500 mt-20 opacity-75 font-medium">No humidity sensors to display.</div>
+                          ) : (
+                            [...humItems].sort((a, b) => a.name.localeCompare(b.name)).map((it, i) => {
+                              const h = toHeight(it, axisHum);
+                              return (
                                 <div 
-                                  className={`bg-gradient-to-t from-slate-400 to-slate-300 w-8 rounded-t-lg opacity-60 shadow-lg cursor-pointer hover:w-10 ${hoveredHumBar?.sensor_id === it.sensor_id ? "w-10 ring-2 ring-white" : ""}`} 
-                                  style={{ height: "4px" }}
+                                  key={i} 
+                                  className="flex flex-col items-center relative" 
+                                  style={{ minWidth: "40px", maxWidth: "60px" }}
+                                  onMouseEnter={() => setHoveredHumBar(it)}
+                                  onMouseLeave={() => setHoveredHumBar(null)}
                                 >
+                                  {it.value != null ? (
+                                    <div
+                                      className={`relative w-8 rounded-t-lg shadow-lg transition-all duration-300 cursor-pointer hover:w-10 hover:shadow-xl ${it.color} ${
+                                        it.status === "alert" ? "animate-pulse" : ""
+                                      } ${hoveredHumBar?.sensor_id === it.sensor_id ? "w-10 shadow-xl ring-2 ring-white" : ""}`}
+                                      style={{
+                                        height: `${Math.max(h, 4)}px`,
+                                        background:
+                                           it.status === "alert"
+                                            ? "linear-gradient(to top, #dc2626, #ef4444, #f87171)"
+                                             : it.status === "warning"
+                                            ? "linear-gradient(to top, #fbbf24, #fcd34d, #fde68a)"
+                                             : it.status === "offline" || it.status === "unknown"
+                                            ? "linear-gradient(to top, #6b7280, #9ca3af, #d1d5db)"
+                                            : "linear-gradient(to top, #10b981, #34d399, #6ee7b7)",
+                                        boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
+                                      }}
+                                    >
+                                    </div>
+                                  ) : (
+                                    <div 
+                                      className={`bg-gradient-to-t from-slate-400 to-slate-300 w-8 rounded-t-lg opacity-60 shadow-lg cursor-pointer hover:w-10 ${hoveredHumBar?.sensor_id === it.sensor_id ? "w-10 ring-2 ring-white" : ""}`} 
+                                      style={{ height: "4px" }}
+                                    >
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )}
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex justify-center mt-8 space-x-8 text-sm">
+                     <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Good</span>
+                     </div>
+                     <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Warning</span>
+                     </div>
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Needs Attention</span>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Offline</span>
+                    </div>
+                  </div>
+
+                  {/* Humidity Table */}
+                  <div className="mt-8">
+                    <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Humidity Sensor Details</h4>
+                    <div className={`overflow-x-auto rounded-xl border shadow-lg ${
+                      darkMode ? "border-slate-700" : "border-slate-200"
+                    }`}>
+                      <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                        <thead className={darkMode ? "bg-slate-800" : "bg-slate-50"}>
+                          <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Sensor</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {humItems.map((it, i) => (
+                            <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
+                              <td className="py-4 px-6 font-semibold">
+                                <span className={darkMode ? "text-slate-200" : "text-slate-800"}>{it.name}</span>
+                                <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
+                                  it.access_role === 'owner'
+                                    ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
+                                    : it.access_role === 'admin'
+                                    ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300'
+                                    : 'bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300'
+                                }`}>
+                                  {it.access_role}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6">
+                                 <span
+                                  className={`text-lg font-bold ${
+                                    it.status === "alert" ? "text-red-600" : it.status === "warning" ? "text-yellow-600" : it.status === "offline" || it.status === "unknown" ? "text-slate-500" : "text-green-600"
+                                   }`}
+                                 >
+                                   {it.status === "offline" || it.status === "unknown" ? "NA" : (it.value != null ? `${it.value.toFixed(1)}%` : "--%")}
+                                 </span>
+                               </td>
+                              <td className="py-4 px-6">
+                                <span
+                                  className={`px-3 py-2 rounded-full text-sm font-semibold shadow-sm ${
+                                     it.status === "alert"
+                                      ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 border border-red-300"
+                                       : it.status === "warning"
+                                      ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
+                                       : it.status === "offline" || it.status === "unknown"
+                                      ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
+                                      : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
+                                  }`}
+                                 >
+                                  {it.status}
+                                </span>
+                              </td>
+                              <td className={`py-4 px-6 font-medium ${
+                                darkMode ? "text-slate-300" : "text-slate-600"
+                              }`}>{
+                                 it.lastFetchedTime
+                                   ? fmtDate(it.lastFetchedTime, prefs.tz, true)
+                                   : "No data"
+                               }</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* Legend */}
-              <div className="flex justify-center mt-8 space-x-8 text-sm">
-                 <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-green-400 to-green-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Good</span>
-                 </div>
-                 <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Warning</span>
-                 </div>
-                <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Needs Attention</span>
-                </div>
-                <div className="flex items-center">
-                  <div className="w-4 h-4 bg-gradient-to-r from-slate-400 to-slate-500 rounded-lg mr-3 shadow-sm"></div>
-                  <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Offline</span>
-                </div>
-              </div>
-
-              {/* Humidity Table */}
-              <div className="mt-8">
-                <h4 className={`text-xl font-bold mb-6 ${darkMode ? "text-white" : "text-slate-900"}`}>Humidity Sensor Details</h4>
-                <div className={`overflow-x-auto rounded-xl border shadow-lg ${
-                  darkMode ? "border-slate-700" : "border-slate-200"
-                }`}>
-                  <table className={`w-full text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    <thead className={darkMode ? "bg-slate-800" : "bg-slate-50"}>
-                      <tr className={`border-b-2 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200"}`}>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Sensor</th>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
-                        <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {humItems.map((it, i) => (
-                        <tr key={i} className={`border-b hover:bg-slate-50 transition-colors duration-200 ${darkMode ? "border-slate-700 hover:bg-slate-800" : "border-slate-100"}`}>
-                          <td className="py-4 px-6 font-semibold">
-                            <span className={darkMode ? "text-slate-200" : "text-slate-800"}>{it.name}</span>
-                            <span className={`ml-3 text-xs px-3 py-1 rounded-full align-middle font-medium ${
-                              it.access_role === 'owner'
-                                ? 'bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300'
-                                : it.access_role === 'admin'
-                                ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300'
-                                : 'bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300'
-                            }`}>
-                              {it.access_role}
-                            </span>
-                          </td>
-                          <td className="py-4 px-6">
-                             <span
-                              className={`text-lg font-bold ${
-                                it.status === "alert" ? "text-red-600" : it.status === "warning" ? "text-yellow-600" : it.status === "offline" || it.status === "unknown" ? "text-slate-500" : "text-green-600"
-                               }`}
-                             >
-                               {it.status === "offline" || it.status === "unknown" ? "NA" : (it.value != null ? `${it.value.toFixed(1)}%` : "--%")}
-                             </span>
-                           </td>
-                          <td className="py-4 px-6">
-                            <span
-                              className={`px-3 py-2 rounded-full text-sm font-semibold shadow-sm ${
-                                 it.status === "alert"
-                                  ? "bg-gradient-to-r from-red-100 to-red-200 text-red-800 border border-red-300"
-                                   : it.status === "warning"
-                                  ? "bg-gradient-to-r from-yellow-100 to-yellow-200 text-yellow-800 border border-yellow-300"
-                                   : it.status === "offline" || it.status === "unknown"
-                                  ? "bg-gradient-to-r from-slate-100 to-slate-200 text-slate-800 border border-slate-300"
-                                  : "bg-gradient-to-r from-green-100 to-green-200 text-green-800 border border-green-300"
-                              }`}
-                             >
-                              {it.status}
-                            </span>
-                          </td>
-                          <td className={`py-4 px-6 font-medium ${
-                            darkMode ? "text-slate-300" : "text-slate-600"
-                          }`}>{
-                             it.lastFetchedTime
-                               ? fmtDate(it.lastFetchedTime, prefs.tz, true)
-                               : "No data"
-                           }</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
 
         <footer className={`text-center mt-8 text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
