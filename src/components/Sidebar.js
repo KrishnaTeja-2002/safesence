@@ -23,7 +23,18 @@ export default function Sidebar() {
       className={`w-60 py-6 px-4 ${darkMode ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-800'}`}
       aria-label="Main navigation"
     >
-      <div className="flex items-center mb-8">
+      <div 
+        className="flex items-center mb-8 cursor-pointer hover:opacity-80 transition-opacity"
+        onClick={() => router.push('/dashboard')}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            router.push('/dashboard');
+          }
+        }}
+      >
         <div className={`w-6 h-6 rounded mr-2 flex items-center justify-center ${darkMode ? 'bg-orange-600' : 'bg-orange-500'}`}>
           <div className={`w-3 h-3 border ${darkMode ? 'border-gray-200' : 'border-white'} rounded-sm`}></div>
         </div>
