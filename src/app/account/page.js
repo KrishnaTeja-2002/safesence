@@ -2,11 +2,12 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
 import apiClient from "../lib/apiClient";
+import { User, Settings, LogOut, ChevronDown } from "lucide-react";
 
 // UI <-> DB helpers
 const TEMP_UI_TO_DB = { Fahrenheit: "F", Celsius: "C" };
@@ -31,6 +32,21 @@ export default function Account() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef(null);
+
+  // Click outside handler for profile menu
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const getInitials = (name) => name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 
   const [preferences, setPreferences] = useState({
     tempScale: "Fahrenheit",
@@ -220,28 +236,82 @@ export default function Account() {
     <div className={pageShellClass}>
       <Sidebar />
       <main className="flex-1 p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-3xl font-bold">Account Settings</h2>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <div className="text-right">
-                <div className={`text-sm font-medium ${darkMode ? "text-gray-200" : "text-gray-700"}`}>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+          <div>
+            <h1 className={`text-3xl md:text-4xl font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
+              Account
+            </h1>
+            <p className={`text-base mt-1 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+              Manage your account settings
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {/* Profile dropdown */}
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                  darkMode 
+                    ? "bg-slate-700 hover:bg-slate-600 text-white" 
+                    : "bg-white hover:bg-slate-50 text-slate-800 shadow-md border border-slate-200"
+                }`}
+              >
+                <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-sm font-bold shadow">
+                  {getInitials(preferences.username || userEmail.split("@")[0] || "User")}
+                </div>
+                <span className={`hidden md:block text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
                   {preferences.username || userEmail.split("@")[0] || "User"}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showProfileMenu ? "rotate-180" : ""}`} />
+              </button>
+              
+              {showProfileMenu && (
+                <div className={`absolute right-0 mt-2 w-56 rounded-xl shadow-2xl z-50 overflow-hidden ${
+                  darkMode ? "bg-slate-800 border border-slate-700" : "bg-white border border-slate-200"
+                }`}>
+                  <div className={`px-4 py-3 border-b ${darkMode ? "border-slate-700 bg-slate-700/50" : "border-slate-100 bg-slate-50"}`}>
+                    <p className={`font-semibold text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
+                      {preferences.username || userEmail.split("@")[0] || "User"}
+                    </p>
+                    <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{userEmail}</p>
+                  </div>
+                  <div className="py-2">
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push("/account"); }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode ? "text-slate-300 hover:bg-slate-700 hover:text-white" : "text-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      <User className="w-4 h-4 mr-3" />
+                      My Profile
+                    </button>
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push("/account#settings"); }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode ? "text-slate-300 hover:bg-slate-700 hover:text-white" : "text-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Settings className="w-4 h-4 mr-3" />
+                      Account Settings
+                    </button>
+                  </div>
+                  <div className={`border-t py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        setShowLogoutConfirm(true);
+                      }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors text-red-500 hover:bg-red-50 ${
+                        darkMode ? "hover:bg-red-900/20" : ""
+                      }`}
+                    >
+                      <LogOut className="w-4 h-4 mr-3" />
+                      Log out
+                    </button>
+                  </div>
                 </div>
-                <div className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
-                  {userEmail}
-                </div>
-              </div>
-              <div className="w-10 h-10 bg-amber-600 rounded-full flex items-center justify-center text-white text-sm font-bold">
-                {getUserInitials(userEmail)}
-              </div>
+              )}
             </div>
-            <button
-              onClick={() => setShowLogoutConfirm(true)}
-              className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition-colors"
-            >
-              Log out
-            </button>
           </div>
         </div>
 

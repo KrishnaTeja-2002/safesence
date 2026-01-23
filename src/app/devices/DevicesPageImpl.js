@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
-import { Bluetooth, X } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Bluetooth, X, User, Settings, LogOut, ChevronDown } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
@@ -25,6 +25,50 @@ export default function DevicesPage() {
   const [connectedDeviceId, setConnectedDeviceId] = useState(null);
   const [savingDevice, setSavingDevice] = useState(false);
   const [newDeviceName, setNewDeviceName] = useState('');
+  
+  // Profile dropdown state
+  const [username, setUsername] = useState('User');
+  const [currentUserEmail, setCurrentUserEmail] = useState('');
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef(null);
+
+  // Get user info on mount
+  useEffect(() => {
+    const loadUserInfo = async () => {
+      try {
+        const token = localStorage.getItem('auth-token');
+        if (!token) return;
+        
+        const response = await fetch('/api/verify-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        
+        if (response.ok) {
+          const { user } = await response.json();
+          setUsername(user?.email?.split('@')[0] || 'User');
+          setCurrentUserEmail(user?.email || '');
+        }
+      } catch (e) {
+        console.error('Failed to load user info:', e);
+      }
+    };
+    loadUserInfo();
+  }, []);
+
+  // Click outside handler for profile menu
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const getInitials = (name) => name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
 
   useEffect(() => {
     const load = async () => {
@@ -135,17 +179,90 @@ export default function DevicesPage() {
     <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
       <Sidebar darkMode={darkMode} />
       <main className="flex-1 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-3xl font-bold">Devices</h2>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+          <div>
+            <h1 className={`text-3xl md:text-4xl font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
+              Devices
+            </h1>
+            <p className={`text-base mt-1 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+              Manage your connected devices
+            </p>
+          </div>
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => router.push('/devices/add')}
-              className={`${darkMode ? 'bg-orange-700 hover:bg-orange-800' : 'bg-orange-500 hover:bg-orange-600'} text-white px-4 py-2 rounded`}
+              className={`${darkMode ? 'bg-orange-600 hover:bg-orange-500' : 'bg-orange-500 hover:bg-orange-600'} text-white px-4 py-2 rounded-lg font-medium`}
             >
               + Add Device
             </button>
             {error && <span className="text-sm text-red-500">{error}</span>}
+            
+            {/* Profile dropdown */}
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                  darkMode 
+                    ? 'bg-slate-700 hover:bg-slate-600 text-white' 
+                    : 'bg-white hover:bg-slate-50 text-slate-800 shadow-md border border-slate-200'
+                }`}
+              >
+                <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-sm font-bold shadow">
+                  {getInitials(username)}
+                </div>
+                <span className={`hidden md:block text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
+                  {username}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showProfileMenu && (
+                <div className={`absolute right-0 mt-2 w-56 rounded-xl shadow-2xl z-50 overflow-hidden ${
+                  darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-slate-200'
+                }`}>
+                  <div className={`px-4 py-3 border-b ${darkMode ? 'border-slate-700 bg-slate-700/50' : 'border-slate-100 bg-slate-50'}`}>
+                    <p className={`font-semibold text-sm ${darkMode ? 'text-white' : 'text-slate-800'}`}>{username}</p>
+                    <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{currentUserEmail}</p>
+                  </div>
+                  <div className="py-2">
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push('/account'); }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <User className="w-4 h-4 mr-3" />
+                      My Profile
+                    </button>
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push('/account#settings'); }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Settings className="w-4 h-4 mr-3" />
+                      Account Settings
+                    </button>
+                  </div>
+                  <div className={`border-t py-2 ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        try { localStorage.removeItem('auth-token'); } catch {}
+                        router.push('/login');
+                      }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors text-red-500 hover:bg-red-50 ${
+                        darkMode ? 'hover:bg-red-900/20' : ''
+                      }`}
+                    >
+                      <LogOut className="w-4 h-4 mr-3" />
+                      Log out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

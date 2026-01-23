@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback, Component, Suspense } from 'react';
+import { useState, useEffect, useCallback, Component, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
 import apiClient from '../lib/apiClient';
+import { User, Settings, LogOut, ChevronDown } from 'lucide-react';
 
 
 class ErrorBoundary extends Component {
@@ -29,6 +30,9 @@ function TeamContent() {
   const [rejectedName, setRejectedName] = useState('');
   const [error, setError] = useState('');
   const [username, setUsername] = useState('User');
+  const [currentUserEmail, setCurrentUserEmail] = useState('');
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef(null);
   const [sensors, setSensors] = useState([]); // sensors user can access
   const [activeSensorId, setActiveSensorId] = useState(null);
   const [shares, setShares] = useState([]); // [{user_id, username, role}]
@@ -91,6 +95,7 @@ function TeamContent() {
         const displayName = user?.email?.split('@')[0] || 'User';
         console.log('Session found, user:', displayName);
         setUsername(displayName);
+        setCurrentUserEmail(user?.email || '');
         setCurrentUser({ id: user.id, email: user.email });
         console.log('Set current user:', { id: user.id, email: user.email });
         setIsAuthed(true);
@@ -106,6 +111,17 @@ function TeamContent() {
     };
     checkSession();
   }, [router]);
+
+  // Click outside handler for profile menu
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Load sensors user can access (owner + shares)
   useEffect(() => {
@@ -605,25 +621,80 @@ function TeamContent() {
       <div className={`flex min-h-screen ${darkMode ? "bg-slate-900 text-white" : "bg-gradient-to-br from-slate-50 to-blue-50 text-slate-800"}`}>
         <Sidebar activeKey="team" darkMode={darkMode} />
         <main className="flex-1 p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-3xl font-bold">Manage Access</h2>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+            <div>
+              <h1 className={`text-3xl md:text-4xl font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
+                Team
+              </h1>
+              <p className={`text-base mt-1 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                Manage access and permissions
+              </p>
+            </div>
             <div className="flex items-center space-x-3">
-              <button
-                onClick={handleSignOut}
-                className={`bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 ${
-                  darkMode ? 'bg-red-600 hover:bg-red-700' : ''
-                }`}
-              >
-                Log out
-              </button>
-              <button
-                onClick={() => router.push('/account')}
-                className={`w-10 h-10 rounded-full bg-amber-600 flex items-center justify-center text-white text-sm font-bold hover:bg-amber-700 transition-all duration-200 hover:scale-105 ${
-                  darkMode ? 'bg-amber-700 hover:bg-amber-800' : ''
-                }`}
-              >
-                {getInitials(username)}
-              </button>
+              {/* Profile dropdown */}
+              <div className="relative" ref={profileMenuRef}>
+                <button
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  className={`flex items-center space-x-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                    darkMode 
+                      ? 'bg-slate-700 hover:bg-slate-600 text-white' 
+                      : 'bg-white hover:bg-slate-50 text-slate-800 shadow-md border border-slate-200'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-sm font-bold shadow">
+                    {getInitials(username)}
+                  </div>
+                  <span className={`hidden md:block text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
+                    {username}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {showProfileMenu && (
+                  <div className={`absolute right-0 mt-2 w-56 rounded-xl shadow-2xl z-50 overflow-hidden ${
+                    darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-slate-200'
+                  }`}>
+                    <div className={`px-4 py-3 border-b ${darkMode ? 'border-slate-700 bg-slate-700/50' : 'border-slate-100 bg-slate-50'}`}>
+                      <p className={`font-semibold text-sm ${darkMode ? 'text-white' : 'text-slate-800'}`}>{username}</p>
+                      <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{currentUserEmail}</p>
+                    </div>
+                    <div className="py-2">
+                      <button
+                        onClick={() => { setShowProfileMenu(false); router.push('/account'); }}
+                        className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                          darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <User className="w-4 h-4 mr-3" />
+                        My Profile
+                      </button>
+                      <button
+                        onClick={() => { setShowProfileMenu(false); router.push('/account#settings'); }}
+                        className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                          darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <Settings className="w-4 h-4 mr-3" />
+                        Account Settings
+                      </button>
+                    </div>
+                    <div className={`border-t py-2 ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          handleSignOut();
+                        }}
+                        className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors text-red-500 hover:bg-red-50 ${
+                          darkMode ? 'hover:bg-red-900/20' : ''
+                        }`}
+                      >
+                        <LogOut className="w-4 h-4 mr-3" />
+                        Log out
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

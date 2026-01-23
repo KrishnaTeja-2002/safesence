@@ -6,6 +6,7 @@ import Sidebar from "../../components/Sidebar";
 import { useDarkMode } from "../DarkModeContext";
 import apiClient from "../lib/apiClient";
 import { getStatusDisplay, isAlertStatus, isOfflineStatus } from "../lib/statusUtils";
+import { User, Settings, LogOut, ChevronDown } from "lucide-react";
 
 // Removed Supabase client after migration
 
@@ -66,6 +67,13 @@ export default function Dashboard() {
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
   const [error, setError] = useState("");
   const [loadingData, setLoadingData] = useState(true);
+  
+  // Profile dropdown state
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef(null);
+  
+  // Alert severity filter
+  const [alertFilter, setAlertFilter] = useState("all"); // 'all' | 'critical' | 'warning' | 'info'
 
   // Last update timestamp for "Last updated" display
   const [lastUpdateTs, setLastUpdateTs] = useState(null);
@@ -353,6 +361,13 @@ export default function Dashboard() {
       ) {
         setShowNotifications(false);
       }
+      // Close profile menu when clicking outside
+      if (
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(e.target)
+      ) {
+        setShowProfileMenu(false);
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -415,33 +430,106 @@ export default function Dashboard() {
        <Sidebar />
        <main className="flex-1 p-8">
         {/* Header */}
-        <div className="flex justify-between items-center mb-10">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
           <div>
-            <h1 className="text-5xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+            <h1 className={`text-3xl md:text-4xl font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
               Dashboard
             </h1>
-            <p className={`text-xl mt-2 ${darkMode ? "text-white" : "text-slate-600"}`}>
-              Welcome back, <span className={`font-semibold ${darkMode ? "text-blue-400" : "text-blue-600"}`}>{username}</span>
+            <p className={`text-base mt-1 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+              Welcome back, <span className={`font-semibold ${darkMode ? "text-orange-400" : "text-orange-600"}`}>
+                {username}
+              </span>
             </p>
           </div>
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={async () => {
-                try {
-                  localStorage.removeItem('auth-token');
-                } catch {}
-                router.push("/login");
-              }}
-              className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 shadow-lg hover:shadow-xl`}
-            >
-              Log out
-            </button>
-            <button
-              onClick={() => router.push('/account')}
-              className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105`}
-            >
-              {getInitials(username)}
-            </button>
+          
+          {/* Right side controls */}
+          <div className="flex items-center space-x-3">
+            {/* Profile dropdown */}
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                  darkMode 
+                    ? 'bg-slate-700 hover:bg-slate-600 text-white' 
+                    : 'bg-white hover:bg-slate-50 text-slate-800 shadow-md border border-slate-200'
+                }`}
+              >
+                <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-sm font-bold shadow">
+                  {getInitials(username)}
+                </div>
+                <span className={`hidden md:block text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
+                  {username}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showProfileMenu && (
+                <div className={`absolute right-0 mt-2 w-56 rounded-xl shadow-2xl z-50 overflow-hidden ${
+                  darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-slate-200'
+                }`}>
+                  {/* User info header */}
+                  <div className={`px-4 py-3 border-b ${darkMode ? 'border-slate-700 bg-slate-700/50' : 'border-slate-100 bg-slate-50'}`}>
+                    <p className={`font-semibold text-sm ${darkMode ? 'text-white' : 'text-slate-800'}`}>
+                      {username}
+                    </p>
+                    <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      {currentUserEmail}
+                    </p>
+                  </div>
+                  
+                  {/* Menu items */}
+                  <div className="py-2">
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        router.push('/account');
+                      }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode 
+                          ? 'text-slate-300 hover:bg-slate-700 hover:text-white' 
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <User className="w-4 h-4 mr-3" />
+                      My Profile
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        router.push('/account#settings');
+                      }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode 
+                          ? 'text-slate-300 hover:bg-slate-700 hover:text-white' 
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Settings className="w-4 h-4 mr-3" />
+                      Account Settings
+                    </button>
+                  </div>
+                  
+                  {/* Logout */}
+                  <div className={`border-t py-2 ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                    <button
+                      onClick={async () => {
+                        setShowProfileMenu(false);
+                        try {
+                          localStorage.removeItem('auth-token');
+                        } catch {}
+                        router.push("/login");
+                      }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors text-red-500 hover:bg-red-50 ${
+                        darkMode ? 'hover:bg-red-900/20' : ''
+                      }`}
+                    >
+                      <LogOut className="w-4 h-4 mr-3" />
+                      Log out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -474,29 +562,85 @@ export default function Dashboard() {
                  <div ref={popupRef} className={`absolute top-full left-1/2 -translate-x-1/2 mt-4 w-96 bg-white rounded-2xl shadow-2xl z-[999999] border border-slate-200 ${darkMode ? "bg-slate-800 border-slate-700 text-white" : ""}`}>
                   <div className="p-6">
                     <h4 className={`font-bold text-xl text-slate-800 mb-4 ${darkMode ? "text-white" : ""}`}>Notifications</h4>
-                    {data.notificationsList.length ? (
-                      data.notificationsList.map((n) => (
-                        <div key={n.id} className={`flex items-start justify-between p-4 mb-3 bg-slate-50 rounded-xl ${darkMode ? "bg-slate-700 text-white" : ""} ${n.type === "error" ? "border-l-4 border-red-500" : "border-l-4 border-yellow-500"} shadow-sm`}>
-                          <div className="flex-1">
-                            <p className={`text-slate-700 text-base font-semibold ${darkMode ? "text-white" : ""}`}>{n.title}</p>
-                            {n.description && <p className={`text-slate-600 text-sm ${darkMode ? "text-slate-300" : ""}`}>{n.description}</p>}
-                            <p className={`text-slate-500 text-xs ${darkMode ? "text-slate-400" : ""}`}>{n.date}</p>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const rest = data.notificationsList.filter((x) => x.id !== n.id);
-                              setData((prev) => ({ ...prev, notificationsList: rest, notifications: rest.length }));
-                            }}
-                            className={`text-slate-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50 transition-all duration-200 ml-3 ${darkMode ? "hover:text-red-400 hover:bg-red-900" : ""}`}
-                          >
-                            ✕
-                          </button>
+                    
+                    {/* Severity Filter */}
+                    <div className="flex gap-2 mb-4 flex-wrap">
+                      {[
+                        { key: 'all', label: 'All', color: 'bg-slate-500' },
+                        { key: 'error', label: 'Critical', color: 'bg-red-500' },
+                        { key: 'warning', label: 'Warning', color: 'bg-yellow-500' },
+                        { key: 'info', label: 'Info', color: 'bg-blue-500' }
+                      ].map(({ key, label, color }) => (
+                        <button
+                          key={key}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAlertFilter(key);
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                            alertFilter === key 
+                              ? `${color} text-white shadow-md` 
+                              : darkMode 
+                                ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' 
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {label}
+                          {key !== 'all' && (
+                            <span className="ml-1">
+                              ({data.notificationsList.filter(n => 
+                                key === 'error' ? n.type === 'error' : 
+                                key === 'warning' ? n.type === 'warning' : 
+                                n.type === 'info'
+                              ).length})
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    {(() => {
+                      const filteredNotifications = alertFilter === 'all' 
+                        ? data.notificationsList 
+                        : data.notificationsList.filter(n => n.type === alertFilter);
+                      
+                      return filteredNotifications.length ? (
+                        <div className="max-h-80 overflow-y-auto space-y-3">
+                          {filteredNotifications.map((n) => (
+                            <div key={n.id} className={`flex items-start justify-between p-4 bg-slate-50 rounded-xl ${darkMode ? "bg-slate-700 text-white" : ""} ${n.type === "error" ? "border-l-4 border-red-500" : n.type === "warning" ? "border-l-4 border-yellow-500" : "border-l-4 border-blue-500"} shadow-sm`}>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                    n.type === 'error' ? 'bg-red-100 text-red-700' :
+                                    n.type === 'warning' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {n.type === 'error' ? 'Critical' : n.type === 'warning' ? 'Warning' : 'Info'}
+                                  </span>
+                                </div>
+                                <p className={`text-slate-700 text-base font-semibold ${darkMode ? "text-white" : ""}`}>{n.title}</p>
+                                {n.description && <p className={`text-slate-600 text-sm ${darkMode ? "text-slate-300" : ""}`}>{n.description}</p>}
+                                <p className={`text-slate-500 text-xs mt-1 ${darkMode ? "text-slate-400" : ""}`}>{n.date}</p>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const rest = data.notificationsList.filter((x) => x.id !== n.id);
+                                  setData((prev) => ({ ...prev, notificationsList: rest, notifications: rest.length }));
+                                }}
+                                className={`text-slate-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50 transition-all duration-200 ml-3 ${darkMode ? "hover:text-red-400 hover:bg-red-900/30" : ""}`}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                      ))
-                    ) : (
-                      <p className={`text-slate-500 text-base text-center py-8 ${darkMode ? "text-slate-400" : ""}`}>No new notifications.</p>
-                    )}
+                      ) : (
+                        <p className={`text-slate-500 text-base text-center py-8 ${darkMode ? "text-slate-400" : ""}`}>
+                          {alertFilter === 'all' ? 'No new notifications.' : `No ${alertFilter} notifications.`}
+                        </p>
+                      );
+                    })()}
                   </div>
                 </div>
               )}
@@ -770,6 +914,7 @@ export default function Dashboard() {
                             <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
                             <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
                             <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -811,11 +956,51 @@ export default function Dashboard() {
                                   {it.status}
                                 </span>
                               </td>
-                              <td className="py-4 px-6 text-slate-600 font-medium">{
+                              <td className={`py-4 px-6 font-medium ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{
                                  it.lastFetchedTime
                                    ? fmtDate(it.lastFetchedTime, prefs.tz, true)
                                    : "No data"
                                }</td>
+                              <td className="py-4 px-6">
+                                <div className="flex items-center gap-2">
+                                  {(it.access_role === 'owner' || it.access_role === 'admin') && (
+                                    <>
+                                      <button
+                                        onClick={() => router.push(`/teams?sensor=${it.sensor_id}`)}
+                                        className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                          darkMode
+                                            ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 border border-blue-800'
+                                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                                        }`}
+                                        title="Assign users to this sensor"
+                                      >
+                                        Assign
+                                      </button>
+                                      <button
+                                        className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                          darkMode
+                                            ? 'bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50 border border-yellow-800'
+                                            : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200'
+                                        }`}
+                                        title="Mute alerts for this sensor"
+                                      >
+                                        Mute
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    onClick={() => router.push(`/devices?sensor=${it.sensor_id}`)}
+                                    className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                      darkMode
+                                        ? 'bg-slate-700 text-slate-300 hover:bg-slate-600 border border-slate-600'
+                                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
+                                    }`}
+                                    title="View sensor details"
+                                  >
+                                    View
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -989,6 +1174,7 @@ export default function Dashboard() {
                             <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Reading</th>
                             <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Status</th>
                             <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Last Updated</th>
+                            <th className={`text-left py-4 px-6 font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1037,6 +1223,46 @@ export default function Dashboard() {
                                    ? fmtDate(it.lastFetchedTime, prefs.tz, true)
                                    : "No data"
                                }</td>
+                              <td className="py-4 px-6">
+                                <div className="flex items-center gap-2">
+                                  {(it.access_role === 'owner' || it.access_role === 'admin') && (
+                                    <>
+                                      <button
+                                        onClick={() => router.push(`/teams?sensor=${it.sensor_id}`)}
+                                        className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                          darkMode
+                                            ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50 border border-blue-800'
+                                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                                        }`}
+                                        title="Assign users to this sensor"
+                                      >
+                                        Assign
+                                      </button>
+                                      <button
+                                        className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                          darkMode
+                                            ? 'bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50 border border-yellow-800'
+                                            : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200'
+                                        }`}
+                                        title="Mute alerts for this sensor"
+                                      >
+                                        Mute
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    onClick={() => router.push(`/devices?sensor=${it.sensor_id}`)}
+                                    className={`px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                                      darkMode
+                                        ? 'bg-slate-700 text-slate-300 hover:bg-slate-600 border border-slate-600'
+                                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
+                                    }`}
+                                    title="View sensor details"
+                                  >
+                                    View
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))}
                         </tbody>

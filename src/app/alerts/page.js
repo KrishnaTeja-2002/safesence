@@ -6,6 +6,7 @@ import Sidebar from '../../components/Sidebar';
 import { useDarkMode } from '../DarkModeContext';
 import apiClient from '../lib/apiClient';
 import { getStatusDisplay, isAlertStatus, isOfflineStatus } from '../lib/statusUtils';
+import { User, Settings, LogOut, ChevronDown } from 'lucide-react';
 
 /* -------------------- Error Boundary -------------------- */
 class ErrorBoundary extends Component {
@@ -1309,6 +1310,9 @@ export default function Alerts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [username, setUsername] = useState('User');
+  const [currentUserEmail, setCurrentUserEmail] = useState('');
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef(null);
 
   const [currentView, setCurrentView] = useState('alerts'); // alerts | alertDetail
   const [selectedId, setSelectedId] = useState(null);
@@ -1415,6 +1419,7 @@ export default function Alerts() {
 
         const { user } = await response.json();
         setUsername(user?.email?.split('@')[0] || 'User');
+        setCurrentUserEmail(user?.email || '');
 
         // Get user preferences using API client
         const pref = await apiClient.getUserPreferences();
@@ -1430,6 +1435,17 @@ export default function Alerts() {
     };
     run();
   }, [router]);
+
+  // Click outside handler for profile menu
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Function to refresh sensor data
   const refreshSensorData = useCallback(async () => {
@@ -1882,25 +1898,25 @@ export default function Alerts() {
   /* -------------------- Views -------------------- */
   const renderAlertsView = () => (
     <main className="flex-1 p-8 overflow-y-auto">
-      <div className="flex justify-between items-center mb-10">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
         <div>
-          <h1 className="text-5xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+          <h1 className={`text-3xl md:text-4xl font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
             Alerts
           </h1>
-          <p className={`text-xl mt-2 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+          <p className={`text-base mt-1 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
             Monitor and manage sensor alerts
           </p>
         </div>
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-3">
-            <span className={`text-sm font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>Filter by role:</span>
+        <div className="flex items-center space-x-3 flex-wrap gap-2">
+          <div className="flex items-center space-x-2">
+            <span className={`text-sm font-medium ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>Filter:</span>
             <select
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
-              className={`border rounded-xl px-4 py-2 text-sm font-medium transition-all duration-200 ${
+              className={`border rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
                 darkMode 
-                  ? 'bg-slate-700 text-white border-slate-500 hover:border-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20' 
-                  : 'bg-white text-slate-800 border-slate-300 hover:border-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20'
+                  ? 'bg-slate-700 text-white border-slate-500' 
+                  : 'bg-white text-slate-800 border-slate-300'
               }`}
             >
               <option value="all">All</option>
@@ -1911,31 +1927,82 @@ export default function Alerts() {
           </div>
           <button
             onClick={() => setShowAddAlert(true)}
-            className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 shadow-lg hover:shadow-xl flex items-center gap-2 ${
+            className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 shadow flex items-center gap-2 ${
               darkMode
-                ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-500 hover:to-emerald-500'
-                : 'bg-gradient-to-r from-green-500 to-emerald-500 text-white hover:from-green-600 hover:to-emerald-600'
+                ? 'bg-green-600 text-white hover:bg-green-500'
+                : 'bg-green-500 text-white hover:bg-green-600'
             }`}
           >
-            <span className="text-xl">+</span>
+            <span>+</span>
             Add Alert
           </button>
           {error && <p className="text-red-500 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <button
-            onClick={() => {
-              try { localStorage.removeItem('auth-token'); } catch {};
-              router.push('/login');
-            }}
-            className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 shadow-lg hover:shadow-xl`}
-          >
-            Log out
-          </button>
-          <button
-            onClick={() => router.push('/account')}
-            className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105`}
-          >
-            {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
-          </button>
+          
+          {/* Profile dropdown */}
+          <div className="relative" ref={profileMenuRef}>
+            <button
+              onClick={() => setShowProfileMenu(!showProfileMenu)}
+              className={`flex items-center space-x-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                darkMode 
+                  ? 'bg-slate-700 hover:bg-slate-600 text-white' 
+                  : 'bg-white hover:bg-slate-50 text-slate-800 shadow-md border border-slate-200'
+              }`}
+            >
+              <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-sm font-bold shadow">
+                {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
+              </div>
+              <span className={`hidden md:block text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
+                {username}
+              </span>
+              <ChevronDown className={`w-4 h-4 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {showProfileMenu && (
+              <div className={`absolute right-0 mt-2 w-56 rounded-xl shadow-2xl z-50 overflow-hidden ${
+                darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-slate-200'
+              }`}>
+                <div className={`px-4 py-3 border-b ${darkMode ? 'border-slate-700 bg-slate-700/50' : 'border-slate-100 bg-slate-50'}`}>
+                  <p className={`font-semibold text-sm ${darkMode ? 'text-white' : 'text-slate-800'}`}>{username}</p>
+                  <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{currentUserEmail}</p>
+                </div>
+                <div className="py-2">
+                  <button
+                    onClick={() => { setShowProfileMenu(false); router.push('/account'); }}
+                    className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                      darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <User className="w-4 h-4 mr-3" />
+                    My Profile
+                  </button>
+                  <button
+                    onClick={() => { setShowProfileMenu(false); router.push('/account#settings'); }}
+                    className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                      darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4 mr-3" />
+                    Account Settings
+                  </button>
+                </div>
+                <div className={`border-t py-2 ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      try { localStorage.removeItem('auth-token'); } catch {}
+                      router.push('/login');
+                    }}
+                    className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors text-red-500 hover:bg-red-50 ${
+                      darkMode ? 'hover:bg-red-900/20' : ''
+                    }`}
+                  >
+                    <LogOut className="w-4 h-4 mr-3" />
+                    Log out
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2017,30 +2084,80 @@ export default function Alerts() {
               ← Back
             </button>
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+              <h1 className={`text-2xl md:text-3xl font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
                 Alert Detail
               </h1>
-              <p className={`text-lg mt-2 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+              <p className={`text-sm mt-1 ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
                 {selected.name} - {selected.sensor_type}
               </p>
             </div>
           </div>
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => {
-                try { localStorage.removeItem('auth-token'); } catch {};
-                router.push('/login');
-              }}
-              className={`px-6 py-3 rounded-xl font-medium transition-all duration-200 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 shadow-lg hover:shadow-xl`}
-            >
-              Log out
-            </button>
-            <button
-              onClick={() => router.push('/account')}
-              className={`w-12 h-12 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105`}
-            >
-              {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
-            </button>
+          <div className="flex items-center space-x-3">
+            {/* Profile dropdown */}
+            <div className="relative" ref={profileMenuRef}>
+              <button
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-xl transition-all duration-200 ${
+                  darkMode 
+                    ? 'bg-slate-700 hover:bg-slate-600 text-white' 
+                    : 'bg-white hover:bg-slate-50 text-slate-800 shadow-md border border-slate-200'
+                }`}
+              >
+                <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 flex items-center justify-center text-white text-sm font-bold shadow">
+                  {username.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
+                </div>
+                <span className={`hidden md:block text-sm ${darkMode ? "text-white" : "text-slate-800"}`}>
+                  {username}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showProfileMenu && (
+                <div className={`absolute right-0 mt-2 w-56 rounded-xl shadow-2xl z-50 overflow-hidden ${
+                  darkMode ? 'bg-slate-800 border border-slate-700' : 'bg-white border border-slate-200'
+                }`}>
+                  <div className={`px-4 py-3 border-b ${darkMode ? 'border-slate-700 bg-slate-700/50' : 'border-slate-100 bg-slate-50'}`}>
+                    <p className={`font-semibold text-sm ${darkMode ? 'text-white' : 'text-slate-800'}`}>{username}</p>
+                    <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{currentUserEmail}</p>
+                  </div>
+                  <div className="py-2">
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push('/account'); }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <User className="w-4 h-4 mr-3" />
+                      My Profile
+                    </button>
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push('/account#settings'); }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors ${
+                        darkMode ? 'text-slate-300 hover:bg-slate-700 hover:text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Settings className="w-4 h-4 mr-3" />
+                      Account Settings
+                    </button>
+                  </div>
+                  <div className={`border-t py-2 ${darkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        try { localStorage.removeItem('auth-token'); } catch {}
+                        router.push('/login');
+                      }}
+                      className={`w-full flex items-center px-4 py-2.5 text-sm transition-colors text-red-500 hover:bg-red-50 ${
+                        darkMode ? 'hover:bg-red-900/20' : ''
+                      }`}
+                    >
+                      <LogOut className="w-4 h-4 mr-3" />
+                      Log out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
